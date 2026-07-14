@@ -1,0 +1,14 @@
+# Hidden files/dirs — strict policy: keep them out
+.*
+!.gitignore
+!.gitattributes
+
+GEONET_VISION.scn.md
+.claude/worktrees/
+
+# Internal planning docs (live in the private mirror only)
+ROADMAP_RELEASE.md
+KANBAN_LAUNCH_READINESS.html
+
+# Deployment-local overlay (never tracked publicly)
+lib/geodeploy-extras.sh

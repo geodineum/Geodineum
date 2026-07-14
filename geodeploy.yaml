@@ -1,0 +1,38 @@
+runtime:
+  # owner intentionally omitted — geodeploy.sh resolves it from
+  # GEODEPLOY_DEPLOY_USER env / DEPLOY_USER env / /etc/geodineum/deploy.env
+  # / SUDO_USER . Hardcoding it locked the deploy identity to
+  # the upstream maintainer's account on every downstream install.
+  group: geodineum
+
+triggers:
+  - match: "**/*.sh"
+    actions: [chmod-scripts]
+
+dirty-tree:
+  strategy: stash
+
+cli:
+  commands:
+    - name: geodeploy status
+      handler: scripts/cli/geodeploy-status.sh
+      description: Show auto-deploy cron status and last run
+      category: Deploy
+    - name: geodeploy on
+      handler: scripts/cli/geodeploy-toggle.sh
+      args: --enable
+      description: Enable auto-deploy cron
+      category: Deploy
+    - name: geodeploy off
+      handler: scripts/cli/geodeploy-toggle.sh
+      args: --disable
+      description: Disable auto-deploy cron
+      category: Deploy
+    - name: geodeploy logs
+      handler: scripts/cli/geodeploy-logs.sh
+      description: Tail auto-deploy log
+      category: Deploy
+    - name: geodeploy interval
+      handler: scripts/cli/geodeploy-interval.sh
+      description: Change auto-deploy cron schedule
+      category: Deploy

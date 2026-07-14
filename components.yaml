@@ -1,9 +1,9 @@
-# Geodineum Component Registry
-# =============================
+# Geodineum Component Registry — Chapter 1 Release
+# ==================================================
 # Defines all components, their dependencies, install locations,
 # and GitHub repositories for automated fetching.
 #
-# Used by: scripts/install.sh, scripts/fetch-component.sh
+# Used by: install.sh, geodineum CLI
 
 version: 1.0.0
 
@@ -20,11 +20,10 @@ components:
     type: external
     required_by: [gnode-client, gnode-daemon]
     install_check: "systemctl is-active valkey-gnode"
-    setup_script: scripts/setup/valkey.sh
-    notes: "Not a Geodineum component — installed via package manager"
+    notes: "Not a Geodineum component — installed via package manager or Docker"
 
   gnode-daemon:
-    description: "Geometric topology engine, Tera templates, stream processor"
+    description: "Geometric topology engine, stream processor, service discovery"
     type: service
     repo: geodineum/gNode
     branch: main
@@ -32,8 +31,7 @@ components:
     build_cmd: "cd daemon && cargo build --release"
     service_name: gnode-daemon
     requires: [valkey]
-    setup_script: scripts/setup/gnode-daemon.sh
-    provides: [topology, tera-rendering, stream-processing, service-discovery]
+    provides: [topology, stream-processing, service-discovery, resilience-primitives]
 
   gnode-client:
     description: "PHP library for gNode daemon communication"
@@ -48,29 +46,17 @@ components:
   # ─── Framework ────────────────────────────────────────────
 
   gcore:
-    description: "Manager-of-managers PHP framework (WordPress/standalone/Drupal)"
+    description: "Manager-of-managers PHP framework (WordPress/standalone)"
     type: framework
     repo: geodineum/gCore
     branch: main
     install_path: gCore
     requires: [gnode-client]
-    optional: [gnode-daemon, gcore-premium]
+    optional: [gnode-daemon]
     php_extensions: [redis, json, mbstring, igbinary, zlib]
     provides: [seo, analytics, security, cookie-consent, pwa-manifest,
-               optimization, state-management, template-rendering,
-               inference, comms, metrics, topology]
+               optimization, state-management, template-rendering]
     wp_integration: mu-plugin
-    setup_script: scripts/setup/gcore.sh
-
-  gcore-premium:
-    description: "Premium gCore modules (SEO, analytics, comms, inference, etc.)"
-    type: modules
-    repo: geodineum/gCore-Premium
-    branch: main
-    install_path: premium/gCore
-    requires: [gcore]
-    optional: true
-    notes: "10 modules. Free-tier stubs exist in gCore for graceful degradation."
 
   # ─── Themes ───────────────────────────────────────────────
 
@@ -79,12 +65,11 @@ components:
     type: parent-theme
     repo: geodineum/gTemplate
     branch: main
-    install_path: gTemplate-wp
+    install_path: gTemplate
     requires: [gcore]
     provides: [9-phase-bootstrap, 3-tier-rendering, filter-hook-api,
-               customizer, rest-api, cli, content-sources]
+               customizer, rest-api, content-sources]
     wp_integration: theme
-    setup_script: scripts/setup/gtemplate-wp.sh
 
   gcube:
     description: "3D CSS cube child theme (6 faces)"
@@ -97,48 +82,28 @@ components:
     face_count: 6
     geometry: css-3d-transforms
 
-  gtesseract:
-    description: "4D tesseract child theme (8 cells)"
-    type: child-theme
-    repo: geodineum/gTesseract
-    branch: main
-    install_path: gTesseract
-    requires: [gtemplate-wp]
-    wp_integration: theme
-    face_count: 8
-    geometry: css-4d-projection
+  # ─── Services ─────────────────────────────────────────────
 
-  giris:
-    description: "Three.js twisted toroid child theme (6 sections)"
-    type: child-theme
-    repo: nierto/gIris
-    branch: main
-    install_path: gIris
-    requires: [gtemplate-wp]
-    wp_integration: theme
-    face_count: 6
-    geometry: threejs-parametric-torus
-    cdn_deps: [three.js-r128, gsap-3.12.2]
-
-  # ─── Optional Services ───────────────────────────────────
-
-  gnode-comms:
+  geodineum-comms:
     description: "Notification daemon (email, Telegram, SMS)"
     type: service
-    repo: geodineum/gNode-COMMS
+    repo: geodineum/Geodineum-COMMS
     branch: main
-    install_path: gNode-COMMS
-    requires: [gnode-daemon, valkey]
-    optional: true
-    service_name: gnode-comms
+    install_path: Geodineum-COMMS
+    build_cmd: "cargo build --release"
+    service_name: geodineum-comms
+    requires: [valkey]
+    provides: [email-notifications, telegram-notifications, sms-notifications]
 
-  gshield:
-    description: "Security templates and WAF rules"
-    type: config
-    repo: geodineum/gShield
+  geodineum-bak:
+    description: "Ecosystem backup daemon (ValKey RDB, logs, site state)"
+    type: service
+    repo: geodineum/Geodineum-BAK
     branch: main
-    install_path: gShield
-    optional: true
+    install_path: Geodineum-BAK
+    service_name: geodineum-bak
+    requires: [valkey]
+    provides: [valkey-backup, log-rotation, retention-policy]
 
 # ─── Profiles ─────────────────────────────────────────────
 # Pre-defined component sets for common use cases
@@ -151,10 +116,5 @@ profiles:
     notes: "gCore runs in free-tier mode with stub managers"
 
   standard:
-    description: "Full Geodineum stack with real-time rendering"
-    components: [valkey, gnode-daemon, gnode-client, gcore, gtemplate-wp]
-
-  full:
-    description: "Everything including premium modules and notifications"
-    components: [valkey, gnode-daemon, gnode-client, gcore, gcore-premium,
-                 gtemplate-wp, gnode-comms, gshield]
+    description: "Full Chapter 1 stack with real-time topology and notifications"
+    components: [valkey, gnode-daemon, gnode-client, gcore, gtemplate-wp, gcube, geodineum-comms, geodineum-bak]

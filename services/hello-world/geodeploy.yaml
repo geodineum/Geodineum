@@ -1,0 +1,62 @@
+# hello-world — minimal Tier-1 demo service exercising every LAYER section.
+# Use as the reference example when authoring new user services.
+#
+# Verified against schemas/geodeploy-manifest.schema.yaml. Run:
+#   geodineum validate services/hello-world/geodeploy.yaml
+#   sudo geodineum service install services/hello-world/geodeploy.yaml --dry-run
+#   sudo geodineum service install services/hello-world/geodeploy.yaml
+#   geodineum service health services/hello-world/geodeploy.yaml
+#   sudo geodineum service uninstall services/hello-world/geodeploy.yaml
+
+name: hello-world
+version: 0.1.0
+description: Reference Tier-1 service — touches a marker file, declares hints
+tier: 1
+language: bash
+
+runtime:
+  group: geodineum
+
+triggers:
+  - match: "scripts/**"
+    actions: [chmod-scripts]
+
+dirty-tree:
+  strategy: skip
+
+install:
+  prerequisites:
+    commands: [bash, mkdir, touch]
+  steps:
+    - name: ensure-state-dir
+      run: scripts/install-state-dir.sh
+      on_failure: fatal
+      requires_sudo: true
+      timeout_seconds: 30
+    - name: write-marker
+      run: scripts/install-marker.sh
+      on_failure: warn
+      requires_sudo: true
+      timeout_seconds: 30
+  health_check: scripts/health.sh
+
+uninstall:
+  steps:
+    - name: remove-marker
+      run: scripts/uninstall-marker.sh
+      on_failure: warn
+  preserve_on_keep_data:
+    - /var/lib/geodineum/hello-world/
+
+# log: section omitted — convention default applies (path =
+#   /var/log/geodineum/hello-world/hello-world.log; journald_unit unset)
+# config: section omitted — convention default keyspace = {site_id}:hello-world:config:*
+
+backup:
+  keys:
+    - "{site_id}:hello-world:state:*"
+  files:
+    - /var/lib/geodineum/hello-world/
+  exclude:
+    - "{site_id}:hello-world:cache:*"
+  schedule: daily

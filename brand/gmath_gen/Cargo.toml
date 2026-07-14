@@ -1,0 +1,14 @@
+[package]
+name = "geodineum-mark"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Build with the embedded profile (Q64.64, i128) so the geometry is
+# bit-identical across x86 / ARM / RISC-V:
+#   GMATH_PROFILE=embedded cargo run --release
+[dependencies]
+g_math = { path = "/home/august/gh/gMath" }
+
+[profile.release]
+opt-level = 2

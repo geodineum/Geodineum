@@ -1,0 +1,506 @@
+# =============================================================================
+# Geodineum Modular Manifest — JSON Schema (draft 2020-12, authored in YAML)
+# =============================================================================
+# CANONICAL CONTRACT for `geodeploy.yaml` files across the ecosystem.
+# Consumed by: orchestrator, CLI dispatcher, register-site.sh, Geodineum-BAK,
+# `geodineum describe`, and the install-time schema validator.
+#
+# A service joining the ecosystem provides a `geodeploy.yaml` that validates
+# against this schema. Sections beyond the meta block are OPTIONAL — convention
+# defaults apply when absent (see field-level descriptions).
+#
+# Tier-1 services typically declare: meta + cli + maybe log overrides.
+# Tier-2 services additionally declare: data + (usually) install + config.
+#
+# Companion brief: the manifest-pattern documentation.
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://geodineum.com/schemas/geodeploy-manifest.schema.yaml"
+title: "Geodineum Service Manifest"
+description: |
+  Self-describing service contract. One file per service. Declares how the
+  ecosystem (orchestrator + CLI + register-site + BAK) integrates the service
+  across deploy, install, log, config, data (streams/keys), backup, and CLI.
+
+type: object
+additionalProperties: false
+required: [name, version, description]
+
+# =============================================================================
+# Reusable definitions
+# =============================================================================
+$defs:
+
+  slug:
+    type: string
+    pattern: "^[a-z][a-z0-9_-]*$"
+    minLength: 2
+    maxLength: 64
+    description: Lowercase identifier; [a-z0-9_-]+ starting with a letter.
+
+  semver:
+    type: string
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    description: Semantic version. Examples — `1.0.0`, `0.2.0-rc1`.
+
+  unix_mode:
+    oneOf:
+      - { type: string, pattern: "^0?[0-7]{3,4}$" }
+      - { type: integer, minimum: 0, maximum: 4095 }
+    description: |
+      POSIX mode bits. Accepts octal string (`0750`, `750`) or integer (`0o750`).
+      The perms enforcer normalizes both to canonical 4-digit octal.
+
+  cron_schedule:
+    type: string
+    pattern: "^[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+$"
+    description: Standard 5-field cron. Whitespace-separated. Not full crontab grammar — basic shape check only.
+
+  glob_pattern:
+    type: string
+    minLength: 1
+    description: Glob/regex used by triggers and perms. Pipe-separated alternates allowed.
+
+  valkey_pattern:
+    type: string
+    minLength: 3
+    description: |
+      ValKey key/stream pattern (ACL-grammar). Supports `{site_id}` and `{ecosystem}` placeholders
+      that the orchestrator interpolates at registration time. Validated against namespace policy.
+    examples:
+      - "{site_id}:<name>:state:*"
+      - "{site_id}:gnode:unified:*"
+      - "{ecosystem}:gnode:heartbeat"
+
+  channel_pattern:
+    type: string
+    pattern: "^&"
+    description: Pub/Sub channel pattern. MUST start with `&` per ValKey ACL grammar.
+
+  on_failure:
+    type: string
+    enum: [fatal, warn, skip]
+    default: warn
+    description: |
+      Graceful-degradation policy for an install/uninstall step.
+        `fatal` — abort the install
+        `warn`  — log and continue (default)
+        `skip`  — silently continue
+
+  install_step:
+    type: object
+    additionalProperties: false
+    required: [name, run]
+    properties:
+      name:        { $ref: "#/$defs/slug", description: "Step identifier; unique within the section." }
+      run:         { type: string, description: "Script path relative to repo root." }
+      on_failure:  { $ref: "#/$defs/on_failure" }
+      requires_sudo: { type: boolean, default: false }
+      timeout_seconds: { type: integer, minimum: 1, maximum: 3600, default: 600 }
+
+  cli_command:
+    type: object
+    additionalProperties: false
+    required: [name, handler, description]
+    properties:
+      name:
+        type: string
+        pattern: "^[a-z][a-z0-9_-]*(?: [a-z][a-z0-9_-]*)*$"
+        description: |
+          Command name as the operator types it after `geodineum`. May be multi-word
+          (e.g. `gmath multiply`). Two-word dispatch tries this exact form before
+          falling back to one-word match.
+      handler:
+        type: string
+        description: |
+          Path (relative to component root) to the handler script. Receives argv,
+          writes to stdout, exits 0/1/2. Should source `lib/cli-helpers.sh` for
+          standard logging + ValKey helpers.
+      args:
+        type: string
+        description: Default args prepended to the user's args (e.g. `--enable` for `geodeploy on`).
+      description: { type: string, minLength: 3, description: "One-line description for --help." }
+      requires_sudo: { type: boolean, default: false }
+      fallback:
+        type: string
+        description: |
+          Path to a fallback handler invoked when the primary handler exits non-zero
+          (e.g. ValKey unreachable). Enables graceful degradation per the CLI contract.
+      examples:
+        type: array
+        items: { type: string }
+        description: "Usage examples shown by `geodineum describe`. Plain strings, no `geodineum` prefix."
+      category:
+        type: string
+        description: Override the service-level `cli.category` for this single command.
+
+# =============================================================================
+# LAYER 0 — META
+# =============================================================================
+properties:
+
+  name:
+    $ref: "#/$defs/slug"
+    description: |
+      Canonical service slug. Used as the default key for conventions
+      (log path, config keyspace, ACL namespace).
+
+  version:
+    $ref: "#/$defs/semver"
+    description: Service version. Bumped per release; surfaced by `describe`.
+
+  description:
+    type: string
+    minLength: 8
+    maxLength: 240
+    description: One-line human description. Shown in `--help` and `describe`.
+
+  tier:
+    type: integer
+    enum: [1, 2]
+    description: |
+      Self-declared integration tier. Informational — the ecosystem does not enforce it.
+        1 = Passthrough citizen (CLI + conventions; no wire-protocol obligation)
+        2 = Ecosystem citizen (speaks field_names wire contract; data section meaningful)
+
+  language:
+    type: string
+    enum: [bash, php, rust, python, node, go, java, ruby, any, other]
+    default: other
+    description: Implementation language. Informational; ecosystem is language-agnostic.
+
+  maintainer:
+    type: string
+    description: Free-form maintainer field. Optional. Shown by `describe`.
+
+  # ===========================================================================
+  # ===========================================================================
+  # LAYER 1 — DEPLOY MECHANICS (flat top-level: runtime, auto, build, triggers,
+  # perms, dirty-tree, links). Matches the existing in-repo convention; the
+  # "layer" grouping is conceptual, surfaced by `geodineum describe`.
+  # ===========================================================================
+  runtime:
+    type: object
+    additionalProperties: false
+    description: Filesystem ownership + systemd integration.
+    properties:
+      owner:
+        type: string
+        description: |
+          File owner (deploy user). If omitted, resolved from
+          GEODEPLOY_DEPLOY_USER / DEPLOY_USER / /etc/geodineum/deploy.env / SUDO_USER.
+          Never hardcode upstream maintainer's account.
+      group:
+        type: string
+        enum: [gnode, www-data, geodineum, root]
+        description: |
+          File group. PHP repos → www-data; daemon/infra → gnode; installer → geodineum.
+      service:
+        type: string
+        description: |
+          systemd unit name (e.g. `gmath-daemon`). When set, deploy actions including
+          `restart` issue `systemctl restart <unit>`.
+
+  auto:
+    type: object
+    additionalProperties: false
+    description: |
+      Auto-deploy participation. The orchestrator scans all manifests; only those
+      with `auto.enabled: true` are pulled by cron. Replaces the old hardcoded
+      CORE_REPOS list.
+    properties:
+      enabled:
+        type: boolean
+        default: false
+        description: |
+          Opt in to the orchestrator's deploy cycle. Without this, the orchestrator
+          never touches the repo even if a manifest is present.
+      branch:
+        type: string
+        pattern: "^[^ ]+$"
+        default: "auto"
+        description: |
+          Branch to track. The literal string `auto` (default) means: detect the
+          current checked-out branch via `git rev-parse --abbrev-ref HEAD` and
+          track it . Any other value is treated as an explicit branch name
+          and pinned. Detached HEAD with `auto` falls back to repo-config default.
+        examples: ["auto", "main", "my-feature-branch"]
+      interval:
+        $ref: "#/$defs/cron_schedule"
+        description: |
+          Optional per-service cron override. Omitted ⇒ uses the orchestrator's global
+          schedule. v1: schema-accepted but global schedule wins. v1.1: honored.
+
+  build:
+    type: object
+    additionalProperties: false
+    description: How to build after a pull (when `build` is in a trigger's actions).
+    properties:
+      type:
+        type: string
+        enum: [cargo, composer, npm, none]
+        description: Builder family. Selects the action's default command.
+      working_dir:
+        type: string
+        default: "."
+        description: Relative to repo root.
+      command:
+        type: string
+        description: |
+          Custom build command; overrides the type's default. Use sparingly —
+          the standard types cover most needs.
+
+  triggers:
+    type: array
+    description: Match changed files → run actions. Order matters; first match wins.
+    items:
+      type: object
+      additionalProperties: false
+      required: [match, actions]
+      properties:
+        match:
+          $ref: "#/$defs/glob_pattern"
+          description: Glob (or pipe-separated globs) matched against changed files since last pull.
+        actions:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum:
+              - build
+              - restart
+              - lua-reload
+              - opcache-clear
+              - php-fpm-restart
+              - service-install
+              - chmod-scripts
+              - chmod-perms
+
+  perms:
+    type: object
+    additionalProperties: false
+    description: |
+      Permission policy enforced by `geodeploy_fix_perms` after every deploy.
+      Defaults apply to repo-internal files; secrets live elsewhere with stricter modes.
+    properties:
+      files:   { $ref: "#/$defs/unix_mode", default: "0640" }
+      dirs:    { $ref: "#/$defs/unix_mode", default: "0750" }
+      bin:     { $ref: "#/$defs/unix_mode", default: "0755", description: "Executable scripts and binaries." }
+      secrets: { $ref: "#/$defs/unix_mode", default: "0600", description: "Credential-class files (`*.password`, `*.key`)." }
+
+  dirty-tree:
+    type: object
+    additionalProperties: false
+    properties:
+      strategy:
+        type: string
+        enum: [discard, skip]
+        default: discard
+        description: |
+          Deploy targets MIRROR origin. `discard` clears local changes before reset.
+          `skip` leaves dirty trees alone (operator/dev convenience). `stash` is
+          REMOVED — stash-pop after merge wrote conflict markers into tracked files
+          and was the original gTemplate corruption.
+
+  links:
+    type: array
+    description: Symlinks created during deploy (e.g., model dirs, data mounts).
+    items:
+      type: object
+      additionalProperties: false
+      required: [target, link]
+      properties:
+        target: { type: string, description: "Absolute path to link target." }
+        link:   { type: string, description: "Relative link name inside the repo." }
+
+  # ===========================================================================
+  # LAYER 2 — INSTALL / UNINSTALL (user-service lifecycle hooks)
+  # ===========================================================================
+  install:
+    type: object
+    additionalProperties: false
+    description: |
+      Lifecycle hooks for user-contributed services. Does NOT replace install.sh
+      for Geodineum-internal components — those remain driven by components.yaml
+      and the phased installer. Convention: missing section ⇒ no-op.
+    properties:
+      prerequisites:
+        type: object
+        additionalProperties: false
+        properties:
+          apt:        { type: array, items: { type: string }, description: "Debian/Ubuntu packages." }
+          php_ext:    { type: array, items: { type: string }, description: "Required PHP extensions (presence check, not installed)." }
+          commands:   { type: array, items: { type: string }, description: "Binaries that must exist on PATH." }
+      steps:
+        type: array
+        items: { $ref: "#/$defs/install_step" }
+        description: Ordered, idempotent install steps.
+      health_check:
+        type: string
+        description: |
+          Script path. Exits 0 if the service is healthy after install. Result published to
+          `geodineum:registry:<name>:health:last_ok` for `geodineum status`.
+
+  uninstall:
+    type: object
+    additionalProperties: false
+    properties:
+      steps:
+        type: array
+        items: { $ref: "#/$defs/install_step" }
+      preserve_on_keep_data:
+        type: array
+        items: { type: string }
+        description: |
+          Absolute paths NOT removed when uninstaller is invoked with `--keep-data`.
+          Per-service equivalent of the global credential/data preservation.
+
+  # ===========================================================================
+  # LAYER 3 — LOG
+  # ===========================================================================
+  log:
+    type: object
+    additionalProperties: false
+    description: |
+      Log discoverability. `geodineum logs <service>` reads
+      `geodineum:registry:<name>:log:path` (populated from this section or the
+      convention default) without re-parsing YAML at runtime.
+    properties:
+      path:
+        type: string
+        description: |
+          Logfile path. CONVENTION DEFAULT: `/var/log/geodineum/<name>/<name>.log`.
+          Override only when the service legitimately writes elsewhere.
+      journald_unit:
+        type: string
+        description: |
+          systemd unit name for daemons. When set, `geodineum logs` prefers
+          `journalctl -u <unit>` over the file path.
+      format:
+        type: string
+        enum: [text, json, structured]
+        default: text
+        description: Informational; consumed by log-viewer tooling.
+      rotate:
+        type: object
+        additionalProperties: false
+        properties:
+          keep_days:   { type: integer, minimum: 1, maximum: 365, default: 14 }
+          max_size_mb: { type: integer, minimum: 1, maximum: 10000, default: 100 }
+
+  # ===========================================================================
+  # LAYER 4 — CONFIG
+  # ===========================================================================
+  config:
+    type: object
+    additionalProperties: false
+    description: |
+      Where the service's runtime config lives in ValKey. CONVENTION DEFAULT
+      keyspace: `{site_id}:<name>:config:*`. Any language reads/writes there via
+      the redis protocol; no PHP/gCore dependency.
+    properties:
+      keyspace:
+        $ref: "#/$defs/valkey_pattern"
+        description: Override the convention keyspace. Rarely needed.
+      defaults:
+        type: string
+        description: |
+          Path (relative to repo root) to a JSON/YAML file seeded into ValKey at
+          install time using NX semantics — existing keys are NEVER overwritten.
+      schema:
+        type: string
+        description: Path to a JSON/YAML schema validating config values. Optional.
+      manager:
+        type: string
+        description: |
+          gCore manager class owning this config (PHP SDK hint). Non-PHP services
+          OMIT this — it is not a contract requirement.
+
+  # ===========================================================================
+  # LAYER 5 — DATA (the keyspace contract; Tier-2 anchor)
+  # ===========================================================================
+  data:
+    type: object
+    additionalProperties: false
+    description: |
+      Declares what streams/keys/channels the service reads (`consumes`) and writes
+      (`produces`). `register-site.sh` reads this and fashions the ACL grants.
+      v1 enforcement: STATIC policy — patterns must fall within the service's own
+      namespace OR be in the ecosystem well-known set. v2 (planned): runtime
+      daemon-mediated negotiation.
+    properties:
+      consumes:
+        type: object
+        additionalProperties: false
+        description: Read-only access patterns granted to the service's ACL user.
+        properties:
+          streams:  { type: array, items: { $ref: "#/$defs/valkey_pattern" } }
+          keys:     { type: array, items: { $ref: "#/$defs/valkey_pattern" } }
+          channels: { type: array, items: { $ref: "#/$defs/channel_pattern" } }
+      produces:
+        type: object
+        additionalProperties: false
+        description: Read/write access patterns. Must fall within the service's namespace under static policy.
+        properties:
+          streams:  { type: array, items: { $ref: "#/$defs/valkey_pattern" } }
+          keys:     { type: array, items: { $ref: "#/$defs/valkey_pattern" } }
+          channels: { type: array, items: { $ref: "#/$defs/channel_pattern" } }
+      ecosystem_well_known:
+        type: boolean
+        default: true
+        description: |
+          Grants access to the canonical bus streams: `{site_id}:gnode:unified:*`,
+          `{ecosystem}:gnode:heartbeat`, `&{ecosystem}:gnode:broadcast:*`. Set false
+          only for isolated services that should not see ecosystem traffic.
+
+  # ===========================================================================
+  # LAYER 6 — BACKUP (light; declarative hints)
+  # ===========================================================================
+  backup:
+    type: object
+    additionalProperties: false
+    description: |
+      Declarative hints read by Geodineum-BAK for per-service introspection logs.
+      Does NOT change the wholesale RDB snapshot — all of ValKey is backed up
+      regardless. These hints surface in `describe` and BAK's per-service summary.
+    properties:
+      keys:
+        type: array
+        items: { $ref: "#/$defs/valkey_pattern" }
+        description: ValKey patterns the service considers important to preserve.
+      files:
+        type: array
+        items: { type: string }
+        description: Filesystem paths outside ValKey that hold service state.
+      exclude:
+        type: array
+        items: { $ref: "#/$defs/valkey_pattern" }
+        description: Patterns explicitly transient (caches, ephemeral derived state).
+      schedule:
+        type: string
+        enum: [hourly, daily, weekly, monthly, on-demand]
+        default: daily
+        description: Informational; the actual schedule lives in BAK's global config.
+
+  # ===========================================================================
+  # LAYER 7 — CLI (already implemented; this section pins the schema)
+  # ===========================================================================
+  cli:
+    type: object
+    additionalProperties: false
+    description: |
+      Commands surfaced through the `geodineum` CLI via manifest discovery
+      (yq-driven, dispatched by lib/geodineum-dispatch). Convention: missing
+      section ⇒ service has no CLI surface (daemon-only or library).
+    properties:
+      category:
+        type: string
+        description: |
+          Display group in `geodineum --help` and `describe`. Defaults to a
+          capitalized `meta.name`. Sets the parent header; per-command override
+          is also supported.
+      commands:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/cli_command" }

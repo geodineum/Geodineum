@@ -1,0 +1,87 @@
+# Geodineum installer — config_schema (private / pro mirror)
+#
+# Enumerates the operator-visible keys used by install.sh + lib/common.sh
+# + the `geodineum` CLI. Mirrored byte-for-byte to the public installer
+# at ~/gh/Geodineum/config/config_schema.yaml.
+#
+# Published at install time by `geodineum config publish` (one-shot).
+
+component: geodineum_installer
+entries:
+  - key: GEODINEUM_ROOT
+    type: path
+    default: /opt/geodineum
+    mutable: false
+    description: Installation root. Changing requires reinstall.
+
+  - key: GEODINEUM_CONFIG_ROOT
+    type: path
+    default: /etc/geodineum
+    mutable: false
+    description: Ecosystem config root (disk-minimal bootstrap lives here).
+
+  - key: GEODINEUM_CREDENTIALS_DIR
+    type: path
+    default: /etc/geodineum/credentials
+    mutable: false
+    description: >-
+      Per-service + per-site ACL credential directory. 0700 root:geodineum;
+      individual creds are 0600 and owned by their respective ACL users.
+
+  - key: GEODINEUM_COMPONENTS_DIR
+    type: path
+    default: /etc/geodineum/components
+    mutable: false
+    description: Per-component metadata directory.
+
+  - key: GEODINEUM_SITES_DIR
+    type: path
+    default: /etc/geodineum/sites
+    mutable: false
+    description: Per-site metadata directory.
+
+  - key: GEODINEUM_LOG_DIR
+    type: path
+    default: /var/log/geodineum
+    mutable: false
+    description: Unified log tree for all Geodineum components.
+
+  - key: VALKEY_HOST
+    type: string
+    default: 127.0.0.1
+    mutable: false
+    description: >-
+      ValKey connection host (disk-minimal bootstrap key; one of three keys
+      stored in /etc/geodineum/bootstrap.env post-Commit-0.1).
+
+  - key: VALKEY_PORT
+    type: int
+    default: 47445
+    mutable: false
+    description: >-
+      ValKey connection port (disk-minimal bootstrap key). 47445 is the
+      Geodineum canonical non-default port.
+
+  - key: VALKEY_CREDS_PATH
+    type: path
+    default: /etc/geodineum/credentials
+    mutable: false
+    description: >-
+      Directory containing per-service ACL credential files. Each consumer
+      reads its own cred file at bootstrap-loader time.
+
+  - key: TOPOLOGY_NAMESPACE
+    type: string
+    default: geodineum
+    mutable: false
+    description: >-
+      Ecosystem-wide namespace prefix for infrastructure ValKey keys.
+      Distinct from per-site site_id (which uses hash-tag brace-literal).
+
+  - key: CONSTELLATION_VPN_CIDR
+    type: string
+    default: 10.42.0.0/16
+    mutable: false
+    description: >-
+      WireGuard constellation VPN CIDR. Installer reserves addresses from
+      this range during phase_constellation.

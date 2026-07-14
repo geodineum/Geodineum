@@ -1,0 +1,81 @@
+GEODINEUM MARK — PROVENANCE
+============================================================================
+
+The mark is not drawn. It is the deterministic output of a parametric surface
+— the same twisted-hex-torus the gIris interface renders in 3-D — with every
+vertex computed in gMath Q64.64 fixed point. Deterministic input, deterministic
+mark: bit-identical on any architecture (x86 / ARM / RISC-V), forever.
+
+----------------------------------------------------------------------------
+SURFACE
+----------------------------------------------------------------------------
+For revolution angle θ and cross-section angle φ, with TWIST = 1:
+
+    ptwisted = φ + θ·TWIST
+    x = (R + r·cos(ptwisted)) · cos θ
+    y = (R + r·cos(ptwisted)) · sin θ
+    z =      r·sin(ptwisted)
+
+The six-fold comes from sampling φ at HEX_SIDES = 6 equal steps of 2π.
+Source of the geometry: gIris/assets/js/iris.js.
+
+----------------------------------------------------------------------------
+INPUTS (exact — no float literals enter the pipeline)
+----------------------------------------------------------------------------
+    R          = 32/10   (3.2)     major radius — the ring
+    r          = 135/100 (1.35)    tube cross-section
+    HEX_SIDES  = 6                 hexagonal tube -> the six-fold
+    TWIST      = 1                 one full turn of the section per revolution
+    τ (2π)     = 8 · atan(1)       derived, not seeded (atan(1) = π/4)
+
+Every constant above is built from integers via FixedPoint::from_int and one
+division; τ is computed from atan. Nothing is seeded from an IEEE-754 double,
+so the surface is reproducible from first principles.
+
+----------------------------------------------------------------------------
+RENDER PARAMETERS (per mark — presentation only)
+----------------------------------------------------------------------------
+Projection: orthographic, yaw = 0. Painter-ordered back-to-front; stroke
+opacity scales with depth. viewBox 512, pad = 11%. rib floor = 0.55.
+
+    mark        tilt   rings  segs   rib_w  ring_w  ring_floor
+    iris_full     0°     24    240    3.20    1.00    0.28
+    iris_glyph    0°     12    180    5.00    2.20    0.45
+    iris_dim     16°     22    240    3.20    1.00    0.28
+
+Palette: rib #e3c887, ring #b7924e (gold, lifted verbatim from the gIris
+theme). The *_currentcolor.svg variants replace both with `currentColor`
+so the mark inherits the surrounding text colour (recolourable).
+
+----------------------------------------------------------------------------
+GENERATOR
+----------------------------------------------------------------------------
+    gmath_gen/            Rust cargo project, this directory
+      Cargo.toml          depends on g_math (path = ~/gh/gMath)
+      src/main.rs         computes every vertex in FixedPoint (Q64.64)
+
+    library:  g_math 0.4.24  (commit 9ffa176, branch main)
+    profile:  embedded  ->  Q64.64  (i128 backing, 19 decimal digits)
+
+    build & run:
+        cd gmath_gen
+        GMATH_PROFILE=embedded cargo run --release
+    outputs: iris_{full,glyph,dim}.svg + *_currentcolor.svg
+
+The 3-D surface vertices are produced entirely in fixed point; the 2-D fit /
+painter-order / opacity is f64 presentation and rounds to the same 2-decimal
+SVG coordinates.
+
+----------------------------------------------------------------------------
+VERIFICATION
+----------------------------------------------------------------------------
+The gMath (Q64.64, Rust) output was compared byte-for-byte against the
+original f64 prototype (gen.py). All six files — iris_full, iris_glyph,
+iris_dim and their _currentcolor variants — are BYTE-IDENTICAL. The
+fixed-point geometry and the double-precision prototype agree to the last
+emitted digit; the mark is the math.
+
+    for f in iris_full iris_glyph iris_dim; do
+        cmp gmath_gen/gen_out/$f.svg $f.svg && echo "$f: identical"
+    done
+============================================================================

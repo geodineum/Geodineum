@@ -1,0 +1,351 @@
+# Geodineum Ecosystem Tools — Chapter 1 Base Components
+# Schema: tool_schema.yaml (16D)
+# Keyspace: ecosystem:tools:topology:{entity_id}
+#
+# Each component declares its capabilities in SEMANTIC form (human-readable).
+# The register-tools pipeline translates these to 16D coordinates at registration.
+# The `depends_on` field drives the dependency pyramid layout (x/y/z computed).
+#
+# Pyramid hierarchy (top → bottom):
+#   Level 0: gMath                                   (mathematical truth)
+#   Level 1: gNode, ValKey                           (infrastructure)
+#   Level 2: gNode-CMS, gNode-Client, Geodineum-COMMS, gCore  (application framework)
+#   Level 3: gTemplate                               (presentation framework)
+#   Level 4: gCube                                   (end-user theme)
+#   Level 5: Geodineum-BAK                           (utility — depends on gNode scripts)
+
+schema: tool_schema.yaml
+tier: tool
+
+components:
+  # ─── Level 0: Mathematical Truth ────────────────────────────
+
+  - id: gMath
+    metadata:
+      repo: "geodineum/g_math"
+      description: "Q64.64 fixed-point arithmetic — 18 transcendentals at 0 ULP"
+      install_path: null  # crates.io dependency, not a filesystem component
+    depends_on: []
+    capabilities:
+      - name: protocol
+        value: library
+      - name: native_format
+        value: fixed_point
+      - name: api_version
+        value: v1
+      - name: contract_stability
+        value: frozen
+      - name: domain_primary
+        value: math
+      - name: implementation_language
+        value: rust
+      - name: build_type
+        value: cargo_release
+      - name: component_tier
+        value: math
+      - name: license_tier
+        value: open_source
+      - name: requires_valkey
+        value: "no"
+      - name: systemd_managed
+        value: "no"
+      - name: data_sensitivity
+        value: public
+
+  # ─── Level 1: Infrastructure ────────────────────────────────
+
+  - id: ValKey
+    metadata:
+      repo: null  # external dependency
+      description: "In-memory data structure store — streams, hashes, sets, ACL"
+      install_path: "/usr/bin/valkey-server"
+    depends_on: []
+    capabilities:
+      - name: protocol
+        value: resp3_direct
+      - name: native_format
+        value: resp3
+      - name: api_version
+        value: v1
+      - name: contract_stability
+        value: stable
+      - name: domain_primary
+        value: storage
+      - name: implementation_language
+        value: c
+      - name: build_type
+        value: apt_package
+      - name: component_tier
+        value: infrastructure
+      - name: license_tier
+        value: open_source
+      - name: requires_valkey
+        value: "no"
+      - name: systemd_managed
+        value: "yes"
+      - name: data_sensitivity
+        value: credentials
+
+  - id: gNode
+    metadata:
+      repo: "geodineum/gNode"
+      description: "Geometric topology daemon — 23D service discovery, stream processor, resilience"
+      install_path: "gNode"
+    depends_on: [gMath, ValKey]
+    capabilities:
+      - name: protocol
+        value: gnode_stream
+      - name: native_format
+        value: resp3
+      - name: api_version
+        value: v1
+      - name: contract_stability
+        value: stable
+      - name: domain_primary
+        value: infrastructure
+      - name: implementation_language
+        value: rust
+      - name: build_type
+        value: cargo_release
+      - name: component_tier
+        value: infrastructure
+      - name: license_tier
+        value: open_source
+      - name: requires_valkey
+        value: "yes"
+      - name: systemd_managed
+        value: "yes"
+      - name: data_sensitivity
+        value: internal
+
+  # ─── Level 2: Application Framework ─────────────────────────
+
+  - id: gNode-CMS
+    metadata:
+      repo: "geodineum/gNode-CMS"
+      description: "gNode extension — Tera template rendering, content storage, 22 commands"
+      install_path: "gNode"  # builds as feature of gNode
+    depends_on: [gNode]
+    capabilities:
+      - name: protocol
+        value: gnode_stream
+      - name: native_format
+        value: json
+      - name: api_version
+        value: v1
+      - name: contract_stability
+        value: stable
+      - name: domain_primary
+        value: template
+      - name: implementation_language
+        value: rust
+      - name: build_type
+        value: cargo_release
+      - name: component_tier
+        value: framework
+      - name: license_tier
+        value: open_source
+      - name: requires_valkey
+        value: "yes"
+      - name: systemd_managed
+        value: "no"  # part of gNode daemon
+      - name: data_sensitivity
+        value: internal
+
+  - id: gNode-Client
+    metadata:
+      repo: "geodineum/gNode-Client"
+      description: "PHP client library — CredentialResolver, stream I/O, Lua call bridge"
+      install_path: "gNode-Client"
+    depends_on: [ValKey]
+    capabilities:
+      - name: protocol
+        value: php_internal
+      - name: native_format
+        value: php_array
+      - name: api_version
+        value: v1
+      - name: contract_stability
+        value: stable
+      - name: domain_primary
+        value: infrastructure
+      - name: implementation_language
+        value: php
+      - name: build_type
+        value: composer
+      - name: component_tier
+        value: framework
+      - name: license_tier
+        value: open_source
+      - name: requires_valkey
+        value: "yes"
+      - name: systemd_managed
+        value: "no"
+      - name: data_sensitivity
+        value: credentials
+
+  - id: gCore
+    metadata:
+      repo: "geodineum/gCore"
+      description: "Manager-of-managers PHP framework — 18 base managers, multi-platform"
+      install_path: "gCore"
+    depends_on: [gNode-Client]
+    capabilities:
+      - name: protocol
+        value: php_internal
+      - name: native_format
+        value: php_array
+      - name: api_version
+        value: v1
+      - name: contract_stability
+        value: stable
+      - name: domain_primary
+        value: framework
+      - name: implementation_language
+        value: php
+      - name: build_type
+        value: composer
+      - name: component_tier
+        value: framework
+      - name: license_tier
+        value: open_source
+      - name: requires_valkey
+        value: "yes"
+      - name: systemd_managed
+        value: "no"
+      - name: data_sensitivity
+        value: internal
+
+  - id: Geodineum-COMMS
+    metadata:
+      repo: "geodineum/Geodineum-COMMS"
+      description: "Notification daemon — email, Telegram, SMS via ValKey streams"
+      install_path: "Geodineum-COMMS"
+    depends_on: [gNode, ValKey]
+    capabilities:
+      - name: protocol
+        value: gnode_stream
+      - name: native_format
+        value: json
+      - name: api_version
+        value: v1
+      - name: contract_stability
+        value: stable
+      - name: domain_primary
+        value: messaging
+      - name: implementation_language
+        value: rust
+      - name: build_type
+        value: cargo_release
+      - name: component_tier
+        value: framework
+      - name: license_tier
+        value: open_source
+      - name: requires_valkey
+        value: "yes"
+      - name: systemd_managed
+        value: "yes"
+      - name: data_sensitivity
+        value: internal
+
+  # ─── Level 3: Presentation Framework ────────────────────────
+
+  - id: gTemplate
+    metadata:
+      repo: "geodineum/gTemplate"
+      description: "WordPress parent theme — 9-phase bootstrap, 3-tier rendering, filter hooks"
+      install_path: "gTemplate"
+    depends_on: [gCore]
+    capabilities:
+      - name: protocol
+        value: php_internal
+      - name: native_format
+        value: php_array
+      - name: api_version
+        value: v1
+      - name: contract_stability
+        value: stable
+      - name: domain_primary
+        value: presentation
+      - name: implementation_language
+        value: php
+      - name: build_type
+        value: composer
+      - name: component_tier
+        value: extension
+      - name: license_tier
+        value: open_source
+      - name: requires_valkey
+        value: "no"
+      - name: systemd_managed
+        value: "no"
+      - name: data_sensitivity
+        value: public
+
+  # ─── Level 4: End-User Theme ────────────────────────────────
+
+  - id: gCube
+    metadata:
+      repo: "geodineum/gCube"
+      description: "CSS 3D cube child theme — 6-face navigable layout"
+      install_path: "gCube"
+    depends_on: [gTemplate]
+    capabilities:
+      - name: protocol
+        value: php_internal
+      - name: native_format
+        value: php_array
+      - name: api_version
+        value: v1
+      - name: contract_stability
+        value: stable
+      - name: domain_primary
+        value: presentation
+      - name: implementation_language
+        value: php
+      - name: build_type
+        value: none
+      - name: component_tier
+        value: theme
+      - name: license_tier
+        value: open_source
+      - name: requires_valkey
+        value: "no"
+      - name: systemd_managed
+        value: "no"
+      - name: data_sensitivity
+        value: public
+
+  # ─── Level 5: Utilities ─────────────────────────────────────
+
+  - id: Geodineum-BAK
+    metadata:
+      repo: "geodineum/Geodineum-BAK"
+      description: "Backup and log rotation — ValKey RDB, systemd timer"
+      install_path: "Geodineum-BAK"
+    depends_on: [gNode, ValKey]
+    capabilities:
+      - name: protocol
+        value: cli
+      - name: native_format
+        value: binary
+      - name: api_version
+        value: v1
+      - name: contract_stability
+        value: stable
+      - name: domain_primary
+        value: backup
+      - name: implementation_language
+        value: bash
+      - name: build_type
+        value: none
+      - name: component_tier
+        value: utility
+      - name: license_tier
+        value: open_source
+      - name: requires_valkey
+        value: "yes"
+      - name: systemd_managed
+        value: "yes"
+      - name: data_sensitivity
+        value: internal
