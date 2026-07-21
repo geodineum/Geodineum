@@ -111,10 +111,10 @@ YES_MODE=false
 # Wizard state
 INTENT="deploy"           # always deploy in public installer
 CONSTELLATION="new"       # new | private
-DEPLOY_TIER=""            # headless | replica | full (when joining constellation)
+DEPLOY_TIER=""            # web | full | compute | replica (when joining constellation)
 MASTER_IP=""              # constellation master's VPN IP (non-interactive join)
 VALKEY_REPLICA="false"    # true if this node runs a ValKey replica
-SKIP_LOCAL_VALKEY="false" # true if using remote ValKey only (full / headless node)
+SKIP_LOCAL_VALKEY="false" # true if using remote ValKey only (web / full / compute node)
 CONSTELLATION_DAEMON_PW=""  # master's valkey_daemon.password, pasted during a join install
 CONSTELLATION_REPLICA_PW="" # master's valkey_replica.password, pasted during a replica join
 GNODE_NODE_ID=""            # this node's unique id / consumer name (default: hostname on a join, "master" otherwise)
@@ -211,14 +211,14 @@ usage() {
     echo "  2. Components — standard (all) or custom selection"
     echo ""
     echo "Options:"
-    echo "  --profile <name>        Install predefined set: minimal, standard"
+    echo "  --profile <name>        Install predefined set: minimal, standard, compute"
     echo "  --components <list>     Comma-separated components to install"
     echo "  --no-comms              Exclude Geodineum-COMMS (use a dedicated SMTP"
     echo "                          node, or notifications from the constellation master)"
     echo "  --with-comms            Force-include Geodineum-COMMS (non-interactive)"
     echo "  --install-root <path>   Production install location (default: /opt/geodineum)"
     echo "  --constellation <type>  new or private"
-    echo "  --deploy-tier <tier>    headless, full, or replica (join an existing constellation)"
+    echo "  --deploy-tier <tier>    web, full, compute, or replica (join an existing constellation)"
     echo "  --master-ip <ip>        Constellation master's VPN IP (with --deploy-tier; e.g. 10.66.0.1)"
     echo "  --site <domain>         Deploy a WordPress site after install"
     echo "  --theme <name>          Child theme: gcube (default)"
@@ -240,12 +240,14 @@ usage() {
     echo "Profiles:"
     echo "  minimal     WordPress themes + gCore framework (no daemon)"
     echo "  standard    Full stack: daemon + ValKey + framework + themes + notifications + backup"
+    echo "  compute     gNode daemon only — no web server, PHP, or database"
     echo ""
     echo "Examples:"
     echo "  sudo $0                                     # Interactive guided setup"
     echo "  sudo $0 --profile standard --yes            # Non-interactive standard"
     echo "  sudo $0 --install-root /srv/geodineum       # Custom install location"
     echo "  sudo $0 --constellation private --deploy-tier replica  # Join existing"
+    echo "  sudo $0 --deploy-tier compute --master-ip 10.66.0.1 --yes  # Non-web worker"
 }
 
 parse_args() {
@@ -401,27 +403,37 @@ get_profile_components() {
     case "$1" in
         minimal)    echo "gnode-client gcore gtemplate-wp" ;;
         standard)   echo "gnode-daemon gnode-client gcore gtemplate-wp gcube geodineum-comms geodineum-bak" ;;
-        *)          log_error "Unknown profile: $1 (available: minimal, standard)"; exit 1 ;;
+        # No PHP, no web server, no database: a node that reaches the
+        # constellation over the VPN and never faces the internet.
+        compute)    echo "gnode-daemon" ;;
+        *)          log_error "Unknown profile: $1 (available: minimal, standard, compute)"; exit 1 ;;
     esac
 }
 
 # Map a non-interactive --deploy-tier into the profile + ValKey flags, so a
 # constellation node can be provisioned by a script without the wizard.
 # Mirrors the interactive wizard's tier cases — keep them in sync.
-#   headless : minimal profile, no daemon, no local ValKey (connects to master)
-#   full     : standard profile + daemon, no local ValKey (daemon talks to master)
-#   replica  : standard profile + local ValKey replica (EXPERIMENTAL)
+# Each tier names what the node DOES, along three axes: serves web, runs a
+# daemon, holds ValKey.
+#   web      : serves sites, no daemon, no local ValKey (connects to master)
+#   full     : serves sites + daemon, no local ValKey (daemon talks to master)
+#   compute  : daemon only — no web server, no PHP, no database, never exposed
+#   replica  : serves sites + daemon + local ValKey replica (EXPERIMENTAL)
 # Requires --master-ip (or VALKEY_HOST) so the node knows the master's VPN IP.
 apply_deploy_tier() {
     [[ -z "$DEPLOY_TIER" ]] && return 0
     CONSTELLATION="private"
     case "$DEPLOY_TIER" in
-        headless)
+        web)
             [[ -z "$PROFILE" ]] && PROFILE="minimal"
             SKIP_LOCAL_VALKEY="true"
             ;;
         full)
             [[ -z "$PROFILE" ]] && PROFILE="standard"
+            SKIP_LOCAL_VALKEY="true"
+            ;;
+        compute)
+            [[ -z "$PROFILE" ]] && PROFILE="compute"
             SKIP_LOCAL_VALKEY="true"
             ;;
         replica)
@@ -430,7 +442,7 @@ apply_deploy_tier() {
             log_warning "Replica tier is EXPERIMENTAL (no read/write split yet — writes must reach the master)."
             ;;
         *)
-            log_error "Unknown --deploy-tier: ${DEPLOY_TIER} (expected: headless | full | replica)"
+            log_error "Unknown --deploy-tier: ${DEPLOY_TIER} (expected: web | full | compute | replica)"
             exit 1
             ;;
     esac
@@ -1256,12 +1268,12 @@ wizard_constellation_wireguard_prep() {
 # operator never has to shell into another window to copy them. Values are
 # captured here (hidden input) and written to /etc/geodineum/credentials/ in
 # phase_config, once the gnode user + creds dir exist. Daemon-bearing tiers
-# (full/replica) need the gnode_daemon password; replica also needs the
-# replication password. Headless runs no daemon — its per-site client creds
+# (full/compute/replica) need the gnode_daemon password; replica also needs the
+# replication password. The web tier runs no daemon — its per-site client creds
 # are minted at site-registration time on the master, so nothing to paste.
 wizard_constellation_credentials() {
     case "$DEPLOY_TIER" in
-        full|replica) ;;
+        full|compute|replica) ;;
         *) return 0 ;;
     esac
 
@@ -1420,7 +1432,7 @@ phase_selection() {
             echo ""
             echo -e "  ${BOLD}What role will this node serve?${NC}"
             echo ""
-            echo -e "    ${BOLD}a) Headless${NC}       gCore + services only — no daemon, no local ValKey"
+            echo -e "    ${BOLD}a) Web${NC}            gCore + services only — no daemon, no local ValKey"
             echo -e "       ${DIM}Lightest footprint. For satellite sites or PHP services${NC}"
             echo -e "       ${DIM}that just need stream access to the constellation.${NC}"
             echo ""
@@ -1432,14 +1444,19 @@ phase_selection() {
             echo -e "       ${DIM}Full processing power. Uses master's ValKey over WireGuard VPN.${NC}"
             echo -e "       ${DIM}For distributed topologies and high-availability setups.${NC}"
             echo ""
+            echo -e "    ${BOLD}d) Compute${NC}        gNode daemon only — no web server, no PHP, no database"
+            echo -e "       ${DIM}Never faces the internet. Reaches the constellation solely over${NC}"
+            echo -e "       ${DIM}the WireGuard VPN. For inference, workers, and pipelines.${NC}"
+            echo ""
 
             local tier_choice
-            read -p "  Select [a/b/c, default: c]: " -n 1 tier_choice
+            read -p "  Select [a/b/c/d, default: c]: " -n 1 tier_choice
             echo ""
 
             case "${tier_choice:-c}" in
-                a|A) DEPLOY_TIER="headless" ;;
+                a|A) DEPLOY_TIER="web" ;;
                 b|B) DEPLOY_TIER="replica" ;;
+                d|D) DEPLOY_TIER="compute" ;;
                 *)   DEPLOY_TIER="full" ;;
             esac
 
@@ -1458,26 +1475,10 @@ phase_selection() {
             echo ""
             log_info "Constellation: ${VALKEY_HOST}:${VALKEY_PORT} (via WireGuard VPN)"
 
-            # Adjust profile + flags based on tier (mirror of apply_deploy_tier).
-            case "$DEPLOY_TIER" in
-                headless)
-                    PROFILE="minimal"
-                    SKIP_LOCAL_VALKEY="true"
-                    log_info "Auto-selected minimal profile (headless: no daemon, no local ValKey — connects to master)"
-                    ;;
-                replica)
-                    PROFILE="standard"
-                    VALKEY_REPLICA="true"
-                    log_warning "Replica tier is EXPERIMENTAL: read/write splitting is not yet"
-                    log_warning "implemented, so a local replica cannot serve writes. Prefer"
-                    log_warning "'headless' or 'full' for production until a future release."
-                    ;;
-                full)
-                    PROFILE="standard"
-                    SKIP_LOCAL_VALKEY="true"
-                    log_info "Auto-selected standard profile (full node: daemon, no local ValKey)"
-                    ;;
-            esac
+            # One implementation of tier → profile + flags, shared with the
+            # non-interactive --deploy-tier path. A second copy here drifted
+            # from it once already.
+            apply_deploy_tier
 
             # Node ID — must be UNIQUE per node: it's the daemon's consumer
             # name in the shared group, so a worker that reuses the master's
@@ -4231,7 +4232,10 @@ phase_config() {
         log_dry "Create /etc/geodineum/ directory structure"
         log_dry "Write /etc/geodineum/bootstrap.env (3 keys, root:geodineum-bootstrap 0640)"
         log_dry "Populate ValKey tier (geodineum:bootstrap:*) with operator config"
-        log_dry "Generate gcore.env, create gnode/geodineum users+groups, set credentials perms"
+        if has_gcore "${resolved[@]}"; then
+            log_dry "Generate gcore.env + /etc/geodineum/sites (web tier)"
+        fi
+        log_dry "Create gnode/geodineum users+groups, set credentials perms"
         return
     fi
 
@@ -4257,8 +4261,12 @@ phase_config() {
     track_path_if_new /etc/geodineum/components
     track_path_if_new /etc/geodineum/components/gnode-daemon
     track_path_if_new /etc/geodineum/components/gnode-daemon/nodes
-    track_path_if_new /etc/geodineum/components/gCore
-    track_path_if_new /etc/geodineum/sites
+    # gCore config + the per-site credential dir it reads are web-tier
+    # artifacts. A compute node runs no gCore and hosts no sites.
+    if has_gcore "${resolved[@]}"; then
+        track_path_if_new /etc/geodineum/components/gCore
+        track_path_if_new /etc/geodineum/sites
+    fi
 
     # ── 3a. Create gnode user + geodineum group BEFORE any chown-using
     # install -d (phase-ordering fix). Previously the install -d
@@ -4293,8 +4301,12 @@ phase_config() {
     install -d -m 0755 -o gnode -g gnode    /etc/geodineum/components
     install -d -m 0755 -o gnode -g gnode    /etc/geodineum/components/gnode-daemon
     install -d -m 0755 -o gnode -g gnode    /etc/geodineum/components/gnode-daemon/nodes
-    install -d -m 0755 -o gnode -g gnode    /etc/geodineum/components/gCore
-    install -d -m 0750 -o gnode -g www-data /etc/geodineum/sites
+    # www-data owns the read side of both: gCore's env file and the per-site
+    # ValKey client credentials it loads. Neither exists without a web tier.
+    if has_gcore "${resolved[@]}"; then
+        install -d -m 0755 -o gnode -g gnode    /etc/geodineum/components/gCore
+        install -d -m 0750 -o gnode -g www-data /etc/geodineum/sites
+    fi
 
     local deploy_user="${SUDO_USER:-$(whoami)}"
 
@@ -4415,7 +4427,7 @@ EOF
     fi
 
     # ── 8. Component-specific gcore.env ───────────────────────────────────
-    if [[ ! -f /etc/geodineum/components/gCore/gcore.env ]]; then
+    if has_gcore "${resolved[@]}" && [[ ! -f /etc/geodineum/components/gCore/gcore.env ]]; then
         cat > /etc/geodineum/components/gCore/gcore.env << 'GCEOF'
 # gCore Component Configuration
 # ==============================
@@ -5013,17 +5025,18 @@ phase_functions() {
         return
     fi
 
-    if [[ "$DRY_RUN" == "true" ]]; then
-        log_dry "Load Lua functions into ValKey (22 base + 1 CMS library)"
+    # Ordered before the dry-run branch so a dry run reports the same decision
+    # a real run would take, rather than claiming a load that never happens.
+    if [[ "$SKIP_LOCAL_VALKEY" == "true" ]]; then
+        # Constellation worker: the function libraries live in the MASTER's
+        # ValKey, which owns that namespace. The worker's daemon verifies them
+        # read-only at startup and never writes them.
+        log_info "Remote ValKey (constellation worker) — function libraries are managed on the master"
         return
     fi
 
-    if [[ "$SKIP_LOCAL_VALKEY" == "true" ]]; then
-        # Constellation worker: the function libraries live in the MASTER's
-        # ValKey (loaded there at its install; the daemon re-verifies at
-        # startup). Nothing to load locally — this is the expected state,
-        # not a failure.
-        log_info "Remote ValKey (constellation worker) — function libraries are managed on the master"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_dry "Load Lua functions into ValKey (base libraries + extension libraries)"
         return
     fi
 
@@ -5649,7 +5662,7 @@ _setup_new() {
     echo ""
     echo -e "  ${BOLD}New service — web-facing?${NC}"
     echo -e "    ${BOLD}1) Web${NC}        serves HTTP — sites, apps, APIs"
-    echo -e "    ${BOLD}2) Non-web${NC}    headless — workers, daemons, pipelines, inference"
+    echo -e "    ${BOLD}2) Non-web${NC}    workers, daemons, pipelines, inference"
     echo ""
     local face; read -p "  Select [1-2, default: 1]: " -n 1 face; echo ""
     case "${face:-1}" in

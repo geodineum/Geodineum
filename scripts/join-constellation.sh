@@ -3,7 +3,7 @@
 # join-constellation.sh — add this host to an existing Geodineum constellation
 # =============================================================================
 # Worker-side helper. Brings up a WireGuard tunnel to the constellation master,
-# then runs a headless (or full) install that connects to the master's ValKey.
+# then runs an install at the requested tier that connects to the master's ValKey.
 #
 # The master is the source of truth for membership: this script PAUSES so you
 # can run `geodineum constellation add-peer` there. A node cannot join the VPN
@@ -21,7 +21,8 @@
 #       --worker-public   "<this_node_public_ip>"          # for the add-peer endpoint
 #
 # Options:
-#   --tier <headless|full>   Deploy tier (default: headless)
+#   --tier <name>            Deploy tier, passed to install.sh --deploy-tier:
+#                            web | full | compute | replica (default: web)
 #   --master-vpn-ip <ip>     Master's VPN IP (default: 10.66.0.1)
 #   --wg-port <port>         WireGuard UDP port (default: 51820)
 #   --name <name>            Peer name shown on the master (default: hostname)
@@ -40,7 +41,7 @@ WORKER_VPN_IP=""
 WORKER_PUBLIC=""
 MASTER_VPN_IP="10.66.0.1"
 WG_PORT="51820"
-TIER="headless"
+TIER="web"
 PEER_NAME="$(hostname -s 2>/dev/null || echo node)"
 ASSUME_PEERED="false"
 
@@ -68,7 +69,8 @@ done
 [[ -n "$MASTER_PUBKEY" ]]   || die "--master-pubkey required (from: geodineum constellation status, on the master)"
 [[ -n "$MASTER_ENDPOINT" ]] || die "--master-endpoint required (master_public_ip:${WG_PORT})"
 [[ -n "$WORKER_VPN_IP" ]]   || die "--worker-vpn-ip required (e.g. 10.66.0.2 — must be free in the constellation)"
-[[ "$TIER" == "headless" || "$TIER" == "full" ]] || die "--tier must be headless or full (replica is experimental; use the installer directly)"
+# Tier vocabulary is install.sh's to define; it validates and errors on its own
+# terms. A second list here drifted from it once already.
 
 # ── 1. WireGuard tooling ────────────────────────────────────────────────────
 if ! command -v wg >/dev/null 2>&1; then
