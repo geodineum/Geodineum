@@ -117,6 +117,8 @@ VALKEY_REPLICA="false"    # true if this node runs a ValKey replica
 SKIP_LOCAL_VALKEY="false" # true if using remote ValKey only (web / full / compute node)
 CONSTELLATION_DAEMON_PW=""  # master's valkey_daemon.password, pasted during a join install
 CONSTELLATION_REPLICA_PW="" # master's valkey_replica.password, pasted during a replica join
+CONSTELLATION_NODE_USER=""  # this node's own ValKey ACL user, minted by the master's `expand`
+CONSTELLATION_NODE_PW=""    # its password (empty = fall back to the shared gnode_daemon login)
 GNODE_NODE_ID=""            # this node's unique id / consumer name (default: hostname on a join, "master" otherwise)
 # GitHub auth: SSH (deploy key) or HTTPS (PAT). All repos are currently
 # private — see docs/GITHUB_AUTH.md for setup before running install.sh.
@@ -1331,10 +1333,25 @@ wizard_apply_constellation_bundle() {
     chmod 600 "$wg_conf" 2>/dev/null || true
     CONSTELLATION_DAEMON_PW="$(printf '%s\n' "$decoded" \
         | awk '/^---VALKEY_DAEMON_PASSWORD---/{f=1;next} /^---VALKEY_REPLICA_PASSWORD---/{f=0} f' | sed '/^[[:space:]]*$/d' | head -1)"
+    # V2 ends the replica section at the node-identity block; V1 bundles have
+    # no such block and end at ===END===, so both terminators are listed.
     CONSTELLATION_REPLICA_PW="$(printf '%s\n' "$decoded" \
-        | awk '/^---VALKEY_REPLICA_PASSWORD---/{f=1;next} /^===END===/{f=0} f' | sed '/^[[:space:]]*$/d' | head -1)"
+        | awk '/^---VALKEY_REPLICA_PASSWORD---/{f=1;next} /^---VALKEY_NODE_USER---/{f=0} /^===END===/{f=0} f' | sed '/^[[:space:]]*$/d' | head -1)"
 
-    log_success "Bundle applied — WireGuard config + credentials captured."
+    # Per-node ValKey identity (V2+). Absent from a V1 bundle, and absent from
+    # a V2 bundle whose master could not mint one — in both cases the node
+    # falls back to the shared gnode_daemon login and still works.
+    CONSTELLATION_NODE_USER="$(printf '%s\n' "$decoded" \
+        | awk '/^---VALKEY_NODE_USER---/{f=1;next} /^---VALKEY_NODE_PASSWORD---/{f=0} f' | sed '/^[[:space:]]*$/d' | head -1)"
+    CONSTELLATION_NODE_PW="$(printf '%s\n' "$decoded" \
+        | awk '/^---VALKEY_NODE_PASSWORD---/{f=1;next} /^===END===/{f=0} f' | sed '/^[[:space:]]*$/d' | head -1)"
+
+    if [[ -n "$CONSTELLATION_NODE_USER" ]] && [[ -n "$CONSTELLATION_NODE_PW" ]]; then
+        log_success "Bundle applied — WireGuard config + credentials captured (identity: ${CONSTELLATION_NODE_USER})."
+    else
+        log_success "Bundle applied — WireGuard config + credentials captured."
+        log_info "No per-node ValKey identity in this bundle — using the shared gnode_daemon login."
+    fi
     systemctl enable --now wg-quick@wg-geodineum 2>/dev/null || true
     local master_ip="${VALKEY_HOST:-10.66.0.1}"
     if ping -c2 -W2 "$master_ip" >/dev/null 2>&1; then
@@ -2945,20 +2962,34 @@ provision_daemon_acl() {
     # disallowed (still leaves @all so KEYS is technically allowed but
     # the cluster-safety invariant requires SCAN — runtime-side
     # discipline; ACL is permissive at the daemon tier).
+    # The daemon-tier grant, defined ONCE. `constellation expand` mints a
+    # per-node user of this same tier on the master, and must not carry its
+    # own copy of the rule — two definitions of a privilege boundary drift,
+    # and the drift is silent until something is over- or under-permitted.
+    local acl_rule_file="/etc/geodineum/components/gnode-daemon/acl-daemon-tier.rule"
+    local acl_daemon_tier=(
+        on
+        resetkeys "~*"
+        resetchannels "&*"
+        +@all
+        -@dangerous
+        +function +xinfo
+    )
+
     if ! REDISCLI_AUTH="$(cat "$admin_pwfile")" valkey-cli -p "$valkey_port" \
         ACL SETUSER gnode_daemon \
-        on \
         resetpass ">${password}" \
-        resetkeys "~*" \
-        resetchannels "&*" \
-        +@all \
-        -@dangerous \
-        +function +xinfo \
+        "${acl_daemon_tier[@]}" \
         >/dev/null; then
         log_warning "ACL SETUSER gnode_daemon failed — see output above"
         log_info "Retry: sudo REDISCLI_AUTH=\"\$(cat ${admin_pwfile})\" valkey-cli -p ${valkey_port} ACL LIST"
         return 1
     fi
+
+    install -d -m 0755 -o gnode -g gnode /etc/geodineum/components/gnode-daemon 2>/dev/null || true
+    printf '%s\n' "${acl_daemon_tier[*]}" > "$acl_rule_file"
+    chown root:gnode "$acl_rule_file" 2>/dev/null || true
+    chmod 0640 "$acl_rule_file" 2>/dev/null || true
 
     REDISCLI_AUTH="$(cat "$admin_pwfile")" valkey-cli -p "$valkey_port" ACL SAVE >/dev/null 2>&1 || true
 
@@ -4368,6 +4399,23 @@ phase_config() {
         chown gnode:geodineum-creds /etc/geodineum/credentials/valkey_replica.password 2>/dev/null || true
         chmod 0640 /etc/geodineum/credentials/valkey_replica.password
         log_success "Wrote master replica credential (from join wizard)"
+    fi
+    # This node's own ValKey identity, minted by the master's `expand`. Stored
+    # under its own name rather than overwriting valkey_daemon.password: the
+    # shared daemon login is still what everything authenticates as today, and
+    # a credential file whose contents no longer match its name is how silent
+    # auth failures start. Switching the daemon over to this identity is a
+    # separate change — see the node-identity section of the constellation
+    # contract.
+    if [[ -n "${CONSTELLATION_NODE_USER:-}" ]] && [[ -n "${CONSTELLATION_NODE_PW:-}" ]]; then
+        printf '%s' "$CONSTELLATION_NODE_PW" > /etc/geodineum/credentials/valkey_node.password
+        chown gnode:geodineum-creds /etc/geodineum/credentials/valkey_node.password 2>/dev/null || true
+        chmod 0640 /etc/geodineum/credentials/valkey_node.password
+        printf 'VALKEY_NODE_USER=%s\n' "$CONSTELLATION_NODE_USER" \
+            > /etc/geodineum/components/gnode-daemon/node-identity.env
+        chown root:gnode /etc/geodineum/components/gnode-daemon/node-identity.env 2>/dev/null || true
+        chmod 0640 /etc/geodineum/components/gnode-daemon/node-identity.env
+        log_success "Wrote per-node ValKey identity: ${CONSTELLATION_NODE_USER}"
     fi
 
     track_path_if_new /etc/geodineum/dashboard
