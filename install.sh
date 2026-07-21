@@ -2898,6 +2898,21 @@ phase_valkey() {
     fi
 }
 
+# valkey-cli exits 0 even when the SERVER rejects the command — it prints
+# "ERR ..." and reports success. Every `if ! valkey-cli ...` guard around an
+# ACL write is therefore a guard that never fires. Check the reply instead.
+valkey_admin_ok() {
+    local pwfile="$1" port="$2"; shift 2
+    local out
+    out="$(REDISCLI_AUTH="$(cat "$pwfile")" valkey-cli -p "$port" "$@" 2>&1)"
+    if [[ "$out" == "OK" ]]; then
+        return 0
+    fi
+    log_warning "ValKey rejected: $* "
+    log_warning "  server said: ${out}"
+    return 1
+}
+
 # Provision the gnode_daemon ACL user (closes Phase 8 + Phase 9 gap).
 #
 # The gnode-daemon binary, install-gnode-service.sh, and load-valkey-
@@ -2992,12 +3007,11 @@ provision_daemon_acl() {
         "-function|restore"
     )
 
-    if ! REDISCLI_AUTH="$(cat "$admin_pwfile")" valkey-cli -p "$valkey_port" \
+    if ! valkey_admin_ok "$admin_pwfile" "$valkey_port" \
         ACL SETUSER gnode_daemon \
         resetpass ">${password}" \
-        "${acl_daemon_tier[@]}" \
-        >/dev/null; then
-        log_warning "ACL SETUSER gnode_daemon failed — see output above"
+        "${acl_daemon_tier[@]}"; then
+        log_warning "ACL SETUSER gnode_daemon failed"
         log_info "Retry: sudo REDISCLI_AUTH=\"\$(cat ${admin_pwfile})\" valkey-cli -p ${valkey_port} ACL LIST"
         return 1
     fi
@@ -3075,16 +3089,15 @@ provision_replica_acl() {
     # Minimal replication user: no key/channel access, only the
     # replication-protocol commands. +ping lets the replica health-check
     # the link; +psync/+replconf are the PSYNC handshake.
-    if ! REDISCLI_AUTH="$(cat "$admin_pwfile")" valkey-cli -p "$valkey_port" \
+    if ! valkey_admin_ok "$admin_pwfile" "$valkey_port" \
         ACL SETUSER gnode_replica \
         on \
         resetpass ">${password}" \
         resetkeys \
         resetchannels \
         nocommands \
-        +psync +replconf +ping \
-        >/dev/null; then
-        log_warning "ACL SETUSER gnode_replica failed — see output above"
+        +psync +replconf +ping; then
+        log_warning "ACL SETUSER gnode_replica failed"
         return 1
     fi
 
