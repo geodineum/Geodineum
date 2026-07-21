@@ -289,8 +289,10 @@ Commands:
   config import <id>         Scan service root, import config files into ValKey
   update-service <id>       Update capabilities and config for an existing service
   deregister <site_id>      Complete service removal (streams, config, ACL, .geodineum/)
-  constellation <action>    Multi-node VPN: init, add-peer, status, join-replica, close
+  constellation <action>    Multi-node VPN: init, add-peer, expand, status, join-replica, close
+  node <action>             This node's role: show, expose <hints>, add, remove
   provision-service <svc>   Mint a service's ValKey auth on the master for a node to use
+  service <action>          Per-service install/uninstall/health for manifest services
   harden                    Deploy web-deny rules to all ecosystem directories
   info [<site_id>]          Show credentials, paths, .geodineum/ and connection details
   list                      List registered sites and services
@@ -532,6 +534,10 @@ main() {
         constellation)
             source "${LIB_DIR}/common.sh"
             cmd_constellation "$@"
+            ;;
+        node)
+            source "${LIB_DIR}/common.sh"
+            cmd_node "$@"
             ;;
         provision-service)
             source "${LIB_DIR}/common.sh"
@@ -2249,6 +2255,94 @@ EOF
             log_error "Unknown action: ${action}"
             echo "Usage: geodineum constellation <init|add-peer|remove-peer|show-config|close|status|join-replica|leave-replica>"
             exit 1
+            ;;
+    esac
+}
+
+# =============================================================================
+# node — this node's role in the constellation (exposure, identity)
+# =============================================================================
+# Exposure is the set of work classes this node processes. The subcommands
+# below are a guided front-end over gNode's node-exposure.sh; each prints the
+# direct command it runs, so a new dev learns the underlying tool by using it.
+cmd_node() {
+    local exposure_script="${GNODE_SCRIPTS}/node-exposure.sh"
+    local sub="${1:-}"; shift || true
+
+    # Help must work with or without gNode installed.
+    if [[ "$sub" == "--help" || "$sub" == "-h" || "$sub" == "help" ]]; then
+        cat <<EOF
+Usage: geodineum node <subcommand>
+
+This node's role in the constellation.
+
+Subcommands:
+  show                     Show current exposure and daemon state (default)
+  expose [<hint[,...]>]    Set the work classes this node processes.
+                           No argument → guided prompt.
+  add <hint>               Add one exposure to the current set
+  remove <hint>            Remove one exposure (never leaves it empty)
+
+Exposure is a SET: a node processes an entry if any member covers the
+entry's routing hint. Built-in: general, inference, gpu_compute, all.
+Custom hints need a routing config on the master.
+
+Direct mechanism (what these wrap):
+  ${GNODE_SCRIPTS}/node-exposure.sh <show|set|add|remove> [hint]
+
+Takes effect on the next daemon restart:
+  sudo systemctl restart gnode-daemon
+
+Examples:
+  geodineum node show
+  sudo geodineum node expose inference,gpu_compute
+  sudo geodineum node add sync
+EOF
+        return 0
+    fi
+
+    if [[ ! -x "$exposure_script" ]]; then
+        log_error "node-exposure.sh not found under ${GNODE_SCRIPTS} — is gNode installed?"
+        return 1
+    fi
+
+    case "$sub" in
+        expose)
+            # geodineum node expose [<hint[,hint...]>]
+            # No arg → guided: show current, list built-ins, prompt.
+            if [[ $# -eq 0 ]]; then
+                "$exposure_script" show
+                echo ""
+                echo "Enter the work classes this node should process, comma-separated."
+                echo "Common: general (default work), inference, gpu_compute, all."
+                echo "A laptop lending its GPU might use: inference,gpu_compute"
+                echo ""
+                local ans
+                read -r -p "Exposure (blank to cancel): " ans
+                [[ -z "$ans" ]] && { echo "Unchanged."; return 0; }
+                echo ""
+                echo "Direct form of what follows:"
+                echo "  sudo geodineum node expose ${ans}"
+                echo ""
+                require_sudo "Setting node exposure"
+                "$exposure_script" set "$ans"
+            else
+                require_sudo "Setting node exposure"
+                "$exposure_script" set "$1"
+            fi
+            ;;
+        add|remove)
+            [[ $# -ge 1 ]] || { log_error "Usage: geodineum node ${sub} <hint>"; return 1; }
+            require_sudo "Changing node exposure"
+            "$exposure_script" "$sub" "$1"
+            ;;
+        show|"")
+            "$exposure_script" show
+            ;;
+        *)
+            log_error "Unknown node subcommand: ${sub}"
+            log_info "Try: geodineum node --help"
+            return 1
             ;;
     esac
 }
