@@ -224,6 +224,34 @@ Route commands to specialized nodes using the `_gh` field:
 XADD {site}:gnode:unified:production * cmd predict params '{}' _gh inference
 ```
 
+A node processes an entry only if its type covers the entry's `_gh` hint. This
+is *exposure*: what a node is willing to do, independent of what it is capable
+of. It is why an intermittent or partially-trusted node — a developer laptop, a
+borrowed GPU box — can join without being handed load-bearing work. Give it
+`inference` and it serves inference and nothing else, no matter how busy the
+rest of the constellation is.
+
+## Intermittent Nodes and Orphan Recovery
+
+Nodes may leave without notice — a laptop sleeps, a network drops, a process is
+killed. Ownership of an in-flight stream entry lives in the consumer group until
+the entry is acknowledged, so an entry held by a node that vanished would, on
+its own, never be redelivered.
+
+Every node therefore periodically reclaims entries whose owner has gone idle
+past a threshold, restricted to entries its own exposure covers — a node never
+takes work it would not otherwise process. An entry orphaned by one node is
+picked up by another that is exposed to it; node loss costs throughput, never
+correctness.
+
+Consumers are cleaned up in step: a node removes itself from its groups on
+graceful shutdown, and a periodic sweep removes consumers that are idle with no
+pending entries. A consumer still holding entries is never removed — that would
+discard the entries — so a crashed node's work is reclaimed first and its
+consumer entry disappears only once it is empty. The practical effect: you can
+connect and disconnect a laptop all day and the group tracks live participants,
+not the history of connections.
+
 ## Security Model
 
 | Layer | Protection |
