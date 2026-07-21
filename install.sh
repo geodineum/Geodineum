@@ -2962,10 +2962,25 @@ provision_daemon_acl() {
     # disallowed (still leaves @all so KEYS is technically allowed but
     # the cluster-safety invariant requires SCAN — runtime-side
     # discipline; ACL is permissive at the daemon tier).
+    #
+    # FUNCTION is NOT in @dangerous — verified on a live instance, both by
+    # `ACL CAT dangerous` and by `ACL DRYRUN gnode_daemon FUNCTION FLUSH`
+    # returning OK. So -@dangerous never protected the shared Lua library
+    # namespace, and the `+function +xinfo` that used to sit here re-granted
+    # something that was never removed; ValKey compacted both away as no-ops.
+    # Deny the two destructive subcommands explicitly instead. Nothing uses
+    # them: the loader needs LOAD/DELETE/LIST and the daemon needs LOAD to
+    # sync libraries, all of which survive this.
+    #
+    # This is the backstop that does not depend on daemon code being correct.
+    # Without it the only thing preventing a repeat of the extension-library
+    # wipe is a single code path.
+    #
     # The daemon-tier grant, defined ONCE. `constellation expand` mints a
     # per-node user of this same tier on the master, and must not carry its
     # own copy of the rule — two definitions of a privilege boundary drift,
     # and the drift is silent until something is over- or under-permitted.
+    # Every future node inherits this backstop for free.
     local acl_rule_file="/etc/geodineum/components/gnode-daemon/acl-daemon-tier.rule"
     local acl_daemon_tier=(
         on
@@ -2973,7 +2988,8 @@ provision_daemon_acl() {
         resetchannels "&*"
         +@all
         -@dangerous
-        +function +xinfo
+        "-function|flush"
+        "-function|restore"
     )
 
     if ! REDISCLI_AUTH="$(cat "$admin_pwfile")" valkey-cli -p "$valkey_port" \
