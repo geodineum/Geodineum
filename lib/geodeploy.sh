@@ -1135,6 +1135,19 @@ EOF"
                 /usr/bin/sudo /usr/bin/chmod 0640 "$php_env" 2>/dev/null
             fi
         done
+
+        # A component that runs under its OWN identity must be able to read its
+        # own env file. The default above (gnode:geodineum) is unreadable to
+        # such a service — geodineum-comms is in groups geodineum-comms +
+        # geodineum-bootstrap, NOT geodineum — and because the unit uses
+        # `EnvironmentFile=-`, the failure is SILENT: the daemon starts, the
+        # token is simply absent, and Telegram/SMTP never come up. Group the
+        # file to the component's own identity so it can read it.
+        _comms_env="${config_root}/components/geodineum-comms/geodineum-comms.env"
+        if [[ -f "$_comms_env" ]] && getent group geodineum-comms >/dev/null 2>&1; then
+            /usr/bin/sudo /usr/bin/chown root:geodineum-comms "$_comms_env" 2>/dev/null
+            /usr/bin/sudo /usr/bin/chmod 0640 "$_comms_env" 2>/dev/null
+        fi
     fi
 
     # ── credentials/ ──

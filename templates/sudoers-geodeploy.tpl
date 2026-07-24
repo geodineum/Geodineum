@@ -69,6 +69,10 @@
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown root\:geodineum /etc/geodineum
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown root\:geodineum /etc/geodineum/services
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown gnode\:geodineum /etc/geodineum/bootstrap.env
+# A component running under its own identity must read its own env file;
+# the components/ default (gnode:geodineum) locks its service user out.
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown root\:geodineum-comms /etc/geodineum/components/geodineum-comms/geodineum-comms.env
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chmod 0640 /etc/geodineum/components/geodineum-comms/geodineum-comms.env
 
 # Web-deny files (root:geodineum)
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown root\:geodineum /opt/geodineum/*/.htaccess
