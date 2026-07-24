@@ -142,7 +142,9 @@ policy_read_patterns() {
     local manifest_path="$1" yq_path="$2"
     [[ -f "$manifest_path" ]] || return 1
     command -v yq &>/dev/null || return 1
-    yq eval "${yq_path}[] // empty" "$manifest_path" 2>/dev/null
+    # (path // [])[] — the `[] // empty` form is rejected by yq >= 4.5x's
+    # lexer, which silently zeroed every composed grant set.
+    yq eval "(${yq_path} // [])[]" "$manifest_path" 2>/dev/null
 }
 
 # ---- Grant composition -----------------------------------------------------
@@ -165,8 +167,12 @@ policy_compose_key_grants() {
     local failed=0
     local out=()
 
+    # Two accepted schemas, one policy: geodeploy.yaml declares under a data:
+    # root; service manifests (gnode_services.yaml) declare flat top-level
+    # consumes:/produces: lists. Same interpolation, validation, and deny.
     for yq_path in '.data.consumes.streams' '.data.consumes.keys' \
-                   '.data.produces.streams' '.data.produces.keys'; do
+                   '.data.produces.streams' '.data.produces.keys' \
+                   '.consumes' '.produces'; do
         while IFS= read -r raw; do
             [[ -n "$raw" ]] || continue
             interp=$(policy_interpolate "$raw" "$site_id" "$service_name" "$ecosystem")
@@ -252,7 +258,9 @@ policy_manifest_has_data() {
         ((.data.consumes.channels // []) | length) +
         ((.data.produces.streams // [])  | length) +
         ((.data.produces.keys // [])     | length) +
-        ((.data.produces.channels // []) | length)
+        ((.data.produces.channels // []) | length) +
+        ((.consumes // []) | length) +
+        ((.produces // []) | length)
     ' "$manifest_path" 2>/dev/null)
     [[ "$n" -gt 0 ]] 2>/dev/null
 }
