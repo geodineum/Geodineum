@@ -128,6 +128,12 @@ done
 # access to. This is why gIris/GeoV silently dropped out when the monolithic
 # auto-deploy.sh (which hardcoded them) was replaced by this orchestrator.
 SITE_REPOS_FILE="${GEODINEUM_ROOT}/site-repos.conf"
+# Exists-but-unreadable must be LOUD: a root:root site-repos.conf silently
+# stopped ALL site-repo deploys for a week on one host — the -r guard just
+# skipped the loop. Expected ownership: root:geodineum 640.
+if [[ -f "$SITE_REPOS_FILE" && ! -r "$SITE_REPOS_FILE" ]]; then
+    geodeploy_log "ERROR: ${SITE_REPOS_FILE} exists but is NOT readable by the deploy user — site repos are NOT deploying (fix: chown root:geodineum + chmod 640)"
+fi
 if [[ -r "$SITE_REPOS_FILE" ]]; then
     while IFS='|' read -r _sr_name _sr_branch || [[ -n "$_sr_name" ]]; do
         _sr_name="${_sr_name%%#*}"
@@ -157,13 +163,21 @@ geodeploy_fix_all_credentials "/etc/geodineum/credentials" || geodeploy_log "fix
 # doesn't silently die on owner drift (203/EXEC).
 geodeploy_fix_bak_perms "${GEODINEUM_ROOT}/Geodineum-BAK" || geodeploy_log "fix_bak_perms: FAILED (continuing)"
 
-# Global: fix /opt/geodineum root directory
-sudo chown root:geodineum "${GEODINEUM_ROOT}" 2>/dev/null
-sudo chmod 751 "${GEODINEUM_ROOT}" 2>/dev/null  # 751: www-data needs o+x traverse to reach theme symlinks
+# Global: fix /opt/geodineum root directory.
+# Fail SOFT with a log line, never abort: these run under the lib's set -e,
+# and a sudoers whitelist that predates a mode change (the 750→751 migration)
+# refuses the exact command → password prompt → nonzero → the WHOLE cycle
+# died here every 5 minutes (104 aborts before noticed on one host).
+# A refused perm fixup must degrade to a warning, not take deploys down.
+sudo chown root:geodineum "${GEODINEUM_ROOT}" 2>/dev/null \
+    || geodeploy_log "WARNING: chown root:geodineum ${GEODINEUM_ROOT} refused (sudoers) — continuing"
+sudo chmod 751 "${GEODINEUM_ROOT}" 2>/dev/null \
+    || geodeploy_log "WARNING: chmod 751 ${GEODINEUM_ROOT} refused (sudoers rule still 750?) — continuing"  # 751: www-data needs o+x traverse to reach theme symlinks
 
 # gNode: www-data needs traverse-only to reach credential files via .gnode symlink
 # (.gnode -> /etc/geodineum/credentials, files are www-data:www-data 600)
-sudo chmod 751 "${GEODINEUM_ROOT}/gNode" 2>/dev/null
+sudo chmod 751 "${GEODINEUM_ROOT}/gNode" 2>/dev/null \
+    || geodeploy_log "WARNING: chmod 751 ${GEODINEUM_ROOT}/gNode refused (sudoers rule still 750?) — continuing"
 
 # Global: fix centralized log directory at /var/log/geodineum/
 geodeploy_fix_log_perms "/var/log/geodineum" || geodeploy_log "fix_log_perms: FAILED (continuing)"
