@@ -13,6 +13,8 @@ against.
 
 | Contract | Scope |
 |---|---|
+| [NODE_ONBOARDING.md](NODE_ONBOARDING.md) | Joining a **machine** (server, workstation, laptop, GPU box) to a constellation end-to-end: get the bundle, run the join, set exposure, verify, and the intermittent/reconnect model. Agent twin: `NODE_ONBOARDING.scn.md`. |
+| [SERVICE_ONBOARDING.md](SERVICE_ONBOARDING.md) | Bringing a **service** (workload) into the mesh: registration, ValKey ACL identity, grants, and the permission layers. Agent twin: `SERVICE_ONBOARDING.scn.md`. |
 | [permission-model.md](permission-model.md) | Ownership, group access classes, and the credential model — who owns and reads what, and what must restart when group membership changes. |
 | [README_STYLE.md](README_STYLE.md) | The documentation standard every repo's `README.md` follows — section order, honesty/anti-drift rules, and the mandatory author/support/disclaimer/license blocks. |
 
