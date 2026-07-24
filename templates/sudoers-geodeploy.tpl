@@ -28,8 +28,30 @@
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:gnode /opt/geodineum/gNode/*
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:gnode /opt/geodineum/Geodineum-COMMS
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:gnode /opt/geodineum/Geodineum-COMMS/*
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:gnode /opt/geodineum/Geodineum-BAK
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:gnode /opt/geodineum/Geodineum-BAK/*
+# The deploy repo itself (descriptor declares group: geodineum). Without this
+# rule its own fix_perms sweep is refused on every pull — harmless while the
+# tree is clean, unhealable the day it drifts.
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum /opt/geodineum/Geodineum
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum /opt/geodineum/Geodineum/*
 
-# PHP components ({{DEPLOY_USER}}:www-data)
+# PHP components. Each component's geodeploy.yaml declares its runtime group
+# and the whitelist MUST cover that exact owner:group+path or the deploy
+# sweep's `sudo chown` dies at the password prompt (cron has no tty) and the
+# tree keeps its stale group. That skew crash-looped a gCore-consuming service
+# when gCore's descriptor moved www-data → geodineum-code while this template
+# still granted only www-data. BOTH groups are therefore granted per
+# component, so a node converges whichever side (template vs descriptor) is
+# ahead; every rule still pins the deploy user as owner on a fixed path.
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum-code /opt/geodineum/gCore
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum-code /opt/geodineum/gCore/*
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum-code /opt/geodineum/gTemplate
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum-code /opt/geodineum/gTemplate/*
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum-code /opt/geodineum/gCube
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum-code /opt/geodineum/gCube/*
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum-code /opt/geodineum/gNode-Client
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum-code /opt/geodineum/gNode-Client/*
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:www-data /opt/geodineum/gCore
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:www-data /opt/geodineum/gCore/*
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:www-data /opt/geodineum/gTemplate
@@ -65,6 +87,10 @@
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum /var/log/geodineum/deploy
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown root\:geodineum /opt/geodineum
 
+# BAK writable directories (gnode:gnode — backup service writes)
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R gnode\:gnode /opt/geodineum/Geodineum-BAK/backups
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R gnode\:gnode /opt/geodineum/Geodineum-BAK/logs
+
 # WordPress site hardening ({{DEPLOY_USER}}:www-data source, www-data:www-data writable dirs)
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:www-data /var/www/*
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown {{DEPLOY_USER}}\:www-data /var/www/*
@@ -96,3 +122,8 @@
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chmod 750 /etc/geodineum
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chmod 750 /etc/geodineum/*
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chmod 750 /opt/geodineum
+# 751 variants: the orchestrator moved the root (and gNode) mode to 751 so
+# www-data can traverse to theme symlinks / credential symlinks. Keep 750 too
+# for older orchestrators (same skew-tolerance rule as the PHP groups above).
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chmod 751 /opt/geodineum
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chmod 751 /opt/geodineum/gNode

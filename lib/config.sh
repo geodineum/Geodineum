@@ -1,4 +1,9 @@
 #!/bin/bash
+# Strict mode: sourced libs must not silent-fail when called from a context
+# that does not pre-set -euo (the same sweep already applied to every other
+# lib/*.sh; config.sh was the last one missing it).
+set -euo pipefail
+
 #
 # Geodineum CLI — Config Management Commands
 # =============================================

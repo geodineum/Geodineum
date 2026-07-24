@@ -640,8 +640,17 @@ geodeploy_fix_perms() {
     # geodineum-code. Create-if-missing makes deploys converge on any host.
     getent group "$group" >/dev/null 2>&1 || /usr/bin/sudo /usr/bin/groupadd --system "$group" 2>/dev/null || true
 
-    # Use /usr/bin/sudo /usr/bin/chown to fix root-owned file drift
-    /usr/bin/sudo /usr/bin/chown -R "${owner}:${group}" "$repo_dir" 2>/dev/null
+    # Use /usr/bin/sudo /usr/bin/chown to fix root-owned file drift.
+    # FAIL LOUD on refusal: when the sudoers whitelist lacks a rule for this
+    # exact owner:group+path, sudo dies at the password prompt (cron has no
+    # tty), the tree keeps its stale group, and — silently — the sweep
+    # converges nothing on every cycle. That skew crash-looped a gCore-consuming
+    # service for a week after gCore's descriptor moved to geodineum-code.
+    # The template now grants old+new groups per PHP component; this warning
+    # catches the next skew before it takes a service down.
+    if ! /usr/bin/sudo /usr/bin/chown -R "${owner}:${group}" "$repo_dir" 2>/dev/null; then
+        geodeploy_log "PERMS WARNING: chown -R ${owner}:${group} ${repo_dir} refused — sudoers rule missing for this owner:group+path (templates/sudoers-geodeploy.tpl vs the repo's geodeploy.yaml). Tree group NOT converged."
+    fi
 
     # Directory permissions: 2750 (owner rwx, group rx, sgid).
     # The sgid bit makes new files created under the dir (e.g. by `git pull`
@@ -1539,7 +1548,25 @@ geodeploy_repo() {
     }
 
     # Check for changes
-    geodeploy_has_changes "$branch" || return 0
+    if ! geodeploy_has_changes "$branch"; then
+        # No new commits — but ownership may still have drifted (a chown
+        # refused by a stale sudoers whitelist, root-owned files from manual
+        # sudo edits, …). fix_perms used to run ONLY on pull, so a quiet
+        # repo kept wrong ownership forever: after a sudoers group skew,
+        # gCube/gTemplate/gNode-Client could sit drifted for a week because
+        # they had nothing to pull. Detect-then-converge: one find that stops
+        # at the first wrong-owner/group entry (clean tree = one cheap scan,
+        # .git and cargo's target/ stay unmanaged as in fix_perms itself).
+        if [[ -f "${repo_dir}/geodeploy.yaml" ]]; then
+            geodeploy_parse_descriptor "${repo_dir}/geodeploy.yaml" || true
+        fi
+        if [[ -n "$(find "$repo_dir" -not -path '*/.git*' -not -path '*/target*' \
+                \( ! -group "$_GD_GROUP" -o ! -user "$_GD_OWNER" \) -print -quit 2>/dev/null)" ]]; then
+            geodeploy_log "${name}: ownership drift detected (no new commits) — converging to ${_GD_OWNER}:${_GD_GROUP}"
+            geodeploy_fix_perms "$repo_dir" "$_GD_OWNER" "$_GD_GROUP"
+        fi
+        return 0
+    fi
 
     # Load descriptor or use defaults
     if [[ -f "${repo_dir}/geodeploy.yaml" ]]; then
