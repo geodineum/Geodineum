@@ -1105,6 +1105,13 @@ EOF"
         find "${config_root}/components" -type f -exec /usr/bin/sudo /usr/bin/chown gnode:geodineum {} \; 2>/dev/null
         find "${config_root}/components" -type f -exec /usr/bin/sudo /usr/bin/chmod 0640 {} \; 2>/dev/null
 
+        # Per-node private signing key: gnode-only, never group-readable
+        local _receipt_key="${config_root}/components/gnode-daemon/receipt_signing.key"
+        if [[ -f "$_receipt_key" ]]; then
+            /usr/bin/sudo /usr/bin/chown gnode:gnode "$_receipt_key" 2>/dev/null
+            /usr/bin/sudo /usr/bin/chmod 0600 "$_receipt_key" 2>/dev/null
+        fi
+
         # PHP-readable component configs: root:geodineum-bootstrap 0640
         # (NOT world-readable 0644). www-data is a member of geodineum-bootstrap
         # via install.sh phase_users_groups — reads via group bit, not via
