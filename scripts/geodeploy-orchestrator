@@ -208,6 +208,61 @@ if [[ -d "${GEODINEUM_ROOT}/pro" ]]; then
     fi
 fi
 
+# =============================================================================
+# Orchestration coverage — nothing rots unseen
+# =============================================================================
+# A git repo under GEODINEUM_ROOT that is in neither CORE_REPOS nor
+# site-repos.conf is invisible to this script: nothing pulls it, nothing runs
+# geodeploy_fix_binaries over it. gShield sat exactly there for months — four
+# commits behind dev, its cargo binaries stripped of the execute bit by an old
+# sweep, every scheduled scan failing with a misleading "Binary not found",
+# silently withholding both the IP-allowlist self-ban fix and the decide-daemon
+# heartbeat emitter. The comment above records gIris/GeoV having done the same
+# when the monolithic auto-deploy.sh was replaced. Nothing in the design
+# noticed any of it; a person did, eventually.
+#
+# So the rule is now explicit: every repo here is MANAGED, or it declares
+# itself unmanaged (`unmanaged: true` in its own geodeploy.yaml, so the
+# declaration travels with the repo). Anything else gets named.
+#
+# Once a day, not once a run: this log is capped at GEODEPLOY_LOG_MAX lines and
+# a handful of warnings every five minutes would evict the deploy history the
+# log exists to hold — which is precisely the trade that left the journal
+# useless on 2026-07-24. Daily is frequent enough to catch a rot measured in
+# months.
+_gd_today=$(date '+%Y-%m-%d')
+_gd_cov_stamp="${GEODEPLOY_LOG_DIR}/.coverage-day"
+if [[ "$(cat "$_gd_cov_stamp" 2>/dev/null)" != "$_gd_today" ]]; then
+    echo "$_gd_today" > "$_gd_cov_stamp" 2>/dev/null || true
+
+    # Newline-delimited set, matched with a newline on both sides so that
+    # "gNode" never matches "gNode-Client".
+    _gd_managed=$'\n''Geodineum'$'\n'
+    for entry in "${CORE_REPOS[@]}"; do
+        _gd_managed+="${entry%%|*}"$'\n'
+    done
+    if [[ -r "$SITE_REPOS_FILE" ]]; then
+        while IFS='|' read -r _sr_name _sr_rest || [[ -n "$_sr_name" ]]; do
+            _sr_name="${_sr_name%%#*}"
+            _sr_name="${_sr_name//[[:space:]]/}"
+            if [[ -n "$_sr_name" ]]; then _gd_managed+="${_sr_name}"$'\n'; fi
+        done < "$SITE_REPOS_FILE"
+    fi
+
+    for _gd_repo_dir in "${GEODINEUM_ROOT}"/*/; do
+        [[ -d "${_gd_repo_dir}.git" ]] || continue
+        _gd_repo="$(basename "$_gd_repo_dir")"
+        if [[ "$_gd_managed" == *$'\n'"${_gd_repo}"$'\n'* ]]; then continue; fi
+        # Reads a file directly, so no pipe and no grep -q SIGPIPE hazard.
+        if grep -qE '^[[:space:]]*unmanaged:[[:space:]]*true[[:space:]]*$' \
+                "${_gd_repo_dir}geodeploy.yaml" 2>/dev/null; then
+            continue
+        fi
+        _gd_cov_head=$(geodeploy_as_deploy git -C "$_gd_repo_dir" log -1 --format='%h %cr' 2>/dev/null) || _gd_cov_head=""
+        geodeploy_log "COVERAGE WARNING: ${_gd_repo} is in neither CORE_REPOS nor site-repos.conf and does not declare 'unmanaged: true' — nothing pulls it and nothing fixes its binaries (HEAD ${_gd_cov_head:-unreadable}). Add it to ${SITE_REPOS_FILE}, or declare it unmanaged in ${_gd_repo}/geodeploy.yaml."
+    done
+fi
+
 # What the permission sweeps actually changed this cycle. Silence means the
 # tree was already converged — which, on a healthy host, is every cycle. This
 # replaces sudo's session lines as the record of the sweep's work: those cost
