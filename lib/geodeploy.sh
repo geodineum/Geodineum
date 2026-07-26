@@ -1051,7 +1051,15 @@ _GEODEPLOY_PHP_BLOCK='<FilesMatch "\.(?:php[1-7]?|phtml|phar|phps)$">
 </Files>'
 
 geodeploy_harden_wp_site() {
-    local site_dir="$1"
+    # Strip any trailing slash. The caller iterates `"${www_root}"/*/`, so
+    # site_dir arrives as `/var/www/name/` and every path built from it gets a
+    # doubled slash. File ACCESS collapses `//`, which is why that went
+    # unnoticed for so long — but find's `-path` is string matching and does
+    # not, so `-not -path "${wp_root}/wp-content/uploads"` silently matched
+    # nothing and the writable dirs were swept as source: claimed for the
+    # deploy user here, claimed back for www-data by step 2, ~900 paths per
+    # cycle, forever.
+    local site_dir="${1%/}"
     local wp_root="$site_dir"
 
     # Detect WP root (may be in public_html/). When it is, the OUTER site dir is
