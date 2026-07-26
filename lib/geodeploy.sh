@@ -977,7 +977,7 @@ geodeploy_ensure_helper_libs() {
     fi
     /usr/bin/sudo /usr/bin/install -d -m 0755 -o root -g root "$dst" 2>/dev/null
     local _helper
-    for _helper in bootstrap-loader.sh common.sh cli-helpers.sh manifest-registry.sh manifest-policy.sh manifest-install.sh; do
+    for _helper in bootstrap-loader.sh common.sh cli-helpers.sh manifest-registry.sh manifest-policy.sh manifest-install.sh assert-env-readable.sh; do
         [[ -f "${src}/${_helper}" ]] || continue
         /usr/bin/sudo /usr/bin/install -m 0755 -o root -g root "${src}/${_helper}" "${dst}/${_helper}" 2>/dev/null
     done

@@ -3932,7 +3932,7 @@ phase_build() {
 # of relying on /opt/geodineum/Geodineum/lib being on disk.
 ensure_bootstrap_loader_installed() {
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_dry "install ${LIB_DIR}/{bootstrap-loader,common,cli-helpers,manifest-registry,manifest-policy,manifest-install}.sh → /usr/local/lib/geodineum/"
+        log_dry "install ${LIB_DIR}/{bootstrap-loader,common,cli-helpers,manifest-registry,manifest-policy,manifest-install,assert-env-readable}.sh → /usr/local/lib/geodineum/"
         return 0
     fi
     if [[ ! -f "${LIB_DIR}/bootstrap-loader.sh" ]]; then
@@ -3949,7 +3949,7 @@ ensure_bootstrap_loader_installed() {
     # Optional helpers — present in source for new installs, may be absent on
     # older source trees (we don't fatal). Each handler library is independent.
     local _helper
-    for _helper in common.sh cli-helpers.sh manifest-registry.sh manifest-policy.sh manifest-install.sh; do
+    for _helper in common.sh cli-helpers.sh manifest-registry.sh manifest-policy.sh manifest-install.sh assert-env-readable.sh; do
         if [[ -f "${LIB_DIR}/${_helper}" ]]; then
             install -m 0755 -o root -g root \
                 "${LIB_DIR}/${_helper}" \
