@@ -1799,6 +1799,58 @@ phase_prerequisites() {
     fi
     unset _need_jsonschema_v4
 
+    # python3-redis — the Python ValKey client. Two consumers today: the
+    # pipeline worker template (lib/pipeline.sh generates a worker that
+    # `import redis`) and the receipt-stream verification script.
+    #
+    # The floor is 4.3, and it is not cosmetic: gNode publishes its
+    # capabilities as ValKey FUNCTIONS, and `Redis.fcall()` did not exist
+    # before redis-py 4.3. An older client connects and authenticates
+    # perfectly and then cannot call anything gNode actually exposes — which
+    # presents as a working connection with mysteriously missing features.
+    # Ubuntu 22.04 LTS ships 3.5.3, so apt alone is NOT sufficient there; same
+    # shape as the jsonschema case above, same remedy.
+    _need_redis_43=0
+    if ! python3 -c 'import redis' &>/dev/null; then
+        log_info "Installing python3-redis (apt)..."
+        apt_install "python3-redis" python3-redis || \
+            log_warning "python3-redis install failed — pipeline workers and receipt verification will be unavailable until installed"
+        _need_redis_43=1
+    fi
+    if python3 -c 'import redis' &>/dev/null; then
+        # Probe the capability, not the version string: the attribute is what
+        # callers actually need and it cannot disagree with itself.
+        python3 -c 'import redis, sys; sys.exit(0 if hasattr(redis.Redis, "fcall") else 1)' &>/dev/null \
+            || _need_redis_43=1
+    else
+        _need_redis_43=1
+    fi
+    if [[ $_need_redis_43 -eq 1 ]]; then
+        log_info "Ensuring redis-py >= 4.3 (ValKey FUNCTION/fcall support) via pip..."
+        if ! command -v pip3 &>/dev/null; then
+            apt_install "python3-pip" python3-pip 2>/dev/null || true
+        fi
+        if command -v pip3 &>/dev/null; then
+            pip3 install --break-system-packages --quiet 'redis>=4.3' 2>/dev/null \
+                || pip3 install --quiet 'redis>=4.3' 2>/dev/null \
+                || log_warning "redis-py upgrade failed — FCALL-based tooling will report 'no fcall()'"
+            if python3 -c 'import redis, sys; sys.exit(0 if hasattr(redis.Redis, "fcall") else 1)' &>/dev/null; then
+                log_success "redis-py >= 4.3 available (fcall supported)"
+            fi
+        else
+            log_warning "pip3 unavailable — cannot ensure redis-py >= 4.3"
+        fi
+    fi
+    unset _need_redis_43
+
+    # python3-requests — the pipeline worker template imports it alongside
+    # redis. No version floor; any packaged requests is fine.
+    if ! python3 -c 'import requests' &>/dev/null; then
+        log_info "Installing python3-requests (apt)..."
+        apt_install "python3-requests" python3-requests || \
+            log_warning "python3-requests install failed — generated pipeline workers will not start"
+    fi
+
     # curl — needed for Rust install, Composer, downloads
     if ! command -v curl &>/dev/null; then
         log_info "Installing curl..."
