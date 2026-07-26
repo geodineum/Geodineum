@@ -208,6 +208,16 @@ if [[ -d "${GEODINEUM_ROOT}/pro" ]]; then
     fi
 fi
 
+# What the permission sweeps actually changed this cycle. Silence means the
+# tree was already converged — which, on a healthy host, is every cycle. This
+# replaces sudo's session lines as the record of the sweep's work: those cost
+# ~1,250 journal entries per run to say "nothing had drifted" and held journal
+# retention down to ~15 hours, short enough that the COMMS boot failure of
+# 2026-07-24 had aged out before anyone asked what happened.
+if (( ${_GD_PERM_FIXES:-0} > 0 )); then
+    geodeploy_log "PERMS: ${_GD_PERM_FIXES} path(s) corrected this cycle"
+fi
+
 # liveness heartbeat — a stamp file, NOT a log line (a per-5-min
 # "RUN ok" line would itself be a log storm; alternating start/end lines
 # defeat the repeated-message dedupe). Liveness check:

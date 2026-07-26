@@ -621,6 +621,113 @@ for action in sorted(matched_actions):
 }
 
 # =============================================================================
+# Privileged operations — quiet, guarded, batched
+# =============================================================================
+# Three rules, all bought with one incident. The COMMS outage of 2026-07-24 sat
+# undiagnosed for 20 hours because the journal only reached back ~15: 96% of a
+# 500M ring was sudo session noise from the sweeps below — roughly 1,250
+# invocations every five minutes, three to four pam/session lines each, against
+# a tree that had not drifted and needed none of them. The evidence was evicted
+# before the question was asked.
+#
+#   1. Do not sudo to root when already root. The orchestrator runs from root's
+#      crontab, so every call logged `root : USER=root ; COMMAND=/usr/bin/chmod
+#      …` and bought no privilege the process did not already hold.
+#   2. Do not act on what has not drifted. Assert-if-different means a
+#      converged tree issues ZERO privileged calls.
+#   3. Batch. `-exec … +` passes many paths per process, and behind a drift
+#      guard find skips the exec entirely when nothing matches.
+#
+# Use these helpers for every ownership/mode assertion in this file. A raw
+# `sudo chmod` in a loop is the bug, not the style.
+
+# argv prefix for `find -exec`, which cannot call a shell function.
+# Empty when root; bash 4.4+ expands an empty array safely under `set -u`.
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    _GD_PRIV_ARGV=()
+else
+    _GD_PRIV_ARGV=(/usr/bin/sudo)
+fi
+
+_gd_priv() {
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        "$@"
+    else
+        /usr/bin/sudo "$@"
+    fi
+}
+
+# How many paths this run actually corrected. sudo's session lines used to be
+# the only record that the sweep had done anything, which is a poor trade: 1,250
+# journal lines per cycle to say "nothing had drifted". The helpers count their
+# own work instead and the orchestrator prints ONE line per cycle when the count
+# is non-zero — silence now means genuinely nothing changed.
+_GD_PERM_FIXES=0
+
+# Assert owner:group on ONE path, only when it differs.
+# An unreadable stat falls THROUGH to the chown: never skip a fix because the
+# check was inconclusive.
+_gd_own() {
+    local path="$1" owner="$2" group="$3" cur
+    [[ -e "$path" ]] || return 0
+    cur=$(stat -c '%U:%G' "$path" 2>/dev/null)
+    [[ -n "$cur" && "$cur" == "${owner}:${group}" ]] && return 0
+    _gd_priv /usr/bin/chown "${owner}:${group}" "$path" 2>/dev/null || true
+    _GD_PERM_FIXES=$(( _GD_PERM_FIXES + 1 ))
+    return 0
+}
+
+# Assert mode on ONE path, only when it differs. Takes 640 or 0640 alike.
+_gd_mode() {
+    local path="$1" mode="$2" cur
+    [[ -e "$path" ]] || return 0
+    cur=$(stat -c '%a' "$path" 2>/dev/null)
+    if [[ -n "$cur" ]] && (( 8#$cur == 8#$mode )); then
+        return 0
+    fi
+    _gd_priv /usr/bin/chmod "$mode" "$path" 2>/dev/null || true
+    _GD_PERM_FIXES=$(( _GD_PERM_FIXES + 1 ))
+    return 0
+}
+
+# Assert owner:group across a TREE. Extra find predicates go after the group
+# (e.g. -type f, -not -path '*/.git/*') and AND with the drift guard.
+_gd_own_tree() {
+    local root="$1" owner="$2" group="$3"; shift 3
+    [[ -d "$root" ]] || return 0
+    # `while read -d ''` rather than `mapfile -d ''`: mapfile's -d needs bash
+    # 4.4, and where it is missing it does not fail — it yields an EMPTY array,
+    # so every ownership assertion in the ecosystem would quietly stop
+    # happening. A silent no-op is the one failure mode this file exists to
+    # prevent. read -d '' has worked since bash 3 and cannot degrade that way.
+    local -a drifted=()
+    local _p
+    while IFS= read -r -d '' _p; do drifted+=("$_p"); done \
+        < <(find "$root" "$@" \( ! -user "$owner" -o ! -group "$group" \) -print0 2>/dev/null)
+    (( ${#drifted[@]} )) || return 0
+    printf '%s\0' "${drifted[@]}" \
+        | xargs -0r "${_GD_PRIV_ARGV[@]}" /usr/bin/chown "${owner}:${group}" 2>/dev/null || true
+    _GD_PERM_FIXES=$(( _GD_PERM_FIXES + ${#drifted[@]} ))
+    return 0
+}
+
+# Assert mode across a TREE. `! -perm <mode>` is an EXACT-bits mismatch test,
+# so this converges on the contract rather than merely adding bits.
+_gd_mode_tree() {
+    local root="$1" mode="$2"; shift 2
+    [[ -d "$root" ]] || return 0
+    local -a drifted=()
+    local _p
+    while IFS= read -r -d '' _p; do drifted+=("$_p"); done \
+        < <(find "$root" "$@" ! -perm "$mode" -print0 2>/dev/null)
+    (( ${#drifted[@]} )) || return 0
+    printf '%s\0' "${drifted[@]}" \
+        | xargs -0r "${_GD_PRIV_ARGV[@]}" /usr/bin/chmod "$mode" 2>/dev/null || true
+    _GD_PERM_FIXES=$(( _GD_PERM_FIXES + ${#drifted[@]} ))
+    return 0
+}
+
+# =============================================================================
 # Permissions — THE single authority
 # =============================================================================
 # This function is the ONLY place in the ecosystem that sets file ownership
@@ -664,15 +771,18 @@ geodeploy_fix_perms() {
     # cargo's helper binaries (build-script-build, proc-macro .so, release bin),
     # so the next `cargo build` dies with "Permission denied (os error 13)".
     # cargo manages target/ perms itself; this sweep must not touch it.
-    find "$repo_dir" -type d -not -path '*/.git/*' -not -path '*/target/*' -exec chmod 2750 {} \; 2>/dev/null
+    _gd_mode_tree "$repo_dir" 2750 -type d -not -path '*/.git/*' -not -path '*/target/*'
 
-    # File permissions: 640 (owner rw, group r)
-    find "$repo_dir" -type f -not -path '*/.git/*' -not -path '*/target/*' -not -name '.htaccess' -not -name 'nginx-deny.conf' \
-        -exec chmod 640 {} \; 2>/dev/null
+    # File permissions: 640 (owner rw, group r).
+    # *.sh/*.bash are excluded here because the very next pass sets them 750:
+    # sweeping them to 640 first only to raise them again left every script
+    # briefly non-executable and guaranteed this pass could never be a no-op.
+    _gd_mode_tree "$repo_dir" 640 -type f -not -path '*/.git/*' -not -path '*/target/*' \
+        -not -name '.htaccess' -not -name 'nginx-deny.conf' -not -name '*.sh' -not -name '*.bash'
 
     # Shell scripts: executable (by extension)
-    find "$repo_dir" -type f -name "*.sh" -not -path '*/.git/*' -exec chmod 750 {} \; 2>/dev/null
-    find "$repo_dir" -type f -name "*.bash" -not -path '*/.git/*' -exec chmod 750 {} \; 2>/dev/null
+    _gd_mode_tree "$repo_dir" 750 -type f -name '*.sh' -not -path '*/.git/*'
+    _gd_mode_tree "$repo_dir" 750 -type f -name '*.bash' -not -path '*/.git/*'
 
     # Shell/Python scripts: detect by shebang line. Three scan locations:
     #
@@ -688,8 +798,12 @@ geodeploy_fix_perms() {
         [[ -d "$script_dir" ]] || continue
         local _depth=2
         [[ "$script_dir" == "$repo_dir" ]] && _depth=1
-        find "$script_dir" -maxdepth "$_depth" -type f -not -path '*/.git/*' \
-            -exec sh -c 'head -c 2 "$1" 2>/dev/null | grep -q "#!" && chmod 750 "$1"' _ {} \; 2>/dev/null
+        # `! -perm 750` first, so an already-correct script is never re-read or
+        # re-chmodded; `-exec … +` then hands the survivors to ONE shell.
+        find "$script_dir" -maxdepth "$_depth" -type f -not -path '*/.git/*' ! -perm 750 \
+            -exec sh -c 'for f; do
+                    case $(head -c 2 "$f" 2>/dev/null) in "#!") chmod 750 "$f" 2>/dev/null ;; esac
+                done' _ {} + 2>/dev/null
     done
 
     # .git/ must be writable by deploy user for git pull
@@ -921,8 +1035,8 @@ geodeploy_harden_wp_site() {
     # tree (hardened below) and any legit www-data siblings are left intact.
     if [ -f "${wp_root}/public_html/wp-config.php" ]; then
         wp_root="${wp_root}/public_html"
-        /usr/bin/sudo /usr/bin/chown "${GEODEPLOY_DEPLOY_USER}:www-data" "$site_dir" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chmod 750 "$site_dir" 2>/dev/null
+        _gd_own "$site_dir" "${GEODEPLOY_DEPLOY_USER}" www-data
+        _gd_mode "$site_dir" 750
     fi
     [ -f "${wp_root}/wp-config.php" ] || return 0
 
@@ -933,11 +1047,28 @@ geodeploy_harden_wp_site() {
     # whatever ownership the prior install left — often root or
     # www-data — and the WordPress hardening's "deploy_user owns
     # source" invariant breaks).
-    /usr/bin/sudo /usr/bin/chown -R "${GEODEPLOY_DEPLOY_USER}:www-data" "$wp_root" 2>/dev/null
-    find "$wp_root" -type d -not -path '*/uploads/*' -not -path '*/cache/*' -not -path '*/upgrade/*' -not -path '*/wflogs/*' -not -path '*/gcore-logs/*' \
-        -exec chmod 750 {} \; 2>/dev/null
-    find "$wp_root" -type f -not -path '*/uploads/*' -not -path '*/cache/*' -not -path '*/upgrade/*' -not -path '*/wflogs/*' -not -path '*/gcore-logs/*' \
-        -exec chmod 640 {} \; 2>/dev/null
+    # Guarded: a settled site is ~40k files of which typically single digits
+    # have drifted. Unguarded this forked one chmod per file per site every
+    # five minutes — ~40k processes a cycle to correct about eleven of them.
+    # .htaccess is excluded from the 640 file pass because steps 3-5 below own
+    # it (root:www-data + immutable); sweeping it here would fight them.
+    # Ownership excludes what steps 2-4 own: the writable dirs (www-data:www-data)
+    # and .htaccess (root:www-data, and immutable — a chown there cannot succeed
+    # anyway). The old `chown -R` claimed all of it and steps 2-4 took it back on
+    # every cycle; guarded, that would be a loop that never quiets.
+    # The writable dirs are excluded THEMSELVES as well as their contents
+    # (`-path DIR -o -path DIR/*`); step 2 owns the directory node too, so
+    # matching only the contents would leave the five dir nodes oscillating.
+    _gd_own_tree "$wp_root" "${GEODEPLOY_DEPLOY_USER}" www-data -not -name '.htaccess' \
+        -not -path "${wp_root}/wp-content/uploads"    -not -path "${wp_root}/wp-content/uploads/*" \
+        -not -path "${wp_root}/wp-content/cache"      -not -path "${wp_root}/wp-content/cache/*" \
+        -not -path "${wp_root}/wp-content/upgrade"    -not -path "${wp_root}/wp-content/upgrade/*" \
+        -not -path "${wp_root}/wp-content/wflogs"     -not -path "${wp_root}/wp-content/wflogs/*" \
+        -not -path "${wp_root}/wp-content/gcore-logs" -not -path "${wp_root}/wp-content/gcore-logs/*"
+    _gd_mode_tree "$wp_root" 750 -type d \
+        -not -path '*/uploads/*' -not -path '*/cache/*' -not -path '*/upgrade/*' -not -path '*/wflogs/*' -not -path '*/gcore-logs/*'
+    _gd_mode_tree "$wp_root" 640 -type f -not -name '.htaccess' \
+        -not -path '*/uploads/*' -not -path '*/cache/*' -not -path '*/upgrade/*' -not -path '*/wflogs/*' -not -path '*/gcore-logs/*'
 
     # 2. Writable dirs: uploads, cache, upgrade, wflogs, gcore-logs (www-data:www-data).
     #    gcore-logs is where gCore writes structured per-manager logs; without
@@ -950,9 +1081,10 @@ geodeploy_harden_wp_site() {
         "${wp_root}/wp-content/gcore-logs" \
         "${wp_root}/wp-content/wflogs"; do
         if [[ -d "$writable_dir" ]]; then
-            /usr/bin/sudo /usr/bin/chown -R www-data:www-data "$writable_dir" 2>/dev/null
-            find "$writable_dir" -type d -exec chmod 750 {} \; 2>/dev/null
-            find "$writable_dir" -type f -exec chmod 640 {} \; 2>/dev/null
+            # .htaccess here is owned by step 3 (root:www-data, immutable).
+            _gd_own_tree "$writable_dir" www-data www-data -not -name '.htaccess'
+            _gd_mode_tree "$writable_dir" 750 -type d
+            _gd_mode_tree "$writable_dir" 640 -type f -not -name '.htaccess'
         fi
     done
 
@@ -963,28 +1095,48 @@ geodeploy_harden_wp_site() {
         "${wp_root}/wp-content/cache"; do
         if [[ -d "$writable_dir" ]]; then
             local htaccess="${writable_dir}/.htaccess"
-            /usr/bin/sudo /usr/bin/chattr -i "$htaccess" 2>/dev/null || true
-            echo "$_GEODEPLOY_PHP_BLOCK" | /usr/bin/sudo /usr/bin/tee "$htaccess" > /dev/null 2>&1
-            /usr/bin/sudo /usr/bin/chown root:www-data "$htaccess" 2>/dev/null
-            /usr/bin/sudo /usr/bin/chmod 640 "$htaccess" 2>/dev/null
-            /usr/bin/sudo /usr/bin/chattr +i "$htaccess" 2>/dev/null || true
+            # Rewrite ONLY when the content actually differs. This used to
+            # unlock, re-tee and re-lock the file every cycle, so the blocker's
+            # mtime advanced every five minutes on every site — churn that a
+            # file-integrity baseline reads as a perpetually-modified file.
+            if [[ "$(cat "$htaccess" 2>/dev/null)" != "$_GEODEPLOY_PHP_BLOCK" ]]; then
+                _gd_priv /usr/bin/chattr -i "$htaccess" 2>/dev/null || true
+                echo "$_GEODEPLOY_PHP_BLOCK" | _gd_priv /usr/bin/tee "$htaccess" > /dev/null 2>&1
+                _gd_own "$htaccess" root www-data
+                _gd_mode "$htaccess" 640
+                _gd_priv /usr/bin/chattr +i "$htaccess" 2>/dev/null || true
+            elif ! lsattr -d "$htaccess" 2>/dev/null | cut -d' ' -f1 | grep -q i; then
+                # Content is right but the immutable bit was lost — restore it
+                # without touching the content.
+                _gd_own "$htaccess" root www-data
+                _gd_mode "$htaccess" 640
+                _gd_priv /usr/bin/chattr +i "$htaccess" 2>/dev/null || true
+            fi
         fi
     done
 
-    # 4. Root .htaccess: root-owned, immutable
+    # 4. Root .htaccess: root-owned, immutable.
+    # Unlock only when ownership/mode/immutability actually needs correcting;
+    # the unconditional -i/+i pair ran on every site every cycle for nothing.
     if [[ -f "${wp_root}/.htaccess" ]]; then
-        /usr/bin/sudo /usr/bin/chattr -i "${wp_root}/.htaccess" 2>/dev/null || true
-        /usr/bin/sudo /usr/bin/chown root:www-data "${wp_root}/.htaccess" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chmod 640 "${wp_root}/.htaccess" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chattr +i "${wp_root}/.htaccess" 2>/dev/null || true
+        local _root_ht="${wp_root}/.htaccess"
+        local _ht_state _ht_immutable=0
+        _ht_state=$(stat -c '%U:%G %a' "$_root_ht" 2>/dev/null)
+        lsattr -d "$_root_ht" 2>/dev/null | cut -d' ' -f1 | grep -q i && _ht_immutable=1
+        if [[ "$_ht_state" != "root:www-data 640" || "$_ht_immutable" -eq 0 ]]; then
+            _gd_priv /usr/bin/chattr -i "$_root_ht" 2>/dev/null || true
+            _gd_own "$_root_ht" root www-data
+            _gd_mode "$_root_ht" 640
+            _gd_priv /usr/bin/chattr +i "$_root_ht" 2>/dev/null || true
+        fi
     fi
 
     # 5. .geodineum/ config: ${GEODEPLOY_DEPLOY_USER}:www-data
     # (www-data reads config, can't modify).
     if [[ -d "${wp_root}/.geodineum" ]]; then
-        /usr/bin/sudo /usr/bin/chown -R "${GEODEPLOY_DEPLOY_USER}:www-data" "${wp_root}/.geodineum" 2>/dev/null
-        find "${wp_root}/.geodineum" -type d -exec chmod 750 {} \; 2>/dev/null
-        find "${wp_root}/.geodineum" -type f -exec chmod 640 {} \; 2>/dev/null
+        _gd_own_tree "${wp_root}/.geodineum" "${GEODEPLOY_DEPLOY_USER}" www-data
+        _gd_mode_tree "${wp_root}/.geodineum" 750 -type d
+        _gd_mode_tree "${wp_root}/.geodineum" 640 -type f
     fi
 
     # Best-effort hardening MUST NOT return non-zero. The trailing `if`
@@ -1041,8 +1193,8 @@ geodeploy_fix_config_perms() {
 
     # ── Root directory: traversable by everyone (o+x) ──
     # www-data needs to traverse to reach credentials/ and read bootstrap.env
-    /usr/bin/sudo /usr/bin/chown root:geodineum "$config_root" 2>/dev/null
-    /usr/bin/sudo /usr/bin/chmod 751 "$config_root" 2>/dev/null
+    _gd_own "$config_root" root geodineum
+    _gd_mode "$config_root" 751
 
     # ── bootstrap.env: strict-deny posture (operator security stance 2026-06-03) ──
     # Owner: root (only root writes). Group: geodineum-bootstrap (a narrow
@@ -1060,8 +1212,8 @@ geodeploy_fix_config_perms() {
     # 0640 (or 0600 root-only). Any drift to 0644/0666/etc. → FATAL at
     # daemon startup.
     if [[ -f "${config_root}/bootstrap.env" ]]; then
-        /usr/bin/sudo /usr/bin/chown root:geodineum-bootstrap "${config_root}/bootstrap.env" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chmod 0640 "${config_root}/bootstrap.env" 2>/dev/null
+        _gd_own "${config_root}/bootstrap.env" root geodineum-bootstrap
+        _gd_mode "${config_root}/bootstrap.env" 0640
 
         # 2026-06-03 content-drift self-heal: detect any keys outside the
         # strict whitelist (legacy "shared paths/settings" dumping ground
@@ -1105,20 +1257,29 @@ EOF"
         # Directory itself: gnode:geodineum-bootstrap 0750 (was 0755 — the
         # world-traverse bit gave nothing legitimate; geodineum-bootstrap
         # members already traverse via the group bit).
-        /usr/bin/sudo /usr/bin/chown gnode:geodineum-bootstrap "${config_root}/components" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chmod 0750 "${config_root}/components" 2>/dev/null
-        find "${config_root}/components" -mindepth 1 -type d -exec /usr/bin/sudo /usr/bin/chown gnode:geodineum-bootstrap {} \; 2>/dev/null
-        find "${config_root}/components" -mindepth 1 -type d -exec /usr/bin/sudo /usr/bin/chmod 0750 {} \; 2>/dev/null
+        _gd_own "${config_root}/components" gnode geodineum-bootstrap
+        _gd_mode "${config_root}/components" 0750
+        _gd_own_tree "${config_root}/components" gnode geodineum-bootstrap -mindepth 1 -type d
+        _gd_mode_tree "${config_root}/components" 0750 -mindepth 1 -type d
 
-        # Files: default INTERNAL (640 gnode:geodineum) — daemon-only reads
-        find "${config_root}/components" -type f -exec /usr/bin/sudo /usr/bin/chown gnode:geodineum {} \; 2>/dev/null
-        find "${config_root}/components" -type f -exec /usr/bin/sudo /usr/bin/chmod 0640 {} \; 2>/dev/null
+        # Files: default INTERNAL (640 gnode:geodineum) — daemon-only reads.
+        # The exceptions below (receipt key, PHP-readable env, a component's own
+        # env) are re-asserted AFTER this default, so they must also be excluded
+        # from it — otherwise each cycle sets the default and then corrects it,
+        # and the drift guard can never go quiet on those paths.
+        _gd_own_tree "${config_root}/components" gnode geodineum -type f \
+            -not -name 'receipt_signing.key' \
+            -not -path "${config_root}/components/gCore/gcore.env" \
+            -not -path "${config_root}/components/gTemplate/gtemplate.env" \
+            -not -path "${config_root}/components/geodineum-comms/geodineum-comms.env"
+        _gd_mode_tree "${config_root}/components" 0640 -type f \
+            -not -name 'receipt_signing.key'
 
         # Per-node private signing key: gnode-only, never group-readable
         local _receipt_key="${config_root}/components/gnode-daemon/receipt_signing.key"
         if [[ -f "$_receipt_key" ]]; then
-            /usr/bin/sudo /usr/bin/chown gnode:gnode "$_receipt_key" 2>/dev/null
-            /usr/bin/sudo /usr/bin/chmod 0600 "$_receipt_key" 2>/dev/null
+            _gd_own "$_receipt_key" gnode gnode
+            _gd_mode "$_receipt_key" 0600
         fi
 
         # PHP-readable component configs: root:geodineum-bootstrap 0640
@@ -1131,8 +1292,8 @@ EOF"
             "${config_root}/components/gCore/gcore.env" \
             "${config_root}/components/gTemplate/gtemplate.env"; do
             if [[ -f "$php_env" ]]; then
-                /usr/bin/sudo /usr/bin/chown root:geodineum-bootstrap "$php_env" 2>/dev/null
-                /usr/bin/sudo /usr/bin/chmod 0640 "$php_env" 2>/dev/null
+                _gd_own "$php_env" root geodineum-bootstrap
+                _gd_mode "$php_env" 0640
             fi
         done
 
@@ -1145,8 +1306,8 @@ EOF"
         # file to the component's own identity so it can read it.
         _comms_env="${config_root}/components/geodineum-comms/geodineum-comms.env"
         if [[ -f "$_comms_env" ]] && getent group geodineum-comms >/dev/null 2>&1; then
-            /usr/bin/sudo /usr/bin/chown root:geodineum-comms "$_comms_env" 2>/dev/null
-            /usr/bin/sudo /usr/bin/chmod 0640 "$_comms_env" 2>/dev/null
+            _gd_own "$_comms_env" root geodineum-comms
+            _gd_mode "$_comms_env" 0640
         fi
     fi
 
@@ -1158,8 +1319,8 @@ EOF"
     # daemon credentials remain unreadable from www-data via their
     # per-file 0640 root:geodineum-creds / gnode:geodineum-creds modes.
     if [[ -d "${config_root}/credentials" ]]; then
-        /usr/bin/sudo /usr/bin/chown root:geodineum-creds "${config_root}/credentials" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chmod 0751 "${config_root}/credentials" 2>/dev/null
+        _gd_own "${config_root}/credentials" root geodineum-creds
+        _gd_mode "${config_root}/credentials" 0751
     fi
 
     # ── dashboard/ (www-data accessible via geodineum-dash) ──
@@ -1175,11 +1336,11 @@ EOF"
             || /usr/bin/sudo /usr/bin/install -d -m 0750 -o root -g geodineum-dash "${config_root}/dashboard" 2>/dev/null
     fi
     if [[ -d "${config_root}/dashboard" ]]; then
-        /usr/bin/sudo /usr/bin/chown root:geodineum-dash "${config_root}/dashboard" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chmod 0750 "${config_root}/dashboard" 2>/dev/null
+        _gd_own "${config_root}/dashboard" root geodineum-dash
+        _gd_mode "${config_root}/dashboard" 0750
         if [[ -f "${config_root}/dashboard/geodineum-dashboard.txt" ]]; then
-            /usr/bin/sudo /usr/bin/chown gnode:geodineum-dash "${config_root}/dashboard/geodineum-dashboard.txt" 2>/dev/null
-            /usr/bin/sudo /usr/bin/chmod 0640 "${config_root}/dashboard/geodineum-dashboard.txt" 2>/dev/null
+            _gd_own "${config_root}/dashboard/geodineum-dashboard.txt" gnode geodineum-dash
+            _gd_mode "${config_root}/dashboard/geodineum-dashboard.txt" 0640
         else
             geodeploy_log "fix_config_perms: dashboard credential MISSING (${config_root}/dashboard/geodineum-dashboard.txt) — run provision_dashboard_acl (re-run install.sh) or wp-admin module pages will show 'credentials not found'"
         fi
@@ -1189,22 +1350,20 @@ EOF"
     # www-data needs traverse for PHP ConfigLoader resolution. gnode
     # group is the writer (daemon manages site state at runtime).
     if [[ -d "${config_root}/sites" ]]; then
-        /usr/bin/sudo /usr/bin/chown gnode:www-data "${config_root}/sites" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chmod 0750 "${config_root}/sites" 2>/dev/null
-        find "${config_root}/sites" -mindepth 1 -type d -exec /usr/bin/sudo /usr/bin/chown gnode:www-data {} \; 2>/dev/null
-        find "${config_root}/sites" -mindepth 1 -type d -exec /usr/bin/sudo /usr/bin/chmod 0750 {} \; 2>/dev/null
-        find "${config_root}/sites" -type f -exec /usr/bin/sudo /usr/bin/chown gnode:www-data {} \; 2>/dev/null
-        find "${config_root}/sites" -type f -exec /usr/bin/sudo /usr/bin/chmod 0640 {} \; 2>/dev/null
+        _gd_own "${config_root}/sites" gnode www-data
+        _gd_mode "${config_root}/sites" 0750
+        _gd_own_tree "${config_root}/sites" gnode www-data -mindepth 1
+        _gd_mode_tree "${config_root}/sites" 0750 -mindepth 1 -type d
+        _gd_mode_tree "${config_root}/sites" 0640 -type f
     fi
 
     # ── services/: standalone service config (gnode:gnode 0750) ──
     if [[ -d "${config_root}/services" ]]; then
-        /usr/bin/sudo /usr/bin/chown gnode:gnode "${config_root}/services" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chmod 0750 "${config_root}/services" 2>/dev/null
-        find "${config_root}/services" -mindepth 1 -type d -exec /usr/bin/sudo /usr/bin/chown gnode:gnode {} \; 2>/dev/null
-        find "${config_root}/services" -mindepth 1 -type d -exec /usr/bin/sudo /usr/bin/chmod 0750 {} \; 2>/dev/null
-        find "${config_root}/services" -type f -exec /usr/bin/sudo /usr/bin/chown gnode:gnode {} \; 2>/dev/null
-        find "${config_root}/services" -type f -exec /usr/bin/sudo /usr/bin/chmod 0640 {} \; 2>/dev/null
+        _gd_own "${config_root}/services" gnode gnode
+        _gd_mode "${config_root}/services" 0750
+        _gd_own_tree "${config_root}/services" gnode gnode -mindepth 1
+        _gd_mode_tree "${config_root}/services" 0750 -mindepth 1 -type d
+        _gd_mode_tree "${config_root}/services" 0640 -type f
     fi
 }
 
@@ -1217,16 +1376,16 @@ EOF"
 geodeploy_fix_bak_perms() {
     local bak="${1:-${GEODINEUM_ROOT}/Geodineum-BAK}"
     [[ -d "$bak" ]] || return 0
-    /usr/bin/sudo /usr/bin/chown root:gnode "$bak" 2>/dev/null
-    /usr/bin/sudo /usr/bin/chmod 0750 "$bak" 2>/dev/null
+    _gd_own "$bak" root gnode
+    _gd_mode "$bak" 0750
     if [[ -d "$bak/scripts" ]]; then
-        /usr/bin/sudo /usr/bin/chown -R root:gnode "$bak/scripts" 2>/dev/null
-        find "$bak/scripts" -type d -not -path '*/.git/*' -exec /usr/bin/sudo /usr/bin/chmod 0750 {} \; 2>/dev/null
-        find "$bak/scripts" -type f -name "*.sh" -not -path '*/.git/*' -exec /usr/bin/sudo /usr/bin/chmod 0750 {} \; 2>/dev/null
+        _gd_own_tree "$bak/scripts" root gnode
+        _gd_mode_tree "$bak/scripts" 0750 -type d -not -path '*/.git/*'
+        _gd_mode_tree "$bak/scripts" 0750 -type f -name '*.sh' -not -path '*/.git/*'
     fi
     if [[ -d "$bak/backups" ]]; then
-        /usr/bin/sudo /usr/bin/chown -R gnode:gnode "$bak/backups" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chmod 0750 "$bak/backups" 2>/dev/null
+        _gd_own_tree "$bak/backups" gnode gnode
+        _gd_mode "$bak/backups" 0750
     fi
 }
 
@@ -1239,42 +1398,44 @@ geodeploy_fix_log_perms() {
     [[ ! -d "$log_root" ]] && return 0
 
     # Root directory: root:geodineum (nobody writes to root, only subdirs)
-    /usr/bin/sudo /usr/bin/chown root:geodineum "$log_root" 2>/dev/null
-    /usr/bin/sudo /usr/bin/chmod 750 "$log_root" 2>/dev/null
+    _gd_own "$log_root" root geodineum
+    _gd_mode "$log_root" 750
 
     # Daemon logs: gnode:geodineum (gnode writes, geodineum reads)
     for dir in gnode valkey; do
-        [[ -d "${log_root}/${dir}" ]] && /usr/bin/sudo /usr/bin/chown -R gnode:geodineum "${log_root}/${dir}" 2>/dev/null
+        _gd_own_tree "${log_root}/${dir}" gnode geodineum
     done
 
     # COMMS logs → geodineum-comms:geodineum (COMMS daemon
     # writes under its own user now, geodineum group reads)
-    [[ -d "${log_root}/comms" ]] && /usr/bin/sudo /usr/bin/chown -R geodineum-comms:geodineum "${log_root}/comms" 2>/dev/null
+    _gd_own_tree "${log_root}/comms" geodineum-comms geodineum
 
     # PHP/web logs: www-data:geodineum (www-data writes, geodineum reads)
     for dir in gcore apache wordpress themes; do
-        [[ -d "${log_root}/${dir}" ]] && /usr/bin/sudo /usr/bin/chown -R www-data:geodineum "${log_root}/${dir}" 2>/dev/null
+        _gd_own_tree "${log_root}/${dir}" www-data geodineum
     done
 
     # Deploy orchestrator log: <deploy_user>:geodineum. MUST be deploy-user-owned,
     # never root — the orchestrator runs git AS the deploy user with `2>>LOG`
     # redirects, so a root-owned log denies those appends ("/bin/sh: cannot
     # create ...: Permission denied"). geodineum group lets the operator read.
-    if [[ -d "${log_root}/deploy" ]]; then
-        /usr/bin/sudo /usr/bin/chown -R "${GEODEPLOY_DEPLOY_USER}:geodineum" "${log_root}/deploy" 2>/dev/null
-    fi
+    _gd_own_tree "${log_root}/deploy" "${GEODEPLOY_DEPLOY_USER}" geodineum
 
     # Extra log-dir ownership from the deployment-local overlay.
     if declare -F geodeploy_fix_log_extras >/dev/null; then
         geodeploy_fix_log_extras "$log_root"
     fi
 
-    # Ensure 750/640 across all (owner writes, group reads, others nothing)
-    find "$log_root" -type d -exec /usr/bin/sudo /usr/bin/chmod 750 {} \; 2>/dev/null
-    find "$log_root" -type f -exec /usr/bin/sudo /usr/bin/chmod 640 {} \; 2>/dev/null
+    # Ensure 750/640 across all (owner writes, group reads, others nothing).
+    # The deploy dir is EXCLUDED from the 750 pass — it carries setgid (2750,
+    # restored below) and a blanket 750 would strip it every cycle, then the
+    # restore would re-add it, so the pair never converged and the guard could
+    # never go quiet.
+    _gd_mode_tree "$log_root" 750 -type d -not -path "${log_root}/deploy"
+    _gd_mode_tree "$log_root" 640 -type f
     # Restore setgid on the deploy dir so files the orchestrator and the
     # deploy user create there inherit the geodineum group (operator read).
-    [[ -d "${log_root}/deploy" ]] && /usr/bin/sudo /usr/bin/chmod 2750 "${log_root}/deploy" 2>/dev/null
+    _gd_mode "${log_root}/deploy" 2750
 }
 
 # =============================================================================
@@ -1303,8 +1464,8 @@ geodeploy_fix_credential() {
         return 1
     fi
 
-    /usr/bin/sudo /usr/bin/chown "${runtime_user}:${runtime_user}" "$cred_file" 2>/dev/null
-    /usr/bin/sudo /usr/bin/chmod 600 "$cred_file" 2>/dev/null
+    _gd_own "$cred_file" "$runtime_user" "$runtime_user"
+    _gd_mode "$cred_file" 600
 }
 
 # Fix ALL credential files to match their intended runtime user.
@@ -1332,8 +1493,8 @@ geodeploy_fix_all_credentials() {
     # orchestrator cycle after a long outage stripped the traverse bit
     # and broke every non-group cred consumer at once (COMMS NOAUTH
     # crash-loop; PHP sites silently degraded).
-    /usr/bin/sudo /usr/bin/chown root:geodineum-creds "$creds_dir" 2>/dev/null
-    /usr/bin/sudo /usr/bin/chmod 0751 "$creds_dir" 2>/dev/null
+    _gd_own "$creds_dir" root geodineum-creds
+    _gd_mode "$creds_dir" 0751
 
     # Daemon credentials → gnode:gnode 600
     for f in \
@@ -1351,8 +1512,8 @@ geodeploy_fix_all_credentials() {
         "${creds_dir}/valkey_comms.password" \
         "${creds_dir}"/smtp_comms.*; do
         if [[ -f "$f" ]]; then
-            /usr/bin/sudo /usr/bin/chown root:geodineum-comms "$f" 2>/dev/null
-            /usr/bin/sudo /usr/bin/chmod 0640 "$f" 2>/dev/null
+            _gd_own "$f" root geodineum-comms
+            _gd_mode "$f" 0640
         fi
     done
 
@@ -1376,15 +1537,18 @@ geodeploy_fix_all_credentials() {
         o="${o:-root}"; g="${g:-geodineum}"; m="${m:-640}"
         [[ "$o" == "www-data" ]] && o=root                 # never www-data-owned
         getent group "$g" >/dev/null 2>&1 || g=geodineum   # unknown group → safe
-        /usr/bin/sudo /usr/bin/chown "${o}:${g}" "$f" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chmod "${m}" "$f" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chown root:geodineum-creds "$sidecar" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chmod 0644 "$sidecar" 2>/dev/null
+        _gd_own "$f" "$o" "$g"
+        _gd_mode "$f" "$m"
+        _gd_own "$sidecar" root geodineum-creds
+        _gd_mode "$sidecar" 0644
     done
 
     # .htaccess is ALWAYS root:www-data (uniform rule, no per-dir exceptions)
     for f in "${creds_dir}/.htaccess" "${creds_dir}/nginx-deny.conf"; do
-        [[ -f "$f" ]] && /usr/bin/sudo /usr/bin/chown root:www-data "$f" 2>/dev/null && /usr/bin/sudo /usr/bin/chmod 640 "$f" 2>/dev/null
+        if [[ -f "$f" ]]; then
+            _gd_own "$f" root www-data
+            _gd_mode "$f" 640
+        fi
     done
 }
 
@@ -1570,10 +1734,20 @@ geodeploy_repo() {
         # they had nothing to pull. Detect-then-converge: one find that stops
         # at the first wrong-owner/group entry (clean tree = one cheap scan,
         # .git and cargo's target/ stay unmanaged as in fix_perms itself).
+        #
+        # The detector must exclude EXACTLY what fix_perms declines to converge,
+        # or it reports drift that no run can ever clear. .htaccess and
+        # nginx-deny.conf are deliberately root:www-data (fix_perms keeps them
+        # readable to Apache, which fails closed with a 403 otherwise) — while
+        # they were in scope here every repo re-ran the full sweep every five
+        # minutes forever: 528 "drift detected" lines in one log, each dragging
+        # ~40k chmod spawns across /var/www behind it. A guard that disagrees
+        # with the enforcer is not a guard.
         if [[ -f "${repo_dir}/geodeploy.yaml" ]]; then
             geodeploy_parse_descriptor "${repo_dir}/geodeploy.yaml" || true
         fi
         if [[ -n "$(find "$repo_dir" -not -path '*/.git*' -not -path '*/target*' \
+                -not -name '.htaccess' -not -name 'nginx-deny.conf' \
                 \( ! -group "$_GD_GROUP" -o ! -user "$_GD_OWNER" \) -print -quit 2>/dev/null)" ]]; then
             geodeploy_log "${name}: ownership drift detected (no new commits) — converging to ${_GD_OWNER}:${_GD_GROUP}"
             geodeploy_fix_perms "$repo_dir" "$_GD_OWNER" "$_GD_GROUP"
