@@ -657,12 +657,27 @@ _gd_priv() {
     fi
 }
 
-# How many paths this run actually corrected. sudo's session lines used to be
-# the only record that the sweep had done anything, which is a poor trade: 1,250
-# journal lines per cycle to say "nothing had drifted". The helpers count their
-# own work instead and the orchestrator prints ONE line per cycle when the count
-# is non-zero — silence now means genuinely nothing changed.
+# How many paths this run actually corrected, and a sample of WHICH. sudo's
+# session lines used to be the only record that the sweep had done anything,
+# which is a poor trade: 1,250 journal lines per cycle to say "nothing had
+# drifted". The helpers count their own work instead and the orchestrator
+# prints ONE line per cycle when the count is non-zero — silence now means
+# genuinely nothing changed.
+#
+# The sample exists because a bare count is not actionable. A sweep reporting
+# "970 corrected" every cycle forever is reporting a fight between two rules,
+# not drift — and without example paths there is no way to tell which two.
 _GD_PERM_FIXES=0
+_GD_PERM_SAMPLE=""
+_GD_PERM_SAMPLE_MAX=5
+
+# Record one corrected path (counted always, named for the first few).
+_gd_note_fix() {
+    _GD_PERM_FIXES=$(( _GD_PERM_FIXES + 1 ))
+    if (( _GD_PERM_FIXES <= _GD_PERM_SAMPLE_MAX )); then
+        _GD_PERM_SAMPLE="${_GD_PERM_SAMPLE}${_GD_PERM_SAMPLE:+, }$1"
+    fi
+}
 
 # Assert owner:group on ONE path, only when it differs.
 # An unreadable stat falls THROUGH to the chown: never skip a fix because the
@@ -673,7 +688,7 @@ _gd_own() {
     cur=$(stat -c '%U:%G' "$path" 2>/dev/null)
     [[ -n "$cur" && "$cur" == "${owner}:${group}" ]] && return 0
     _gd_priv /usr/bin/chown "${owner}:${group}" "$path" 2>/dev/null || true
-    _GD_PERM_FIXES=$(( _GD_PERM_FIXES + 1 ))
+    _gd_note_fix "${path}(own)"
     return 0
 }
 
@@ -686,7 +701,7 @@ _gd_mode() {
         return 0
     fi
     _gd_priv /usr/bin/chmod "$mode" "$path" 2>/dev/null || true
-    _GD_PERM_FIXES=$(( _GD_PERM_FIXES + 1 ))
+    _gd_note_fix "${path}(mode ${mode})"
     return 0
 }
 
@@ -707,7 +722,7 @@ _gd_own_tree() {
     (( ${#drifted[@]} )) || return 0
     printf '%s\0' "${drifted[@]}" \
         | xargs -0r "${_GD_PRIV_ARGV[@]}" /usr/bin/chown "${owner}:${group}" 2>/dev/null || true
-    _GD_PERM_FIXES=$(( _GD_PERM_FIXES + ${#drifted[@]} ))
+    for _p in "${drifted[@]}"; do _gd_note_fix "${_p}(own ${owner}:${group})"; done
     return 0
 }
 
@@ -723,7 +738,7 @@ _gd_mode_tree() {
     (( ${#drifted[@]} )) || return 0
     printf '%s\0' "${drifted[@]}" \
         | xargs -0r "${_GD_PRIV_ARGV[@]}" /usr/bin/chmod "$mode" 2>/dev/null || true
-    _GD_PERM_FIXES=$(( _GD_PERM_FIXES + ${#drifted[@]} ))
+    for _p in "${drifted[@]}"; do _gd_note_fix "${_p}(mode ${mode})"; done
     return 0
 }
 
@@ -1735,21 +1750,38 @@ geodeploy_repo() {
         # at the first wrong-owner/group entry (clean tree = one cheap scan,
         # .git and cargo's target/ stay unmanaged as in fix_perms itself).
         #
-        # The detector must exclude EXACTLY what fix_perms declines to converge,
-        # or it reports drift that no run can ever clear. .htaccess and
-        # nginx-deny.conf are deliberately root:www-data (fix_perms keeps them
-        # readable to Apache, which fails closed with a 403 otherwise) — while
-        # they were in scope here every repo re-ran the full sweep every five
-        # minutes forever: 528 "drift detected" lines in one log, each dragging
-        # ~40k chmod spawns across /var/www behind it. A guard that disagrees
-        # with the enforcer is not a guard.
+        # The detector must exclude EXACTLY what the enforcer declines to
+        # converge, or it reports drift that no run can ever clear. A guard
+        # that disagrees with the enforcer is not a guard — it is a scheduler
+        # for the expensive path. Two sets are deliberately NOT owner:group:
+        #
+        #   .htaccess / nginx-deny.conf → root:www-data, so Apache can read
+        #     them (it fails closed with a 403 otherwise).
+        #   logs/ , backups/ , .gnode/ → the SERVICE user, because the daemon
+        #     has to write there after every deploy. geodeploy_fix_gnode_dirs
+        #     and geodeploy_fix_comms_dirs set exactly this, immediately after
+        #     the blanket pass claims it back.
+        #
+        # While these were in scope, every repo re-ran the full sweep every
+        # five minutes forever: 528 "drift detected" lines in one log, each
+        # dragging the per-repo sweep and the ~40k-file /var/www pass behind it.
         if [[ -f "${repo_dir}/geodeploy.yaml" ]]; then
             geodeploy_parse_descriptor "${repo_dir}/geodeploy.yaml" || true
         fi
-        if [[ -n "$(find "$repo_dir" -not -path '*/.git*' -not -path '*/target*' \
+        local _drifted
+        _drifted="$(find "$repo_dir" -not -path '*/.git*' -not -path '*/target*' \
                 -not -name '.htaccess' -not -name 'nginx-deny.conf' \
-                \( ! -group "$_GD_GROUP" -o ! -user "$_GD_OWNER" \) -print -quit 2>/dev/null)" ]]; then
-            geodeploy_log "${name}: ownership drift detected (no new commits) — converging to ${_GD_OWNER}:${_GD_GROUP}"
+                -not -path "${repo_dir}/logs" -not -path "${repo_dir}/logs/*" \
+                -not -path "${repo_dir}/backups" -not -path "${repo_dir}/backups/*" \
+                -not -path "${repo_dir}/.gnode" -not -path "${repo_dir}/.gnode/*" \
+                \( ! -group "$_GD_GROUP" -o ! -user "$_GD_OWNER" \) \
+                -printf '%p (%u:%g)' -quit 2>/dev/null)"
+        if [[ -n "$_drifted" ]]; then
+            # Name the offender. "drift detected" on its own is unactionable,
+            # and a detector that fires every cycle forever is usually pointing
+            # at something another rule owns on purpose — which you cannot tell
+            # without knowing which path and who owns it now.
+            geodeploy_log "${name}: ownership drift detected (no new commits) — converging to ${_GD_OWNER}:${_GD_GROUP}; first offender: ${_drifted}"
             geodeploy_fix_perms "$repo_dir" "$_GD_OWNER" "$_GD_GROUP"
         fi
         return 0

@@ -290,7 +290,7 @@ fi
 # retention down to ~15 hours, short enough that the COMMS boot failure of
 # 2026-07-24 had aged out before anyone asked what happened.
 if (( ${_GD_PERM_FIXES:-0} > 0 )); then
-    geodeploy_log "PERMS: ${_GD_PERM_FIXES} path(s) corrected this cycle"
+    geodeploy_log "PERMS: ${_GD_PERM_FIXES} path(s) corrected this cycle — e.g. ${_GD_PERM_SAMPLE:-(unsampled)}"
 fi
 
 # liveness heartbeat — a stamp file, NOT a log line (a per-5-min
