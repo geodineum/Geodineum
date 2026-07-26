@@ -222,8 +222,16 @@ fi
 # noticed any of it; a person did, eventually.
 #
 # So the rule is now explicit: every repo here is MANAGED, or it declares
-# itself unmanaged (`unmanaged: true` in its own geodeploy.yaml, so the
-# declaration travels with the repo). Anything else gets named.
+# itself unmanaged. Two places to declare it, because one is not enough:
+#
+#   * `unmanaged: true` in the repo's own geodeploy.yaml — travels with the
+#     repo, so a fresh host inherits the reasoning instead of re-deriving it.
+#   * a name per line in ${GEODINEUM_ROOT}/unmanaged-repos.conf — host-local.
+#
+# The second exists because the first cannot bootstrap itself: an unmanaged
+# repo is by definition never pulled, so a marker committed upstream never
+# arrives here on its own. It is also the only option for a repo we do not own
+# and cannot commit to. Anything declared in neither gets named.
 #
 # Once a day, not once a run: this log is capped at GEODEPLOY_LOG_MAX lines and
 # a handful of warnings every five minutes would evict the deploy history the
@@ -249,17 +257,29 @@ if [[ "$(cat "$_gd_cov_stamp" 2>/dev/null)" != "$_gd_today" ]]; then
         done < "$SITE_REPOS_FILE"
     fi
 
+    # Host-local declarations, same newline-delimited shape as the managed set.
+    _gd_unmanaged=$'\n'
+    _GD_UNMANAGED_FILE="${GEODINEUM_ROOT}/unmanaged-repos.conf"
+    if [[ -r "$_GD_UNMANAGED_FILE" ]]; then
+        while IFS= read -r _um_name || [[ -n "$_um_name" ]]; do
+            _um_name="${_um_name%%#*}"
+            _um_name="${_um_name//[[:space:]]/}"
+            if [[ -n "$_um_name" ]]; then _gd_unmanaged+="${_um_name}"$'\n'; fi
+        done < "$_GD_UNMANAGED_FILE"
+    fi
+
     for _gd_repo_dir in "${GEODINEUM_ROOT}"/*/; do
         [[ -d "${_gd_repo_dir}.git" ]] || continue
         _gd_repo="$(basename "$_gd_repo_dir")"
         if [[ "$_gd_managed" == *$'\n'"${_gd_repo}"$'\n'* ]]; then continue; fi
+        if [[ "$_gd_unmanaged" == *$'\n'"${_gd_repo}"$'\n'* ]]; then continue; fi
         # Reads a file directly, so no pipe and no grep -q SIGPIPE hazard.
         if grep -qE '^[[:space:]]*unmanaged:[[:space:]]*true[[:space:]]*$' \
                 "${_gd_repo_dir}geodeploy.yaml" 2>/dev/null; then
             continue
         fi
         _gd_cov_head=$(geodeploy_as_deploy git -C "$_gd_repo_dir" log -1 --format='%h %cr' 2>/dev/null) || _gd_cov_head=""
-        geodeploy_log "COVERAGE WARNING: ${_gd_repo} is in neither CORE_REPOS nor site-repos.conf and does not declare 'unmanaged: true' — nothing pulls it and nothing fixes its binaries (HEAD ${_gd_cov_head:-unreadable}). Add it to ${SITE_REPOS_FILE}, or declare it unmanaged in ${_gd_repo}/geodeploy.yaml."
+        geodeploy_log "COVERAGE WARNING: ${_gd_repo} is in neither CORE_REPOS nor site-repos.conf and is not declared unmanaged — nothing pulls it and nothing fixes its binaries (HEAD ${_gd_cov_head:-unreadable}). Add it to ${SITE_REPOS_FILE} to deploy it, or add its name to ${_GD_UNMANAGED_FILE} (or 'unmanaged: true' in ${_gd_repo}/geodeploy.yaml) to declare it deliberate."
     done
 fi
 
