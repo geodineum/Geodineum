@@ -728,6 +728,18 @@ _gd_own_tree() {
 
 # Assert mode across a TREE. `! -perm <mode>` is an EXACT-bits mismatch test,
 # so this converges on the contract rather than merely adding bits.
+#
+# ONE TRAP, and it is not obvious: GNU chmod will not clear setuid/setgid on a
+# DIRECTORY through any numeric mode. `chmod 750` and `chmod 0750` both leave a
+# 2750 directory at 2750 — verified on both ext4 and xfs here — and only the
+# symbolic `g-s` clears it. So a directory contract of 750 against a setgid
+# directory is a chmod that can never succeed: unguarded it was a silent no-op
+# every five minutes for as long as this code has existed, and the moment a
+# drift guard was added in front of it, it became 968 "corrections" per cycle
+# that corrected nothing. State directory contracts as the mode chmod can
+# actually reach (2750 where setgid is wanted), or clear the bit symbolically
+# first — never assert a 3-digit mode at a setgid directory and expect it to
+# take.
 _gd_mode_tree() {
     local root="$1" mode="$2"; shift 2
     [[ -d "$root" ]] || return 0
@@ -1412,9 +1424,15 @@ geodeploy_fix_log_perms() {
 
     [[ ! -d "$log_root" ]] && return 0
 
-    # Root directory: root:geodineum (nobody writes to root, only subdirs)
+    # Root directory: root:geodineum (nobody writes to root, only subdirs).
+    # 2750, not 750: every directory under here is setgid already, and setgid is
+    # what the model depends on — a log file created by www-data, gnode or
+    # geodineum-comms inherits the directory's group, which is how "writers own
+    # their own subdir, geodineum reads across" actually holds for files nobody
+    # chowned yet. It is also the only value that converges, since chmod cannot
+    # take setgid off a directory numerically.
     _gd_own "$log_root" root geodineum
-    _gd_mode "$log_root" 750
+    _gd_mode "$log_root" 2750
 
     # Daemon logs: gnode:geodineum (gnode writes, geodineum reads)
     for dir in gnode valkey; do
@@ -1441,16 +1459,12 @@ geodeploy_fix_log_perms() {
         geodeploy_fix_log_extras "$log_root"
     fi
 
-    # Ensure 750/640 across all (owner writes, group reads, others nothing).
-    # The deploy dir is EXCLUDED from the 750 pass — it carries setgid (2750,
-    # restored below) and a blanket 750 would strip it every cycle, then the
-    # restore would re-add it, so the pair never converged and the guard could
-    # never go quiet.
-    _gd_mode_tree "$log_root" 750 -type d -not -path "${log_root}/deploy"
+    # 2750 on directories, 640 on files: owner writes, group reads, others get
+    # nothing, and the setgid bit carries the group down to newly created logs.
+    # The deploy dir needed a special case only while the contract here said
+    # 750 and fought it; now every directory states the same thing.
+    _gd_mode_tree "$log_root" 2750 -type d
     _gd_mode_tree "$log_root" 640 -type f
-    # Restore setgid on the deploy dir so files the orchestrator and the
-    # deploy user create there inherit the geodineum group (operator read).
-    _gd_mode "${log_root}/deploy" 2750
 }
 
 # =============================================================================
