@@ -1317,6 +1317,20 @@ EOF"
             _gd_mode "$_receipt_key" 0600
         fi
 
+        # COMMS is a receipt PRODUCER too (T-E) and signs with its OWN key, so
+        # there is a second private key under components/ with a different
+        # owner. Both are excluded from the default file pass by name above;
+        # this asserts the COMMS one explicitly so it is actively maintained
+        # rather than merely left alone. 0600 and owned by the service that
+        # signs with it: a signing key readable beyond its owner is a forgeable
+        # identity, and this sweep has flattened a 0600 key to group-readable
+        # before.
+        local _comms_key="${config_root}/components/geodineum-comms/receipt_signing.key"
+        if [[ -f "$_comms_key" ]] && getent passwd geodineum-comms >/dev/null 2>&1; then
+            _gd_own "$_comms_key" geodineum-comms geodineum-comms
+            _gd_mode "$_comms_key" 0600
+        fi
+
         # PHP-readable component configs: root:geodineum-bootstrap 0640
         # (NOT world-readable 0644). www-data is a member of geodineum-bootstrap
         # via install.sh phase_users_groups — reads via group bit, not via
