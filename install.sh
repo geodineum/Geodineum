@@ -3211,15 +3211,64 @@ provision_comms_acl() {
     chmod 0640 "$cred_file" 2>/dev/null || true
     chown "root:geodineum-comms" "$cred_file" 2>/dev/null || true
 
+    # LEAST PRIVILEGE, explicitly. This block previously granted `~*` (every key
+    # in the keyspace) with `+@all -@dangerous`, which handed the notification
+    # daemon read/write over every site's state and every other service's
+    # namespace. It was re-applied to a live master on 2026-07-28 while chasing
+    # an unrelated NOPERM, silently replacing a correctly-hardened runtime grant
+    # — so the over-broad version is not merely untidy, it actively undoes
+    # hardening on every reinstall.
+    #
+    # COMMANDS: an allowlist, not a category. `-@dangerous` is a denylist, and a
+    # denylist grants every command nobody has classified yet — including
+    # commands added by future ValKey versions.
+    local acl_comms_commands=(
+        -@all
+        # Streams: consume its work queue, ack it, and write receipts.
+        +xread +xreadgroup +xadd +xack +xclaim +xautoclaim +xpending
+        +xinfo +xlen +xtrim +xrange +xrevrange +xgroup +xdel
+        # Functions: the ecosystem's read path is FCALL-only by policy.
+        +fcall +fcall_ro
+        # Strings / expiry: message state and the keyed rendezvous.
+        +get +set +setex +setnx +psetex +del +exists +ttl +pttl +expire +pexpire
+        +mget +mset +incr +decr +incrby +decrby +append
+        # Hashes: delivery status, config, the receipt pubkey registry.
+        +hget +hset +hgetall +hdel +hexists +hkeys +hvals +hincrby +hincrbyfloat
+        +hmget +hmset +hsetnx +hlen +hscan
+        # Lists / sets: retry queues and dedupe sets.
+        +lrange +llen +lpush +rpush
+        +sadd +smembers +sismember +srem +scard +sscan
+        # Introspection it genuinely needs.
+        +scan +type +object +ping +echo +time +auth +select
+        # KEYS is O(N) over the whole keyspace and is never acceptable from a
+        # service; DEBUG and CLIENT are operator tools. Four CLIENT subcommands
+        # are restored because connection naming aids diagnosis and grants
+        # nothing.
+        -keys -debug -client
+        "+client|id" "+client|getname" "+client|setname" "+client|setinfo"
+    )
+    # KEYS: its own namespaces, plus the few shared ones it demonstrably reads.
+    local acl_comms_keys=(
+        "~*:gnode:comms:*" "~*:comms:config" "~*:comms:retry:*"
+        "~*:comms:messages:*" "~*:comms:stats:*" "~*:comms:conversation:*"
+        "~*:comms:context:*" "~*:comms:active_context:*"
+        "~gnode:site:*" "~gnode:sites:*" "~gnode:routing:*" "~topology:*"
+        "~*:gnode:unified:*" "~*:geodine:metrics:*" "~*:geodine:history:*"
+        "~*:gnode:schema:*"
+        # Receipts (T-E). BOTH are required: the registry is where the producer
+        # publishes its pubkey so verifiers can resolve its signer, and the
+        # streams are where the receipts themselves go. Granting only the first
+        # produces a daemon that logs "receipt signer ready" and then NOPERMs
+        # every actual write — announcing itself and emitting nothing.
+        "~*:gnode:receipt_pubkeys" "~*:gnode:receipts:*"
+    )
     if ! REDISCLI_AUTH="$(cat "$admin_pwfile")" valkey-cli -p "$valkey_port" \
         ACL SETUSER geodineum_comms \
         on \
         resetpass ">${password}" \
-        resetkeys "~*" \
+        resetkeys "${acl_comms_keys[@]}" \
         resetchannels "&*" \
-        +@all \
-        -@dangerous \
-        +xinfo \
+        "${acl_comms_commands[@]}" \
         >/dev/null; then
         log_warning "ACL SETUSER geodineum_comms failed — see output above"
         log_info "Retry: sudo REDISCLI_AUTH=\"\$(cat ${admin_pwfile})\" valkey-cli -p ${valkey_port} ACL LIST"
