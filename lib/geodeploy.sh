@@ -1325,11 +1325,15 @@ EOF"
         # signs with it: a signing key readable beyond its owner is a forgeable
         # identity, and this sweep has flattened a 0600 key to group-readable
         # before.
-        local _comms_key="${config_root}/components/geodineum-comms/receipt_signing.key"
-        if [[ -f "$_comms_key" ]] && getent passwd geodineum-comms >/dev/null 2>&1; then
-            _gd_own "$_comms_key" geodineum-comms geodineum-comms
-            _gd_mode "$_comms_key" 0600
-        fi
+        # NOTE the path: COMMS keeps its key in /var/lib, NOT here. Its unit
+        # runs ProtectSystem=strict without /etc in ReadWritePaths, so the
+        # self-generating code failed on its first live start with "Read-only
+        # file system". A signing key is service STATE rather than operator
+        # CONFIG, so /var/lib/geodineum-comms — owned by the service, already
+        # writable — is the right home, and it keeps this config directory
+        # non-writable by the component. Asserted below, outside the components
+        # sweep.
+        :
 
         # PHP-readable component configs: root:geodineum-bootstrap 0640
         # (NOT world-readable 0644). www-data is a member of geodineum-bootstrap
@@ -1422,6 +1426,19 @@ EOF"
 # silently breaks the timer with 203/EXEC (Permission denied) and nothing heals
 # it. Scripts → root:gnode 0750 (gnode execs via the group, no world bits);
 # backups/ → gnode:gnode (the service writes RDBs there as gnode).
+# COMMS's receipt signing key lives in /var/lib (its unit's ProtectSystem=strict
+# leaves /etc read-only for it), so the components sweep never sees it. Assert it
+# here instead: a private signing key readable beyond its owner is a forgeable
+# identity, and this sweep has flattened a 0600 key to group-readable before.
+geodeploy_fix_comms_signing_key() {
+    local key="${1:-/var/lib/geodineum-comms/receipt_signing.key}"
+    [[ -f "$key" ]] || return 0
+    getent passwd geodineum-comms >/dev/null 2>&1 || return 0
+    _gd_own "$key" geodineum-comms geodineum-comms
+    _gd_mode "$key" 0600
+    return 0
+}
+
 geodeploy_fix_bak_perms() {
     local bak="${1:-${GEODINEUM_ROOT}/Geodineum-BAK}"
     [[ -d "$bak" ]] || return 0

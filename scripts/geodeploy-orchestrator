@@ -163,6 +163,11 @@ geodeploy_fix_all_credentials "/etc/geodineum/credentials" || geodeploy_log "fix
 # doesn't silently die on owner drift (203/EXEC).
 geodeploy_fix_bak_perms "${GEODINEUM_ROOT}/Geodineum-BAK" || geodeploy_log "fix_bak_perms: FAILED (continuing)"
 
+# COMMS keeps its receipt signing key in /var/lib, not /etc: its unit runs
+# ProtectSystem=strict without /etc in ReadWritePaths, so the components sweep
+# never reaches the key. Assert it here instead.
+geodeploy_fix_comms_signing_key || geodeploy_log "fix_comms_signing_key: FAILED (continuing)"
+
 # Global: fix /opt/geodineum root directory.
 # Fail SOFT with a log line, never abort: these run under the lib's set -e,
 # and a sudoers whitelist that predates a mode change (the 750→751 migration)
