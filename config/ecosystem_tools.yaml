@@ -26,6 +26,7 @@ components:
       description: "Q64.64 fixed-point arithmetic — 18 transcendentals at 0 ULP"
       install_path: null  # crates.io dependency, not a filesystem component
       affordances:
+        - "cli:gMath/geodeploy.yaml"
         - "doc:gMath/CONTRACT.md"
     depends_on: []
     capabilities:
@@ -96,8 +97,8 @@ components:
       description: "Geometric topology daemon — geometric service discovery, stream processor, resilience"
       install_path: "gNode"
       affordances:
+        - "cli:gNode/geodeploy.yaml"
         - "describe:gnode"
-        - "cli:geodineum daemon contract"
         - "doc:gNode/COMMAND_SCHEMA.md"
         - "doc:gNode/CONTRACT.md"
     depends_on: [gMath, ValKey]
@@ -170,7 +171,7 @@ components:
       description: "PHP client library — CredentialResolver, stream I/O, Lua call bridge"
       install_path: "gNode-Client"
       affordances:
-        - "cli:geodineum client contract"
+        - "cli:gNode-Client/geodeploy.yaml"
         - "doc:gNode-Client/CONTRACT.md"
     depends_on: [ValKey]
     capabilities:
@@ -205,7 +206,7 @@ components:
       description: "Manager-of-managers PHP framework — 18 base managers, multi-platform"
       install_path: "gCore"
       affordances:
-        - "cli:geodineum gcore contract"
+        - "cli:gCore/geodeploy.yaml"
         - "doc:gCore/CONTRACT.md"
     depends_on: [gNode-Client]
     capabilities:
@@ -240,7 +241,7 @@ components:
       description: "Notification daemon — email, Telegram, SMS via ValKey streams"
       install_path: "Geodineum-COMMS"
       affordances:
-        - "cli:geodineum comms contract"
+        - "cli:Geodineum-COMMS/geodeploy.yaml"
         - "doc:Geodineum-COMMS/CONTRACT.md"
     depends_on: [gNode, ValKey]
     capabilities:
@@ -277,7 +278,7 @@ components:
       description: "WordPress parent theme — 9-phase bootstrap, 3-tier rendering, filter hooks"
       install_path: "gTemplate"
       affordances:
-        - "cli:geodineum template contract"
+        - "cli:gTemplate/geodeploy.yaml"
         - "doc:gTemplate/CONTRACT.md"
     depends_on: [gCore]
     capabilities:
@@ -314,7 +315,7 @@ components:
       description: "CSS 3D cube child theme — 6-face navigable layout"
       install_path: "gCube"
       affordances:
-        - "cli:geodineum gcube contract"
+        - "cli:gCube/geodeploy.yaml"
         - "doc:gCube/CONTRACT.md"
     depends_on: [gTemplate]
     capabilities:
@@ -351,7 +352,7 @@ components:
       description: "Backup and log rotation — ValKey RDB, systemd timer"
       install_path: "Geodineum-BAK"
       affordances:
-        - "cli:geodineum bak contract"
+        - "cli:Geodineum-BAK/geodeploy.yaml"
         - "doc:Geodineum-BAK/CONTRACT.md"
     depends_on: [gNode, ValKey]
     capabilities:
