@@ -25,6 +25,8 @@ components:
       repo: "geodineum/g_math"
       description: "Q64.64 fixed-point arithmetic — 18 transcendentals at 0 ULP"
       install_path: null  # crates.io dependency, not a filesystem component
+      affordances:
+        - "doc:gMath/CONTRACT.md"
     depends_on: []
     capabilities:
       - name: protocol
@@ -59,6 +61,8 @@ components:
       repo: null  # external dependency
       description: "In-memory data structure store — streams, hashes, sets, ACL"
       install_path: "/usr/bin/valkey-server"
+      affordances:
+        - "doc:gNode/docs/valkey/VALKEY_CONFIGURATION.md"
     depends_on: []
     capabilities:
       - name: protocol
@@ -89,8 +93,13 @@ components:
   - id: gNode
     metadata:
       repo: "geodineum/gNode"
-      description: "Geometric topology daemon — 23D service discovery, stream processor, resilience"
+      description: "Geometric topology daemon — geometric service discovery, stream processor, resilience"
       install_path: "gNode"
+      affordances:
+        - "describe:gnode"
+        - "cli:geodineum daemon contract"
+        - "doc:gNode/COMMAND_SCHEMA.md"
+        - "doc:gNode/CONTRACT.md"
     depends_on: [gMath, ValKey]
     capabilities:
       - name: protocol
@@ -125,6 +134,9 @@ components:
       repo: "geodineum/gNode-CMS"
       description: "gNode extension — Tera template rendering, content storage, 22 commands"
       install_path: "gNode"  # builds as feature of gNode
+      affordances:
+        - "describe:gnode"
+        - "doc:pro/gNode/gNode-CMS/CONTRACT.md"
     depends_on: [gNode]
     capabilities:
       - name: protocol
@@ -157,6 +169,9 @@ components:
       repo: "geodineum/gNode-Client"
       description: "PHP client library — CredentialResolver, stream I/O, Lua call bridge"
       install_path: "gNode-Client"
+      affordances:
+        - "cli:geodineum client contract"
+        - "doc:gNode-Client/CONTRACT.md"
     depends_on: [ValKey]
     capabilities:
       - name: protocol
@@ -189,6 +204,9 @@ components:
       repo: "geodineum/gCore"
       description: "Manager-of-managers PHP framework — 18 base managers, multi-platform"
       install_path: "gCore"
+      affordances:
+        - "cli:geodineum gcore contract"
+        - "doc:gCore/CONTRACT.md"
     depends_on: [gNode-Client]
     capabilities:
       - name: protocol
@@ -221,6 +239,9 @@ components:
       repo: "geodineum/Geodineum-COMMS"
       description: "Notification daemon — email, Telegram, SMS via ValKey streams"
       install_path: "Geodineum-COMMS"
+      affordances:
+        - "cli:geodineum comms contract"
+        - "doc:Geodineum-COMMS/CONTRACT.md"
     depends_on: [gNode, ValKey]
     capabilities:
       - name: protocol
@@ -255,6 +276,9 @@ components:
       repo: "geodineum/gTemplate"
       description: "WordPress parent theme — 9-phase bootstrap, 3-tier rendering, filter hooks"
       install_path: "gTemplate"
+      affordances:
+        - "cli:geodineum template contract"
+        - "doc:gTemplate/CONTRACT.md"
     depends_on: [gCore]
     capabilities:
       - name: protocol
@@ -289,6 +313,9 @@ components:
       repo: "geodineum/gCube"
       description: "CSS 3D cube child theme — 6-face navigable layout"
       install_path: "gCube"
+      affordances:
+        - "cli:geodineum gcube contract"
+        - "doc:gCube/CONTRACT.md"
     depends_on: [gTemplate]
     capabilities:
       - name: protocol
@@ -323,6 +350,9 @@ components:
       repo: "geodineum/Geodineum-BAK"
       description: "Backup and log rotation — ValKey RDB, systemd timer"
       install_path: "Geodineum-BAK"
+      affordances:
+        - "cli:geodineum bak contract"
+        - "doc:Geodineum-BAK/CONTRACT.md"
     depends_on: [gNode, ValKey]
     capabilities:
       - name: protocol
