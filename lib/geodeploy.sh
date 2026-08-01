@@ -313,7 +313,12 @@ geodeploy_handle_dirty() {
     fi
 
     case "$strategy" in
-        stash)
+        # `discard` is the canonical name; `stash` accepted as a legacy alias
+        # (it has BEHAVED as discard since the gTemplate corruption — the
+        # rename made the manifests truthful, and this arm makes the lib
+        # accept the truthful word; without it, discard fell to *) and the
+        # orchestrator silently stopped deploying any dirty component).
+        stash|discard)
             # Deploy targets mirror origin; geodeploy_pull's reset --hard
             # overwrites tracked files regardless. Discard local changes here
             # rather than stashing — stash + stash-pop is what wrote conflict

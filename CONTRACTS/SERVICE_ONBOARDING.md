@@ -72,7 +72,7 @@ sudo geodineum register service myservice service
 #    Review the 30-dim vector — meaningful capabilities beat profile defaults.
 
 # 3. Wire the heartbeat (in your service, every ~60s):
-#    SETEX {geodineum}:gnode:heartbeat:production:myservice 120 '{"ts":<unix>}'
+#    SETEX {geodineum}:gnode:heartbeat:production:myservice:$(hostname -s) 120 '{"ts":<unix>,"node":"<short-hostname>"}'   # node segment: CONTRACTS/heartbeat.md — add yourself to its census
 #    → your tile on the wp-admin dashboard goes green; missing/stale = red.
 
 # 4. Prove the round-trip (any registered site stream):

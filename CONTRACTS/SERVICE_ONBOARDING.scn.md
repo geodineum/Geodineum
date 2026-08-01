@@ -34,7 +34,7 @@ POLICY: 8 well-known namespace classes; foreign pattern → POLICY DENY, onboard
 COMMANDS: geodineum provision-service <svc> (master) · geodineum register service <svc>
   <profile: web|headless|service|system|component> (node-local) · geodineum grants
   request|pending|approve|deny|show|sweep
-HEARTBEAT: SETEX {geodineum}:gnode:heartbeat:{env}:<svc> 120 '{"ts":<unix>}' every ~60s
+HEARTBEAT: SETEX {geodineum}:gnode:heartbeat:{env}:<svc>:<node> 120 '{"ts":<unix>,"node":...}' every ~60s (node = short hostname; census in CONTRACTS/heartbeat.md, update SAME commit)
   — dashboard tile green ≤75s, lagging ≤120s, red after
 WIRE: XADD {site}:gnode:unified:{env} (t=c, p carries _request_id) → poll {site}:res:{id}
   (EX 10) → signed receipt on {site}:gnode:receipts:{env} (ed25519; pubkeys at

@@ -26,4 +26,4 @@ triggers:
 #   command: ""                # custom build command (overrides type)
 
 dirty-tree:
-  strategy: stash              # stash | skip | force
+  strategy: discard            # discard | skip | force
