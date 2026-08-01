@@ -56,6 +56,17 @@ fresh `ts`.
 The per-site ACL grant `~{geodineum}:gnode:*` covers both the registry
 read and every heartbeat key.
 
+## Value fields (additive — readers judge liveness by `ts`, everything else optional)
+
+| Field | Writer | Meaning |
+|---|---|---|
+| `ts`, `pid`, `comp`, `node` | all six | the base contract |
+| `la1`, `cores`, `mem_used_mb`, `mem_total_mb` | **gnode-daemon only** | node resources from /proc — the daemon is the node's authority, and ONE component per node reporting hardware keeps the numbers from disagreeing |
+
+Consumers: `geodineum status` (operator table + `--json`) and the daemon's
+`constellation_status` command (the agent-facing twin — same JSON shape, so a
+table and a function-call result never disagree about the estate).
+
 ## Writers (the census — update this table when adding one)
 
 | Component | Language | Site |
