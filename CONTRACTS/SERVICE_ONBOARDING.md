@@ -125,3 +125,44 @@ geodineum grants request myservice "{geodine}:receipts:*" --reason "..." [--ttl-
 3. Your heartbeat key exists with a fresh `ts` (< 75 s → green tile).
 4. A `ping` round-trip returns on the reply key AND a signed receipt appears.
 5. `grants show <svc>` — ledger empty (or exactly your approved requests).
+
+
+## Tenant grouping (`--owner`)
+
+Services under one owner discover each other across site boundaries:
+
+```bash
+./scripts/onboard-service.sh staging_my_app --owner acme --yaml /opt/acme/staging
+./scripts/onboard-service.sh my_app        --owner acme --yaml /opt/acme/production
+```
+
+Query the group (daemon-level; clients stay ACL-isolated to their own
+keyspace — they ask, the daemon crosses the boundary):
+
+```bash
+FCALL GNODE_TENANT_LIST_SITES 0 acme
+FCALL GNODE_TENANT_DISCOVER   0 acme '{"protocol":"http_rest"}' 10
+```
+
+Implementation: `gNode/daemon/functions/gnode_site.lua`.
+
+## What onboarding creates
+
+| Artifact | Where |
+|---|---|
+| ACL user | `gnode_client_{service_id}` |
+| Credential (0640, group-readable) | `/etc/geodineum/credentials/valkey_client_{service_id}.password` |
+| Unified + health streams (per DTAP env) | `{service_id}:gnode:unified:{env}` |
+| Site-registry membership | `gnode:sites:registry` SET |
+| Discovery path | `discovery-paths.conf` |
+| Registration intent | `{ns}:gnode:registrations` |
+| Tenant-group membership (with `--owner`) | `gnode:tenant:{owner}:sites` SET |
+
+## Decommissioning
+
+```bash
+./scripts/deregister-service.sh my_service --dry-run    # preview
+./scripts/deregister-service.sh my_service --remove-acl # streams + keys + registry
+```
+
+Tenant-group cleanup is automatic. (Both scripts live in `gNode/scripts/`.)

@@ -67,4 +67,8 @@ GRANT-WITHOUT-LEDGER: any SETUSER outside the loop breaks the audit invariant;
   effective-vs-ledger drift is checkable (ACL GETUSER diff).
 SILENT-EXPIRY: replies are EX 10 — poll immediately; the receipt is the durable record.
 UNDECLARED-FOREVER: legacy uniform grants are broad; declare consumes/produces to shrink.
+TENANT: `--owner acme` → `gnode:tenant:acme:sites` SET; cross-site discover = daemon-level
+  (GNODE_TENANT_LIST_SITES / GNODE_TENANT_DISCOVER, gnode_site.lua); clients stay keyspace-isolated.
+CREATES: ACL user + cred 0640 + unified/health streams ×DTAP + sites:registry + discovery-path + intent.
+DECOMMISSION: deregister-service.sh [--dry-run|--remove-acl]; tenant cleanup automatic.
 ```
