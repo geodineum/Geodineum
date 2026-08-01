@@ -3261,6 +3261,12 @@ provision_comms_acl() {
         # produces a daemon that logs "receipt signer ready" and then NOPERMs
         # every actual write — announcing itself and emitting nothing.
         "~*:gnode:receipt_pubkeys" "~*:gnode:receipts:*"
+        # Liveness: its own heartbeat key (CONTRACTS/heartbeat.md). Absent from
+        # the original least-privilege composition, so every COMMS heartbeat
+        # failed NOPERM with the error hidden at debug level — the dashboard
+        # showed COMMS down while it was delivering mail. A grant list composed
+        # without consulting the writer census misses exactly this way.
+        "~*:gnode:heartbeat:*"
     )
     if ! REDISCLI_AUTH="$(cat "$admin_pwfile")" valkey-cli -p "$valkey_port" \
         ACL SETUSER geodineum_comms \

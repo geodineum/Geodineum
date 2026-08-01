@@ -53,8 +53,16 @@ fresh `ts`.
 2. Per component × env × node: direct `GET` on the key above.
 3. Staleness is judged by `ts` (≤75 s = up), not by key presence alone.
 
-The per-site ACL grant `~{geodineum}:gnode:*` covers both the registry
-read and every heartbeat key.
+READ: the per-site ACL grant `~{geodineum}:gnode:*` covers both the
+registry read and every heartbeat key.
+
+WRITE: a writer's own ACL must include the family. Service users get it
+via onboarding's `~{<ns>}:gnode:*`; geodineum_comms gets it explicitly
+(`~*:gnode:heartbeat:*` in the installer's `acl_comms_patterns`) — it was
+missing from the least-privilege composition once, every COMMS heartbeat
+failed NOPERM invisibly, and the dashboard showed a mail-delivering
+daemon as down. When adding a census row, verify the writer's grant with
+`ACL DRYRUN <user> SETEX <key> 120 x` — never assume coverage.
 
 ## Value fields (additive — readers judge liveness by `ts`, everything else optional)
 

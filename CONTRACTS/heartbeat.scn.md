@@ -6,7 +6,7 @@
 
 **node** = identity = `GNODE_NODE_ID` = consumer name = constellation entity id = **short hostname** (first dot-label). NEVER `master` — role ≠ identity; role lives at node_role dim 0. Pre-segment failure: all nodes → one key → last-writer-wins → dead daemon hides behind live peer's ts.
 
-**Read** HGETALL `{ns}:gnode:constellation:entities` → node list (no SCAN) → GET per component×env×node → judge by ts ≤75s. Grant `~{geodineum}:gnode:*` covers all.
+**Read** HGETALL `{ns}:gnode:constellation:entities` → node list (no SCAN) → GET per component×env×node → judge by ts ≤75s. READ grant `~{geodineum}:gnode:*` covers all; WRITE needs the family in the WRITER's ACL (comms: `~*:gnode:heartbeat:*` in installer acl_comms_patterns — was missing once, NOPERM'd invisibly). New census row ⇒ `ACL DRYRUN <user> SETEX` first.
 
 **Census** (update WITH form changes, same commit): gnode-daemon Rust `integration/heartbeat.rs` (canonical+tests) · COMMS Rust `main.rs::write_heartbeat` · gSchedule Rust `config.rs::k_heartbeat` · gFlow Node `engine/heartbeat.js` · Geodine PHP `pipeline_runner.php` · gShield Py `gshield-decide.py`. Reader: gCore `wp-hooks.php::gcore_fetch_component_health`.
 
