@@ -5124,17 +5124,15 @@ phase_services() {
     if [[ -x "$service_script" ]]; then
         log_info "Installing gNode systemd service..."
         # Pass the node id through so install-gnode-service.sh writes it into
-        # daemon.env (the unit's --node-id reads GNODE_NODE_ID). Empty on a
-        # master/standalone install → the unit defaults to "master".
-        # A flag-driven join (--master-ip / VALKEY_HOST, wizard skipped) must
-        # NOT fall through to "master": two daemons sharing that consumer name
-        # contend over the same pending stream entries instead of load-balancing.
+        # daemon.env (the unit's --node-id reads GNODE_NODE_ID). Default is the
+        # short hostname on EVERY path — master included. "master" is a ROLE,
+        # modeled at node_role (constellation schema dim 0); a role in an
+        # identity slot renames the node when its role changes, and the id is
+        # also the consumer name and the heartbeat's node segment, so it must
+        # be unique per node and stable across role changes.
         if [[ -z "$GNODE_NODE_ID" ]]; then
-            case "${VALKEY_HOST:-127.0.0.1}" in
-                127.0.0.1|localhost|::1) : ;;
-                *) GNODE_NODE_ID="$(hostname -s 2>/dev/null || echo worker)"
-                   log_info "Node ID defaulted to ${GNODE_NODE_ID} (remote ValKey → constellation worker)" ;;
-            esac
+            GNODE_NODE_ID="$(hostname -s 2>/dev/null || echo unknown-node)"
+            log_info "Node ID defaulted to ${GNODE_NODE_ID} (short hostname)"
         fi
         export GNODE_NODE_ID
         if ! "$service_script"; then
