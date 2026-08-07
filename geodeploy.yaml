@@ -36,3 +36,7 @@ cli:
       handler: scripts/cli/geodeploy-interval.sh
       description: Change auto-deploy cron schedule
       category: Deploy
+    - name: mail records
+      handler: scripts/cli/mail-records.sh
+      description: Print DKIM/SPF/DMARC records for a provisioned sender domain vs live DNS
+      category: Mail
