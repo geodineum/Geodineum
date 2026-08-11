@@ -258,6 +258,10 @@ geodeploy_fetch() {
     local branch="$1"
     local remote="${2:-origin}"
 
+    # Deploy clones must ignore mode bits (SB-8.79): the perms sweeps own the
+    # modes of deployed files, and git tracking the executable bit turns every
+    # sweep into a phantom dirty tree the dirty-tree strategies then churn on.
+    geodeploy_as_deploy git config core.fileMode false 2>> "$GEODEPLOY_LOG"
     geodeploy_as_deploy git fetch "$remote" "$branch" 2>> "$GEODEPLOY_LOG"
 }
 

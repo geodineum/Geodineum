@@ -4,7 +4,7 @@
 # palaciodeobras.com; a site that can queue COMMS mail deserves a sender
 # domain that authenticates.
 #
-#   sudo setup-mail-stack.sh <domain> [--selector geo]
+#   sudo setup-mail-stack.sh <domain> [--selector geo] [--default noreply@ecosystem-domain]
 #
 # Idempotent: safe to run per domain; re-running an existing domain reprints
 # its records. Companion CLI verb: `geodineum mail records <domain>`.
@@ -14,8 +14,10 @@ set -euo pipefail
 DOMAIN="${1:-}"; shift || true
 [[ -n "$DOMAIN" && "$DOMAIN" =~ ^[a-z0-9.-]+$ ]] || { echo "usage: sudo $0 <domain> [--selector geo]" >&2; exit 1; }
 SELECTOR=geo
+DEFAULT_FROM=""
 while [[ $# -gt 0 ]]; do case "$1" in
     --selector) SELECTOR="$2"; shift 2 ;;
+    --default)  DEFAULT_FROM="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
 esac; done
 
@@ -70,6 +72,27 @@ cur_n=$(postconf -h non_smtpd_milters 2>/dev/null || true)
 systemctl enable --now opendkim >/dev/null
 systemctl restart opendkim
 systemctl reload postfix
+
+echo "== sender authorization (COMMS sender_policy) =="
+# COMMS only sends AS domains listed here; everything else falls back to
+# GEODINEUM_DEFAULT_FROM with a warning. Registering here is what makes a
+# provisioned domain a first-class sender.
+AUTH=/etc/geodineum/mail/authorized-domains
+install -d -m 0750 -o root -g geodineum-comms /etc/geodineum/mail 2>/dev/null     || install -d -m 0750 /etc/geodineum/mail
+touch "$AUTH"
+grep -qxF "$DOMAIN" "$AUTH" || echo "$DOMAIN" >> "$AUTH"
+chgrp geodineum-comms "$AUTH" 2>/dev/null || true
+chmod 0640 "$AUTH"
+echo "authorized: $(tr '\n' ' ' < "$AUTH")"
+
+if [[ -n "$DEFAULT_FROM" ]]; then
+    echo "== default sender: $DEFAULT_FROM =="
+    install -d -m 0755 /etc/systemd/system/geodineum-comms.service.d
+    printf '[Service]\nEnvironment=GEODINEUM_DEFAULT_FROM=%s\n' "$DEFAULT_FROM"         > /etc/systemd/system/geodineum-comms.service.d/default-sender.conf
+    systemctl daemon-reload
+    systemctl try-restart geodineum-comms
+    echo "COMMS restarted with GEODINEUM_DEFAULT_FROM=$DEFAULT_FROM"
+fi
 
 echo "== verify =="
 systemctl is-active opendkim postfix
