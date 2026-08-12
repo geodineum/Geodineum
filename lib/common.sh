@@ -792,6 +792,11 @@ render_template() {
     content="${content//\{\{TEMPLATE_NAME\}\}/${TEMPLATE_NAME:-}}"
     content="${content//\{\{DOMAIN\}\}/${DOMAIN:-}}"
     content="${content//\{\{GCORE_ENTRY\}\}/${GCORE_ENTRY:-/opt/geodineum/gCore/gcore-standalone.php}}"
+    content="${content//\{\{PROFILE\}\}/${GEO_PROFILE:-web}}"
+    # Runtime wiring (form endpoints, standalone producers)
+    content="${content//\{\{TIER_FILE\}\}/${TIER_FILE:-}}"
+    content="${content//\{\{CREDENTIAL_FILE\}\}/${CREDENTIAL_FILE:-}}"
+    content="${content//\{\{VALKEY_PORT\}\}/${VALKEY_PORT:-47445}}"
     # Capabilities
     content="${content//\{\{CAP_PROTOCOL\}\}/${CAP_PROTOCOL:-}}"
     content="${content//\{\{CAP_FORMAT\}\}/${CAP_FORMAT:-}}"

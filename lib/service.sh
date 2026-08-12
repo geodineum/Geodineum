@@ -20,6 +20,12 @@ set -euo pipefail
 apply_preset() {
     local preset="$1"
 
+    # Manifest profile (drives the 30-dim vector at registration)
+    case "$preset" in
+        http-api|wordpress) GEO_PROFILE="web" ;;
+        *)                  GEO_PROFILE="service" ;;
+    esac
+
     # Shared defaults
     CAP_FORMAT="json"
     CAP_STABILITY="beta"

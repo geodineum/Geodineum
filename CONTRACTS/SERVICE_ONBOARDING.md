@@ -18,8 +18,15 @@ audit. The paved road below is five commands.
 ## 1. Concepts (60 seconds)
 
 - A **service** is any process that participates in the mesh — it does not
-  have to be a website. Public types: Website / App / PWA. Internal types:
-  Daemon / Service / Custom. Light nodes (ValKey + gNode only) are first-class.
+  have to be a website. The taxonomy: **public** types `website-wp` |
+  `website-static` | `app-pwa` (serve visitors over HTTP), **internal** types
+  `daemon` | `gcore-service` | `custom` (infrastructure). Light nodes
+  (ValKey + gNode only) are first-class.
+- Each type carries a **requirement matrix** — the interview asks what the
+  service IS; the matrix decides what runs (vhost/certbot, docroot, systemd
+  unit + own user, cred model, mail, heartbeat); every type ends on the SAME
+  paved road. `geodineum service new --matrix` prints it; the single source
+  is `lib/service-taxonomy.sh`.
 - Every service gets its own **ValKey identity**: ACL user
   `gnode_client_<service>`, credential at
   `/etc/geodineum/credentials/<service>.password` (root:<component-group> 0640).
@@ -33,33 +40,78 @@ audit. The paved road below is five commands.
   service: message it via the relay (§5), or request a grant through the
   approval loop (§6).
 
-## 2. Declare — the manifest
+## 2. Declare — the manifest (ONE schema)
 
-Create `.geodineum/gnode_services.yaml` (or pass `--yaml <dir>`):
+Create `.geodineum/gnode_services.yaml` (or pass `--yaml <dir>`). Every
+generator in the estate (`service new`, `new site`, `register`, the
+scaffolder templates) emits this same shape:
 
 ```yaml
-services:
-  - name: myservice
-    capabilities: [workflow]        # drives the 30-dim capability vector
+profile: service                  # web | headless | service | system | component
+                                  # THIS drives the 30-dim capability vector.
+environment: production           # DTAP tier — REQUIRED (flag|manifest|abort)
 
-# Optional but recommended — least-privilege ACL composition.
-# Own-namespace + well-known patterns ONLY; anything foreign is REFUSED
-# and the onboarding aborts (never silently narrowed or broadened).
-consumes:
-  - "{myservice}:gnode:comms:*"
-  - "{site_id}:state:*"             # {site_id}/{svc}/{eco} interpolate
+services:
+  - id: "myservice"
+    metadata:                     # daemon discovery reads this
+      description: "What this service does"
+      type: "daemon"
+      tier: "SERVICE"
+
+# REQUIRED — least-privilege ACL composition. Own-namespace + well-known
+# patterns ONLY; anything foreign is REFUSED and the onboarding aborts
+# (never silently narrowed or broadened).
+consumes: []
 produces:
-  - "{myservice}:results:*"
+  - "{myservice}:gnode:comms:*"   # {site_id}/{service}/{ecosystem} interpolate
 ```
 
-With declarations, the ACL is composed from them (plus a safe base: own
-namespace + the shared gnode bus). Without them, a legacy uniform grant set
-applies — broader; declare when you can. The allow-list is the **8 well-known
+The ACL is composed from the declarations (plus a safe base: own namespace +
+the shared gnode bus). **A manifest that declares nothing is refused** — the
+old fallback (a broad legacy-uniform grant set) is retired: it silently
+handed `{testing..production}:gnode:*`, `gnode:*`, `topology:*`,
+`template:*`, `membership:*` to services that asked for nothing, and looked
+correct on every own-namespace check. Regenerate an undeclared manifest with
+`sudo geodineum register <service> --force`, then `--regrant`.
+
+> **`services[].capabilities` is gone.** It was read by nothing —
+> `manifest-policy.sh` consumes only `consumes`/`produces`, and the daemon's
+> periodic discovery does not probe `.geodineum/` at all. Generators no
+> longer emit it; per-dimension capability data lives in
+> `.geodineum/config.yaml`. The 30-dim vector comes from the top-level
+> **`profile:`** key above (or `--profile`, which overrides it).
+>
+> **Declare `profile:` — do not rely on the default.** It falls back to `web`,
+> which describes a client-facing HTTP service. An internal daemon registered
+> that way is matched by discovery for work it cannot do. No caller in this
+> estate passes `--profile`, so the manifest is the only place that reliably
+> gets this right; onboarding now logs which source it came from and warns when
+> it fell back.
+
+> **Two files share this name and are not the same document.**
+> `.geodineum/gnode_services.yaml` is the ONBOARDING manifest (ACL policy;
+> `consumes`/`produces`; read by `yq` via `manifest-policy.sh`).
+> **`gnode_discovery.yaml`** at a discovery path's ROOT is the DISCOVERY
+> manifest, parsed by the daemon with a different schema — `services[].id` plus
+> `capabilities: [{name, value}]`. Putting the onboarding shape at a discovery
+> root registers nothing; putting the discovery shape in `.geodineum/` composes
+> no grants — and both fail silently.
+>
+> The discovery manifest was also called `gnode_services.yaml`, which is what
+> made the two indistinguishable. The daemon still accepts the old name so
+> nothing breaks on upgrade; new deployments should use `gnode_discovery.yaml`. The allow-list is the **8 well-known
 namespace classes** (own namespace, per-site gnode/gcore bus, ecosystem bus,
 shared defaults, env-tagged streams, shared topology, legacy aliases —
 `access-grants.scn.md ::PATTERNS`).
 
 ## 3. Onboard + register — five commands
+
+**Preferred entry: `sudo geodineum service new`** — the taxonomy interview
+(or `--type <type> --env <tier> --yes` non-interactive) runs the type's
+matrix rows and ends on exactly the steps below, including the mail
+dispatch-verification probe. Delegated provisioning for a worker node:
+`--node <name>` mints identity + credential on the master and prints the
+`add-service-credential.sh` one-liner for the worker. The manual road:
 
 ```bash
 # 1. Mint identity + streams + discovery (CONSTELLATION MASTER — the ACL
@@ -84,11 +136,17 @@ sudo geodineum grants show myservice
 
 ## 4. What your identity can do
 
-Composed grants (declared manifests) or the legacy uniform set (undeclared).
-Either way ACL patterns are **additive-only** — revocation is a full
-recompose, not a subtraction. Commands allowed: streams (`x*`), `fcall`,
-basic KV/hash/set/list/zset, `scan`, `publish` — no admin surface
+Composed grants from the declared manifest — the legacy uniform set for
+undeclared services is retired (undeclared ⇒ refused, fail-loud). ACL
+patterns are **additive-only** — revocation is a full recompose, not a
+subtraction. Commands allowed: streams (`x*`), `fcall`, basic
+KV/hash/set/list/zset, `scan`, `publish` — no admin surface
 (`FUNCTION FLUSH`/`RESTORE` are explicitly denied at the daemon tier).
+
+The credential's disk model follows the type: web types →
+`root:geodineum-web:640` (www-data reads via the group); internal →
+`root:geodineum:640` (www-data must NOT read); daemon → `root:<svc>:640`
+(own single-member group).
 
 ## 5. Talk to the mesh
 

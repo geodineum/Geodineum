@@ -363,6 +363,10 @@ General:
   --version, -v             Show version
 
 Examples:
+  # Onboard any service type via the taxonomy interview (or --type flags)
+  sudo geodineum service new
+  sudo geodineum service new example.com --type website-static --env production
+
   # Deploy a WordPress site with gCube theme
   sudo geodineum new site test.example.com --theme gcube --env testing
 
@@ -589,6 +593,9 @@ main() {
 Usage: geodineum service <subcommand> [args]
 
 Subcommands:
+  new [<domain|name>] Taxonomy-driven onboarding interview: asks what the
+                     service IS (public website/app vs internal daemon/service),
+                     then runs that type's requirement matrix. --help for flags.
   install <name>     Run install.steps for a service (prerequisites check,
                      then install.steps, then install.health_check)
   uninstall <name>   Run uninstall.steps (use --keep-data to preserve
@@ -612,6 +619,12 @@ USAGE
                 exit 2
             fi
             local _svc_sub="$1"; shift
+            if [[ "$_svc_sub" == "new" ]]; then
+                source "${LIB_DIR}/common.sh"
+                source "${LIB_DIR}/service-taxonomy.sh"
+                cmd_service_new "$@"
+                exit $?
+            fi
             source "${LIB_DIR}/common.sh" 2>/dev/null || true
             source "${LIB_DIR}/manifest-registry.sh" 2>/dev/null || true
             source "${LIB_DIR}/manifest-install.sh" 2>/dev/null || {
@@ -1959,16 +1972,19 @@ EOF
 cmd_provision_service() {
     require_sudo "Service provisioning"
 
-    local service="" environment="" environments=""
+    local service="" environment="" environments="" yaml_path=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --environment)  environment="$2"; shift 2 ;;
             --environments) environments="$2"; shift 2 ;;
+            --yaml)         yaml_path="$2"; shift 2 ;;
             -h|--help)
-                echo "Usage: sudo geodineum provision-service <service> [--environment <env>]"
+                echo "Usage: sudo geodineum provision-service <service> [--environment <env>] [--yaml <dir>]"
                 echo ""
                 echo "Creates the service's ValKey ACL user + streams on this (master) node"
                 echo "and prints the auth to install on the node that will run the service."
+                echo "Grants compose from a manifest; without --yaml, a minimal declaring"
+                echo "manifest is minted at /etc/geodineum/manifests/<service>/."
                 return 0 ;;
             -*) log_error "Unknown option: $1"; return 1 ;;
             *)  if [[ -z "$service" ]]; then service="$1"; shift
@@ -1980,7 +1996,37 @@ cmd_provision_service() {
     local onboard="${GNODE_SCRIPTS}/onboard-service.sh"
     [[ -x "$onboard" ]] || { log_error "onboard-service.sh not found under ${GNODE_SCRIPTS} — is gNode installed?"; return 1; }
 
-    local -a oargs=("$service")
+    # Grants compose from declarations — there is no uniform fallback. A
+    # delegated service keeps its manifest on the master (the policy source);
+    # mint a minimal own-namespace one when none exists yet.
+    if [[ -z "$yaml_path" ]]; then
+        yaml_path="/etc/geodineum/manifests/${service}"
+        if [[ ! -f "${yaml_path}/gnode_services.yaml" ]]; then
+            mkdir -p "$yaml_path"
+            cat > "${yaml_path}/gnode_services.yaml" << PSEOF
+# Geodineum onboarding manifest (minted by provision-service — minimal).
+# Contract: CONTRACTS/SERVICE_ONBOARDING.md
+profile: service
+${environment:+environment: ${environment}
+}
+services:
+  - id: "${service}"
+    metadata:
+      description: "Delegated service (provisioned on the master)"
+      type: "service"
+      tier: "SERVICE"
+      created_by: "geodineum-provision-service"
+
+consumes: []
+produces:
+  - "{${service}}:gnode:comms:*"
+PSEOF
+            chmod 640 "${yaml_path}/gnode_services.yaml"
+            log_info "Minted minimal manifest: ${yaml_path}/gnode_services.yaml (edit + --regrant to refine)"
+        fi
+    fi
+
+    local -a oargs=("$service" --yaml "$yaml_path")
     [[ -n "$environment" ]]  && oargs+=(--environment "$environment")
     [[ -n "$environments" ]] && oargs+=(--environments "$environments")
     "$onboard" "${oargs[@]}" || { log_error "Service onboarding failed for '${service}'"; return 1; }
