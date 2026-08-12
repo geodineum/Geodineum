@@ -160,13 +160,30 @@ ensure_skeleton_static() {
     fi
     if [[ -f "${docroot}/index.html" ]]; then
         log_warning "index.html already exists — skipping skeleton"
+    else
+        DOMAIN="$SVC_DOMAIN" SITE_ID="$SVC_NAME" \
+            render_template "${GEODINEUM_CLI_ROOT}/templates/static-site/index.html.tpl" \
+            "${docroot}/index.html"
+        mkdir -p "${docroot}/assets"
+        log_success "Static skeleton rendered (index.html + assets/)"
+    fi
+    ensure_visit_beacon
+}
+
+# Cookieless analytics endpoint — every public type gets one; the counters
+# land in the site's own {site}:* keyspace and surface in `geodineum visitors`.
+ensure_visit_beacon() {
+    local docroot="${GEODINEUM_WEB_ROOT}/${SVC_DOMAIN}/public_html"
+    if [[ -f "${docroot}/g/hit.php" ]]; then
+        log_warning "g/hit.php already exists — skipping"
         return 0
     fi
-    DOMAIN="$SVC_DOMAIN" SITE_ID="$SVC_NAME" \
-        render_template "${GEODINEUM_CLI_ROOT}/templates/static-site/index.html.tpl" \
-        "${docroot}/index.html"
-    mkdir -p "${docroot}/assets"
-    log_success "Static skeleton rendered (index.html + assets/)"
+    mkdir -p "${docroot}/g"
+    SITE_ID="$SVC_NAME" DOMAIN="$SVC_DOMAIN" \
+    CREDENTIAL_FILE="${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${SVC_NAME}.password" \
+        render_template "${GEODINEUM_CLI_ROOT}/templates/static-site/hit.php.tpl" \
+        "${docroot}/g/hit.php"
+    log_success "Visitor beacon: g/hit.php → GNODE_ANALYTICS_HIT ({${SVC_NAME}}:visits/pagecounts/...)"
 }
 
 # --- PWA skeleton: static shell + web-app manifest + service worker --------
@@ -200,16 +217,20 @@ MANEOF
     if [[ ! -f "${docroot}/sw.js" ]]; then
         cat > "${docroot}/sw.js" << 'SWEOF'
 // Minimal offline-first service worker. Extend the cache list as the app grows.
+// The /g/ analytics beacon is never cached — a hit that lands in the cache
+// is a hit that never lands in the counters.
 const CACHE = 'app-v1';
 const ASSETS = ['/', '/index.html', '/manifest.webmanifest'];
 self.addEventListener('install', (e) => {
     e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
 });
 self.addEventListener('fetch', (e) => {
+    if (new URL(e.request.url).pathname.startsWith('/g/')) { return; }
     e.respondWith(caches.match(e.request).then((r) => r || fetch(e.request)));
 });
 SWEOF
     fi
+    ensure_visit_beacon
     log_success "PWA skeleton rendered (manifest.webmanifest + sw.js)"
 }
 

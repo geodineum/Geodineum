@@ -17,6 +17,12 @@ action="${1:-}"
 # Pre-fix only --enable/--disable worked; direct invocation with the
 # usage-advertised `on`/`off` fell through to the error case.
 case "$action" in
+    -h|--help)
+        echo "Usage: geodineum geodeploy <on|off>"
+        echo ""
+        echo "Enable or disable the auto-deploy cron (geodeploy-orchestrator)."
+        exit 0
+        ;;
     on|enable|--enable)
         if crontab -l 2>/dev/null | grep -q "$CRON_PATTERN"; then
             log_info "Auto-deploy cron already enabled"

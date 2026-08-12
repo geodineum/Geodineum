@@ -66,6 +66,8 @@ sudo geodineum update --skip-build             # pull only, no rebuild
 ## Health & Monitoring
 
 ```bash
+sudo geodineum visitors                        # visitor counts today/7d/30d, all sites (beacon-fed)
+sudo geodineum visitors example_site --json    # one site, machine-readable
 geodineum status                               # ecosystem health check
 geodineum status --verbose                     # all checks (not just failures)
 geodineum status --site example_site         # single site check

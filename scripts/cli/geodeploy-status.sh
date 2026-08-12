@@ -7,6 +7,13 @@ source "${GEODINEUM_LIB:-/usr/local/lib/geodineum}/cli-helpers.sh" 2>/dev/null \
     || source "${GEODINEUM_ROOT:-/opt/geodineum}/Geodineum/lib/cli-helpers.sh" 2>/dev/null \
     || { SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$(dirname "$(dirname "$SCRIPT_DIR")")/lib/cli-helpers.sh"; }
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    echo "Usage: geodineum geodeploy status"
+    echo ""
+    echo "Show the auto-deploy cron state, schedule, and the last run's log tail."
+    exit 0
+fi
+
 GEODINEUM_REPO="$(dirname "$(dirname "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)")")"
 
 ORCHESTRATOR="${GEODINEUM_REPO}/scripts/geodeploy-orchestrator"

@@ -19,5 +19,19 @@
     <footer>
         <p>Served from a Geodineum constellation.</p>
     </footer>
+    <script>
+        // Cookieless visitor beacon — aggregates only, no identifier stored.
+        // Read back with: geodineum visitors {{SITE_ID}}
+        (function () {
+            try {
+                var payload = JSON.stringify({ path: location.pathname, ref: document.referrer || '' });
+                if (navigator.sendBeacon) {
+                    navigator.sendBeacon('/g/hit.php', new Blob([payload], { type: 'application/json' }));
+                } else {
+                    fetch('/g/hit.php', { method: 'POST', body: payload, keepalive: true });
+                }
+            } catch (e) { /* analytics must never break the page */ }
+        })();
+    </script>
 </body>
 </html>

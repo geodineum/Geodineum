@@ -4,6 +4,13 @@
 set -euo pipefail
 
 DOMAIN="${1:-}"
+if [[ "$DOMAIN" == "-h" || "$DOMAIN" == "--help" ]]; then
+    echo "Usage: geodineum mail records <domain>"
+    echo ""
+    echo "Reprint the DKIM/SPF/DMARC records for a domain provisioned by"
+    echo "setup-mail-stack.sh, with live-DNS reality shown beside each."
+    exit 0
+fi
 if [[ -z "$DOMAIN" ]]; then
     echo "usage: geodineum mail records <domain>"
     echo "provisioned domains:"

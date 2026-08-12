@@ -10,6 +10,12 @@ GEODINEUM_REPO="$(dirname "$(dirname "$(cd "$(dirname "${BASH_SOURCE[0]}")" && p
 ORCHESTRATOR_PATH="${GEODINEUM_ROOT:-/opt/geodineum}/Geodineum/scripts/geodeploy-orchestrator"
 CRON_PATTERN="geodeploy-orchestrator"
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    echo "Usage: geodineum geodeploy interval <cron-schedule>"
+    echo ""
+    echo "Change the auto-deploy cron schedule (e.g. '*/5 * * * *')."
+    exit 0
+fi
 if [[ $# -eq 0 ]]; then
     echo "Usage: geodineum geodeploy interval <cron-schedule>" >&2
     echo "  Example: geodineum geodeploy interval '*/10 * * * *'" >&2

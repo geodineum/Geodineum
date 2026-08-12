@@ -297,6 +297,7 @@ Commands:
   info [<site_id>]          Show credentials, paths, .geodineum/ and connection details
   list                      List registered sites and services
   check                     Validate ecosystem config (was: status)
+  visitors [<site_id>]      Visitor counts today/7d/30d from the cookieless beacon
   update                    Pull latest for all installed components
   wp <site_id> <cmd>        WordPress CLI wrapper (auto-resolves path + user)
   logs                      Tail daemon and ecosystem logs
@@ -567,6 +568,10 @@ main() {
         check)
             source "${LIB_DIR}/common.sh"
             cmd_status "$@"
+            ;;
+        visitors)
+            source "${LIB_DIR}/common.sh"
+            cmd_visitors "$@"
             ;;
         update)
             source "${LIB_DIR}/common.sh"
@@ -1122,9 +1127,110 @@ cmd_status() {
 
     if [[ "$json" != "true" ]]; then
         banner
+        # Visitor counters ride along with health — same command, one glance.
+        cmd_visitors ${site:+"$site"} --compact 2>/dev/null || true
     fi
 
     exec "$validate_script" "${args[@]}"
+}
+
+# =============================================================================
+# Visitors command — per-site visitor counts from the beacon-fed aggregates
+# =============================================================================
+# One no-writes FCALL (GNODE_ANALYTICS_SUMMARY) per site over the last 30 UTC
+# days; today/7d/30d are folded from its daily[] array. Uses each site's OWN
+# credential (the keys are {site}:* — no admin surface involved), so it needs
+# root to read the password files. Visitor hashes rotate daily by design, so
+# week/month figures are sums of daily uniques, not cross-day uniques.
+
+cmd_visitors() {
+    local site="" json_mode=false compact=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json)    json_mode=true; shift ;;
+            --compact) compact=true; shift ;;
+            --help|-h)
+                echo "Usage: geodineum visitors [<site_id>] [--json]"
+                echo ""
+                echo "Visitor counts (unique visitors / page views) for today, 7 and 30 days,"
+                echo "read from the cookieless beacon aggregates. All sites unless <site_id>."
+                exit 0 ;;
+            -*) log_error "Unknown option: $1"; exit 1 ;;
+            *)  site="$1"; shift ;;
+        esac
+    done
+
+    local -a sites=()
+    if [[ -n "$site" ]]; then
+        sites=("$site")
+    else
+        local cli="${GNODE_SCRIPTS}/valkey-cli-secure.sh"
+        [[ -x "$cli" ]] || cli="${GEODINEUM_ROOT}/gNode/scripts/valkey-cli-secure.sh"
+        if [[ -x "$cli" ]]; then
+            mapfile -t sites < <("$cli" SMEMBERS "gnode:sites:registry" 2>/dev/null | grep -v '^$' | sort)
+        fi
+    fi
+    if [[ ${#sites[@]} -eq 0 ]]; then
+        log_error "No sites found (registry unreadable — run with sudo?)"
+        return 1
+    fi
+
+    local -a days=()
+    local i
+    for ((i = 0; i < 30; i++)); do
+        days+=("$(date -u -d "-${i} days" +%Y%m%d)")
+    done
+
+    if [[ "$json_mode" != "true" ]]; then
+        echo ""
+        echo -e "${BOLD}Visitors${NC} ${DIM}(unique/day summed · pageviews are human hits)${NC}"
+        printf "  ${BOLD}%-24s %14s %14s %14s${NC}\n" "SITE" "TODAY" "7 DAYS" "30 DAYS"
+    else
+        echo "{"
+    fi
+
+    local s pass_file pass raw row first=true shown=0
+    for s in "${sites[@]}"; do
+        pass_file="${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${s}.password"
+        [[ -r "$pass_file" ]] || continue
+        pass=$(cat "$pass_file" 2>/dev/null)
+        raw=$(REDISCLI_AUTH="$pass" valkey-cli -p "${VALKEY_PORT}" --user "gnode_client_${s}" \
+            FCALL GNODE_ANALYTICS_SUMMARY 0 "$s" "${days[@]}" 2>/dev/null)
+        [[ -n "$raw" && "$raw" != *"ERR"* && "$raw" != *"NOPERM"* ]] || continue
+        row=$(python3 -c '
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except Exception:
+    sys.exit(1)
+daily = d.get("daily", [])
+def fold(n):
+    xs = daily[:n]
+    return sum(x.get("visitors", 0) for x in xs), sum(x.get("human", 0) for x in xs)
+v1, p1 = fold(1); v7, p7 = fold(7); v30, p30 = fold(30)
+print(f"{v1} {p1} {v7} {p7} {v30} {p30}")' <<< "$raw") || continue
+        # shellcheck disable=SC2086
+        set -- $row
+        if [[ "$json_mode" == "true" ]]; then
+            [[ "$first" == "true" ]] || echo ","
+            first=false
+            printf '  "%s": {"today":{"visitors":%s,"views":%s},"7d":{"visitors":%s,"views":%s},"30d":{"visitors":%s,"views":%s}}' \
+                "$s" "$1" "$2" "$3" "$4" "$5" "$6"
+        else
+            printf "  %-24s %14s %14s %14s\n" "$s" "${1}v/${2}pv" "${3}v/${4}pv" "${5}v/${6}pv"
+        fi
+        shown=$((shown + 1))
+    done
+
+    if [[ "$json_mode" == "true" ]]; then
+        echo ""
+        echo "}"
+    else
+        if [[ $shown -eq 0 ]]; then
+            echo -e "  ${DIM}no readable analytics (need root for site creds; beacons feed the counters)${NC}"
+        fi
+        [[ "$compact" == "true" ]] || echo ""
+    fi
 }
 
 # =============================================================================
