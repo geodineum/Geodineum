@@ -40,3 +40,8 @@ cli:
       handler: scripts/cli/mail-records.sh
       description: Print DKIM/SPF/DMARC records for a provisioned sender domain vs live DNS
       category: Mail
+    - name: credential add
+      handler: scripts/add-service-credential.sh
+      description: Install a service's ValKey credential on this node (auth printed by provision-service / service new --node on the master)
+      requires_sudo: true
+      category: Constellation

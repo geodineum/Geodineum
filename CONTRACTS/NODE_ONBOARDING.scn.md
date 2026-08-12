@@ -19,6 +19,9 @@ Onboarding := Init master → Expand (master mints bundle) → Join (installer, 
 MASTER-ONLY holds: ValKey admin cred, ACL/peer minting, function-library writes,
   provision-service. WORKERS have NO local ValKey — reach master ValKey over VPN
   10.66.0.1:47445. Worker daemon Wants= (not Requires=) valkey unit ⇒ restartable without it.
+DELEGATED SERVICE: master `geodineum service new <n> --type T --env E --node <worker>`
+  (mint + composed grants + hand-off print) → worker `geodineum credential add
+  --service <n> --auth <printed> --group <printed>`. Taxonomy: [[SERVICE_ONBOARDING]].
 INTERMITTENT NODES ARE FIRST-CLASS (SB-8.85): reclaim on every node, exposure-gated claim,
   bounded consumers, DELCONSUMER-self on graceful stop. Node loss = throughput cost, never
   correctness. EXPOSURE (willingness, _gh-matched) gates delivery, independent of capability.

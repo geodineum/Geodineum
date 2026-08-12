@@ -4,6 +4,17 @@ One CLI for everything. Installed at `/usr/local/bin/geodineum` (alias: `gcli`).
 
 ---
 
+## Service Onboarding (taxonomy)
+
+```bash
+sudo geodineum service new                     # interview: public website/app vs internal daemon/service
+sudo geodineum service new example.com --type website-static --env production
+sudo geodineum service new worker1 --type daemon --env production --yes
+sudo geodineum service new ml_api --type daemon --env production --node worker-node-1  # delegated: master mints, worker installs
+geodineum service new --matrix                 # print the per-type requirement matrix
+sudo geodineum credential add --service ml_api --auth '<printed>' --group ml_api  # worker side of --node
+```
+
 ## Site Management
 
 ```bash

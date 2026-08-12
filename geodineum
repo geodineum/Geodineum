@@ -2045,8 +2045,8 @@ PSEOF
     echo "  └──────────────────────────────────────────────────────────────────────"
     echo ""
     echo "  On the constellation NODE that will run this service, run:"
-    echo "    sudo ./scripts/add-service-credential.sh --service ${service} --auth '${password}'"
-    echo "  (or run that script with no arguments and paste when prompted)"
+    echo "    sudo geodineum credential add --service ${service} --auth '${password}'"
+    echo "  (or: sudo ./scripts/add-service-credential.sh — no arguments prompts for both)"
     echo ""
 }
 

@@ -144,6 +144,9 @@ consumes:
   - "{production}:gnode:*"
 produces:
   - "{${site_id}}:gnode:comms:*"
+  - "error:{site_id}:*"
+  - "cache:{site_id}:*"
+  - "session:{site_id}:*"
 YAMLEOF
 }
 

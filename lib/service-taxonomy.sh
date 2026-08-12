@@ -608,7 +608,8 @@ _print_delegation_bundle() {
     echo "  └───────────────────────────────────────────────────────────────────────"
     echo ""
     echo "  On '${SVC_NODE}', install the credential:"
-    echo "    sudo ./scripts/add-service-credential.sh --service ${SVC_NAME} --auth '${password}' --group ${reader_group}"
+    echo "    sudo geodineum credential add --service ${SVC_NAME} --auth '${password}' --group ${reader_group}"
+    echo "    (equivalent: sudo ./scripts/add-service-credential.sh, same flags)"
     echo ""
     echo "  Then complete the worker-side rows for type '${SVC_TYPE}':"
     local row

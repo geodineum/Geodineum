@@ -260,14 +260,20 @@ credential — its add-peer step is not idempotent and would strand the old peer
   function libraries; a worker's daemon only *verifies* them (read-only
   `FUNCTION LIST`) and reports any gaps. Expected, correct worker output states
   that libraries and the admin credential stay on the master.
-- **Service ACL identities.** Minting a *service's* ValKey auth is master-only —
-  `sudo geodineum provision-service <svc>` (see `SERVICE_ONBOARDING.md`).
+- **Service ACL identities.** Minting a *service's* ValKey auth is master-only.
+  The paved road for a worker-resident service: on the master,
+  `sudo geodineum service new <name> --type <type> --env <tier> --node <worker>`
+  (mints identity + streams + composed grants, prints the hand-off), then on
+  the worker, `sudo geodineum credential add --service <name> --auth <printed>
+  --group <printed>` installs the credential with the type's reader group.
+  Lower-level: `sudo geodineum provision-service <svc>` (see
+  `SERVICE_ONBOARDING.md`).
 
-## 9. Roadmap
+## 9. Service taxonomy
 
-Onboarding today assumes a node and then a service are added separately.
-**SB-8.87** (service-type-aware onboarding) is the direction: the installer will
-branch on a service taxonomy — public (Website / App / PWA) vs internal (Daemon /
-Service / Custom) — so a granular, non-web node (ValKey + gNode only) becomes a
-first-class default rather than a stripped-down site. It is not built yet;
-today, join a tier (§4) and add services separately.
+Service-type-aware onboarding is live: `geodineum service new` branches on the
+taxonomy — public (`website-wp` / `website-static` / `app-pwa`) vs internal
+(`daemon` / `gcore-service` / `custom`) — and each type's requirement matrix
+decides what runs, so a granular non-web node (ValKey + gNode only) is a
+first-class member, not a stripped-down site. Join a tier (§4), then onboard
+services with `service new` (delegated via `--node` from the master).
