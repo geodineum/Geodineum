@@ -56,7 +56,8 @@ assert_mode(){ # path owner:group:mode
 }
 assert_registry(){
     local want="$2" got
-    got=$("${GNODE_SCRIPTS_DIR}/valkey-cli-secure.sh" SISMEMBER gnode:sites:registry "$1" 2>/dev/null | tr -d '[:space:]')
+    got=$(VALKEY_USER=gnode_daemon "${GNODE_SCRIPTS_DIR}/valkey-cli-secure.sh" \
+        SISMEMBER gnode:sites:registry "$1" 2>/dev/null | tr -d '[:space:]')
     [[ "$got" == "$want" ]] && ok "registry[$1] = $want" || no "registry[$1] = ${got:-?}, want $want"
 }
 assert_acl_composed(){

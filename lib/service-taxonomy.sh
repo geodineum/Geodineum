@@ -403,6 +403,9 @@ ensure_manifest() {
         return 0
     fi
     mkdir -p "$dir"
+    # finalize_geodineum_dir symlinks the credential into credentials/ after
+    # onboarding — the subdir must exist for every local manifest home.
+    [[ -z "$SVC_NODE" ]] && mkdir -p "${dir}/credentials"
     if [[ -f "$manifest" ]]; then
         log_warning "Manifest already exists — left untouched: ${manifest}"
         return 0
@@ -560,7 +563,7 @@ HTEOF
         systemctl daemon-reload
         systemctl enable --now "geodineum-${SVC_NAME}-heartbeat.timer" >/dev/null 2>&1 || true
     fi
-    log_success "Heartbeat wired: {geodineum}:gnode:heartbeat:${SVC_ENV}:${SVC_NAME}:\$(hostname -s)"
+    log_success "Heartbeat wired: {geodineum}:gnode:heartbeat:${SVC_ENV}:${SVC_NAME}:$(hostname -s)"
 }
 
 # --- mail: DKIM + authorized sender domain (setup-mail-stack.sh) -------------

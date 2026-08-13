@@ -571,8 +571,12 @@ finalize_geodineum_dir() {
     local cred_source="${GEODINEUM_CREDENTIALS_DIR}/${cred_filename}"
     local cred_link="${geodineum_dir}/credentials/${cred_filename}"
     if [[ -f "$cred_source" ]]; then
-        ln -sf "$cred_source" "$cred_link"
-        log_success "Credential symlink: credentials/${cred_filename}"
+        mkdir -p "${geodineum_dir}/credentials"
+        if ln -sf "$cred_source" "$cred_link"; then
+            log_success "Credential symlink: credentials/${cred_filename}"
+        else
+            log_warning "Could not create credential symlink at ${cred_link}"
+        fi
     else
         log_warning "Credential file not found: ${cred_source}"
         log_info "Symlink will resolve after onboarding creates the password"
