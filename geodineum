@@ -427,11 +427,11 @@ EOF
 # =============================================================================
 
 version() {
-    echo "geodineum 1.0.0"
+    echo "geodineum ${GEODINEUM_VERSION}"
 }
 
 # Also accessible as a variable for templates/markers
-GEODINEUM_VERSION="1.0.0"
+GEODINEUM_VERSION="0.1.3"
 
 # =============================================================================
 # Dispatch
