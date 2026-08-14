@@ -233,6 +233,12 @@ policy_compose_channel_grants() {
         out+=("&{${ecosystem}}:gnode:broadcast:*")
     fi
 
+    # Contract baseline (gNode-Client COMMAND path): every client publishes
+    # bundle-invalidation events on <site>:events:invalidate (no hash tags on
+    # pub/sub channels). A manifest without a channels section must not strip
+    # this, or every wp-admin save that touches a bundle dies on NOPERM.
+    out+=("&${site_id}:events:invalidate")
+
     if [[ $failed -gt 0 ]]; then
         echo "  POLICY REFUSE: ${failed} channel pattern(s) violated namespace policy" >&2
         return 1
