@@ -1167,11 +1167,25 @@ cmd_visitors() {
         local cli="${GNODE_SCRIPTS}/valkey-cli-secure.sh"
         [[ -x "$cli" ]] || cli="${GEODINEUM_ROOT}/gNode/scripts/valkey-cli-secure.sh"
         if [[ -x "$cli" ]]; then
-            mapfile -t sites < <("$cli" SMEMBERS "gnode:sites:registry" 2>/dev/null | grep -v '^$' | sort)
+            # The wrapper reports auth failures on stdout, so 2>/dev/null does
+            # not filter them and "NOAUTH Authentication required." arrived here
+            # as a one-element site list: the empty-check passed, every lookup
+            # then missed, and the command blamed the credentials. Keep only
+            # well-formed site ids, and say what the registry actually replied.
+            local registry_raw
+            # || true: the wrapper exits non-zero when it cannot authenticate,
+            # and under `set -e` a bare assignment from a failing command
+            # substitution aborts the whole script before we can report why.
+            registry_raw=$("$cli" SMEMBERS "gnode:sites:registry" 2>&1) || true
+            mapfile -t sites < <(printf '%s\n' "$registry_raw" | grep -E '^[a-z0-9._-]+$' | sort)
+            if [[ ${#sites[@]} -eq 0 && -n "$registry_raw" ]]; then
+                log_error "Site registry unreadable: ${registry_raw%%$'\n'*}"
+                return 1
+            fi
         fi
     fi
     if [[ ${#sites[@]} -eq 0 ]]; then
-        log_error "No sites found (registry unreadable — run with sudo?)"
+        log_error "No sites found (registry unreadable; run with sudo?)"
         return 1
     fi
 
@@ -1189,14 +1203,14 @@ cmd_visitors() {
         echo "{"
     fi
 
-    local s pass_file pass raw row first=true shown=0
+    local s pass_file pass raw row first=true shown=0 no_cred=0 call_err=0 parse_err=0
     for s in "${sites[@]}"; do
         pass_file="${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${s}.password"
-        [[ -r "$pass_file" ]] || continue
+        [[ -r "$pass_file" ]] || { no_cred=$((no_cred + 1)); continue; }
         pass=$(cat "$pass_file" 2>/dev/null)
         raw=$(REDISCLI_AUTH="$pass" valkey-cli -p "${VALKEY_PORT}" --user "gnode_client_${s}" \
             FCALL GNODE_ANALYTICS_SUMMARY 0 "$s" "${days[@]}" 2>/dev/null)
-        [[ -n "$raw" && "$raw" != *"ERR"* && "$raw" != *"NOPERM"* ]] || continue
+        [[ -n "$raw" && "$raw" != *"ERR"* && "$raw" != *"NOPERM"* ]] || { call_err=$((call_err + 1)); continue; }
         row=$(python3 -c '
 import sys, json
 try:
@@ -1208,7 +1222,7 @@ def fold(n):
     xs = daily[:n]
     return sum(x.get("visitors", 0) for x in xs), sum(x.get("human", 0) for x in xs)
 v1, p1 = fold(1); v7, p7 = fold(7); v30, p30 = fold(30)
-print(f"{v1} {p1} {v7} {p7} {v30} {p30}")' <<< "$raw") || continue
+print(f"{v1} {p1} {v7} {p7} {v30} {p30}")' <<< "$raw") || { parse_err=$((parse_err + 1)); continue; }
         # shellcheck disable=SC2086
         set -- $row
         if [[ "$json_mode" == "true" ]]; then
@@ -1227,7 +1241,12 @@ print(f"{v1} {p1} {v7} {p7} {v30} {p30}")' <<< "$raw") || continue
         echo "}"
     else
         if [[ $shown -eq 0 ]]; then
-            echo -e "  ${DIM}no readable analytics (need root for site creds; beacons feed the counters)${NC}"
+            # One line per distinct cause. Collapsing these into a single
+            # message named the one failure that was not happening.
+            [[ $no_cred -gt 0 ]] && echo -e "  ${DIM}${no_cred} site(s): credential unreadable (run with sudo)${NC}"
+            [[ $call_err -gt 0 ]] && echo -e "  ${DIM}${call_err} site(s): GNODE_ANALYTICS_SUMMARY returned an error${NC}"
+            [[ $parse_err -gt 0 ]] && echo -e "  ${DIM}${parse_err} site(s): summary was not parseable JSON${NC}"
+            [[ $((no_cred + call_err + parse_err)) -eq 0 ]] && echo -e "  ${DIM}no sites had analytics to report${NC}"
         fi
         [[ "$compact" == "true" ]] || echo ""
     fi
