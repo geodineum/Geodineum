@@ -431,7 +431,7 @@ version() {
 }
 
 # Also accessible as a variable for templates/markers
-GEODINEUM_VERSION="0.1.3"
+GEODINEUM_VERSION="0.1.4"
 
 # =============================================================================
 # Dispatch
