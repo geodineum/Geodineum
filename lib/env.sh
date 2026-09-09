@@ -211,6 +211,31 @@ except Exception: print("")' 2>/dev/null)
     fi
 }
 
+# Bump {site}:constellation:generation. Every config reader (gCore
+# ConfigLoader, gTemplate gNodeConfigLoader) compares its APCu entry against
+# this counter on each hit, so one bump invalidates every FPM worker at once;
+# the 300 s APCu TTL is only the fallback. Daemon tier: the FCALL writes, and
+# a site's own client identity does not necessarily hold this key.
+bump_constellation_generation() {
+    local site_id="$1"
+    local reason="$2"
+    local dcred="${GEODINEUM_CREDENTIALS_DIR:-/etc/geodineum/credentials}/valkey_daemon.password"
+    local port="${VALKEY_PORT:-47445}"
+    if [[ ! -r "$dcred" ]]; then
+        log_warning "Generation not bumped (daemon credential unreadable) — web tier serves stale config for up to 300 s"
+        return 0
+    fi
+    local gen
+    gen=$(REDISCLI_AUTH="$(cat "$dcred")" valkey-cli -p "$port" --user gnode_daemon \
+        FCALL GNODE_CONSTELLATION_GENERATION_INCR 0 "$site_id" "$reason" 2>&1) || gen=""
+    gen="${gen#(integer) }"
+    if [[ "$gen" =~ ^[0-9]+$ ]]; then
+        log_success "Constellation generation → ${gen} (APCu config invalidated on every worker)"
+    else
+        log_warning "Generation bump failed (${gen:-no reply}) — web tier serves stale config for up to 300 s"
+    fi
+}
+
 # =============================================================================
 # geodineum env set
 # =============================================================================
@@ -365,6 +390,9 @@ EOF
     # 3b. Reconcile dim-20 (geometric env coordinate) with active_environment +
     #     notify the daemon. Without this the two env stores diverge.
     reembed_dim20_and_broadcast "$site_id" "$new_env"
+
+    # 3c. Invalidate APCu-cached config on every FPM worker at once.
+    bump_constellation_generation "$vk_site_id" "env:${new_env}"
 
     # 4. Clear PHP OPcache so the change takes effect immediately
     php -r "opcache_reset();" 2>/dev/null && log_success "PHP OPcache cleared" || true

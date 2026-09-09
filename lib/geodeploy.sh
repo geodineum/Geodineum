@@ -452,9 +452,42 @@ geodeploy_action_restart() {
     fi
 }
 
+# Bump every registered site's constellation generation. APCu survives a
+# graceful FPM reload, so a web-tier code deploy alone leaves each worker
+# serving config cached under the previous code; the generation is what the
+# config loaders compare on every hit. Daemon tier through the secure
+# wrapper — the cron identity holds no credential of its own. Loud on every
+# failure: a bump that did not happen must be visible in the deploy log.
+geodeploy_action_generation_bump() {
+    local name="$1"
+    local vcli="${GEODINEUM_ROOT}/gNode/scripts/valkey-cli-secure.sh"
+    if [[ ! -x "$vcli" ]]; then
+        geodeploy_log "${name}: WARN generation-bump skipped (valkey-cli-secure.sh not found)"
+        return 0
+    fi
+    local sites
+    sites=$(VALKEY_USER=gnode_daemon "$vcli" SMEMBERS gnode:sites:registry 2>/dev/null) || sites=""
+    if [[ -z "$sites" ]]; then
+        geodeploy_log "${name}: WARN generation-bump skipped (registry unreadable as daemon tier — APCu config stale for up to 300 s)"
+        return 0
+    fi
+    local site n=0 gen
+    while IFS= read -r site; do
+        [[ -n "$site" ]] || continue
+        if gen=$(VALKEY_USER=gnode_daemon "$vcli" FCALL GNODE_CONSTELLATION_GENERATION_INCR 0 "$site" "deploy:${name}" 2>&1); then
+            n=$((n + 1))
+        else
+            geodeploy_log "${name}: WARN generation-bump failed for ${site}: ${gen}"
+        fi
+    done <<< "$sites"
+    geodeploy_log "${name}: generation-bumped (${n} sites)"
+    return 0
+}
+
 # Clear PHP OPcache. The pool opcache lives in FPM shared memory — a CLI
 # opcache_reset() only clears the CLI SAPI. Graceful FPM reload respawns
-# workers against fresh shm, which is the actual pool-wide clear.
+# workers against fresh shm, which is the actual pool-wide clear. APCu is
+# NOT cleared by a reload; the generation bump below is what invalidates it.
 geodeploy_action_opcache_clear() {
     local name="$1"
     local unit
@@ -465,6 +498,7 @@ geodeploy_action_opcache_clear() {
             else
                 geodeploy_log "${name}: WARN opcache-clear failed (${unit} reload denied)"
             fi
+            geodeploy_action_generation_bump "$name"
             return 0
         fi
     done

@@ -669,6 +669,17 @@ cmd_config_set() {
     # Publish change notification
     valkey_cmd PUBLISH "{${site_id}}:config:changed" "${namespace}:${key}" >/dev/null 2>&1 || true
 
+    # Bump the constellation generation: APCu-cached config on every FPM
+    # worker is invalidated at once instead of waiting out the 300 s TTL.
+    local gen
+    gen=$(VALKEY_USER=gnode_daemon valkey_cmd FCALL GNODE_CONSTELLATION_GENERATION_INCR 0 "$site_id" "config:${namespace}:${key}" 2>&1) || gen=""
+    gen="${gen#(integer) }"
+    if [[ "$gen" =~ ^[0-9]+$ ]]; then
+        log_detail "Constellation generation → ${gen} (web-tier config cache invalidated)"
+    else
+        log_warning "Generation bump failed (${gen:-no reply}) — web tier serves the old value for up to 300 s"
+    fi
+
     log_success "Set ${namespace}/${key} = ${value} for ${site_id}"
     log_detail "ValKey: HSET ${hash_key} ${key} ${value}"
 
