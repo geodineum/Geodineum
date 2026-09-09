@@ -367,6 +367,7 @@ Examples:
   # Onboard any service type via the taxonomy interview (or --type flags)
   sudo geodineum service new
   sudo geodineum service new example.com --type website-static --env production
+  sudo geodineum service new app.example.com --type webapp-gcore --env production
 
   # Deploy a WordPress site with gCube theme
   sudo geodineum new site test.example.com --theme gcube --env testing

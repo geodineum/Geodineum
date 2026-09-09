@@ -13,7 +13,7 @@
 ```
 Onboarding := Interview (what IS it) → Matrix (what RUNS) → Paved road
   (provision → register → heartbeat → mail-verify → verify) — SAME road, every type.
-TAXONOMY: public website-wp|website-static|app-pwa · internal daemon|gcore-service|custom
+TAXONOMY: public website-wp|website-static|app-pwa|webapp-gcore · internal daemon|gcore-service|custom
   matrix-as-data in lib/service-taxonomy.sh; `geodineum service new --matrix` prints it.
 NEVER raw-XADD unregistered: registration buys delivery guarantees (consumer groups +
   orphan reclaim), a least-privilege identity, receipts/heartbeat observability, and
@@ -70,6 +70,9 @@ website-static  docroot skeleton form_endpoint vhost manifest  profile web  cred
                 mail onboard web_perms                         (generalized palacio)
 app-pwa         docroot skeleton_pwa [form] vhost manifest     profile web  cred g-web
                 mail onboard web_perms
+webapp-gcore    docroot web_code_group skeleton_gcore          profile web  cred g-web
+                gcore_bootstrap [form] vhost manifest mail     (www-data ∈ geodineum-code ASSERTED;
+                onboard web_perms                              src/ outside docroot, root:www-data 750/640)
 daemon          own_user service_dirs manifest systemd_unit    profile service  cred own
                 heartbeat mail onboard
 gcore-service   code_group service_dirs gcore_bootstrap        profile service  cred geodineum

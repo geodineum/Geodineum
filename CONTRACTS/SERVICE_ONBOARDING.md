@@ -19,9 +19,15 @@ audit. The paved road below is five commands.
 
 - A **service** is any process that participates in the mesh — it does not
   have to be a website. The taxonomy: **public** types `website-wp` |
-  `website-static` | `app-pwa` (serve visitors over HTTP), **internal** types
-  `daemon` | `gcore-service` | `custom` (infrastructure). Light nodes
-  (ValKey + gNode only) are first-class.
+  `website-static` | `app-pwa` | `webapp-gcore` (serve visitors over HTTP),
+  **internal** types `daemon` | `gcore-service` | `custom` (infrastructure).
+  Light nodes (ValKey + gNode only) are first-class.
+- `webapp-gcore` is a public PHP application on the shared framework without
+  WordPress: front controller in the docroot, bootstrap and application code
+  in `src/` outside it, runtime user `www-data` reading gCore source through
+  `geodineum-code` (asserted at onboarding, never assumed). `gcore-service` is
+  the internal sibling: same framework, own system user, systemd unit, no
+  vhost.
 - Each type carries a **requirement matrix** — the interview asks what the
   service IS; the matrix decides what runs (vhost/certbot, docroot, systemd
   unit + own user, cred model, mail, heartbeat); every type ends on the SAME

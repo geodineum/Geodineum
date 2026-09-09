@@ -12,7 +12,7 @@ set -euo pipefail
 # docs all read the tables below; there is no second copy.
 #
 # Types:
-#   PUBLIC    website-wp | website-static | app-pwa
+#   PUBLIC    website-wp | website-static | app-pwa | webapp-gcore
 #   INTERNAL  daemon | gcore-service | custom
 #
 # Requires: common.sh sourced first. site.sh is lazy-loaded for the
@@ -23,12 +23,13 @@ set -euo pipefail
 # Taxonomy — the requirement matrix as data
 # =============================================================================
 
-GEO_SERVICE_TYPES=(website-wp website-static app-pwa daemon gcore-service custom)
+GEO_SERVICE_TYPES=(website-wp website-static app-pwa webapp-gcore daemon gcore-service custom)
 
 declare -A GEO_TYPE_LABEL=(
     [website-wp]="WordPress website (full CMS + gCore runtime)"
     [website-static]="Static website (plain files, optional COMMS form endpoint)"
     [app-pwa]="App / PWA (static shell + web-app manifest + service worker)"
+    [webapp-gcore]="gCore web app (PHP on the shared framework, public, no WordPress)"
     [daemon]="Daemon (systemd unit, own system user)"
     [gcore-service]="gCore service (PHP headless, no WordPress)"
     [custom]="Custom (mesh identity only — bring your own runtime)"
@@ -38,6 +39,7 @@ declare -A GEO_TYPE_VISIBILITY=(
     [website-wp]=public
     [website-static]=public
     [app-pwa]=public
+    [webapp-gcore]=public
     [daemon]=internal
     [gcore-service]=internal
     [custom]=internal
@@ -48,6 +50,7 @@ declare -A GEO_TYPE_PROFILE=(
     [website-wp]=web
     [website-static]=web
     [app-pwa]=web
+    [webapp-gcore]=web
     [daemon]=service
     [gcore-service]=service
     [custom]=service
@@ -61,6 +64,7 @@ declare -A GEO_TYPE_CRED_GROUP=(
     [website-wp]=geodineum-web
     [website-static]=geodineum-web
     [app-pwa]=geodineum-web
+    [webapp-gcore]=geodineum-web
     [daemon]=OWN
     [gcore-service]=geodineum
     [custom]=geodineum
@@ -73,6 +77,7 @@ declare -A GEO_TYPE_ROWS=(
     [website-wp]="mail wp_stack notify"
     [website-static]="docroot skeleton_static form_endpoint vhost manifest mail onboard web_perms"
     [app-pwa]="docroot skeleton_pwa form_endpoint vhost manifest mail onboard web_perms"
+    [webapp-gcore]="docroot web_code_group skeleton_gcore gcore_bootstrap form_endpoint vhost manifest mail onboard web_perms"
     [daemon]="own_user service_dirs manifest systemd_unit heartbeat mail onboard"
     [gcore-service]="code_group service_dirs gcore_bootstrap manifest systemd_unit heartbeat mail onboard"
     [custom]="manifest mail onboard"
@@ -184,6 +189,65 @@ ensure_visit_beacon() {
         render_template "${GEODINEUM_CLI_ROOT}/templates/static-site/hit.php.tpl" \
         "${docroot}/g/hit.php"
     log_success "Visitor beacon: g/hit.php → GNODE_ANALYTICS_HIT ({${SVC_NAME}}:visits/pagecounts/...)"
+}
+
+# --- web code group: www-data must read the shared gCore source ------------
+# A public gCore app runs as www-data and reads /opt/geodineum/gCore through
+# geodineum-code. Assert the membership instead of assuming it: on a node
+# where the group drifted, onboarding would succeed and the app would fail at
+# runtime looking like a ValKey problem.
+ensure_web_code_group() {
+    if [[ "$SVC_DRY_RUN" == "true" ]]; then
+        log_dry "Assert www-data ∈ geodineum-code (reads gCore source)"
+        return 0
+    fi
+    if ! getent group geodineum-code >/dev/null 2>&1; then
+        log_error "geodineum-code group missing — a gCore web app cannot read the framework source"
+        log_error "  The installer creates it (perm-model); re-run install or add the group first"
+        return 1
+    fi
+    if id -nG www-data 2>/dev/null | tr ' ' '\n' | grep -qx geodineum-code; then
+        log_success "www-data ∈ geodineum-code (gCore source readable)"
+        return 0
+    fi
+    usermod -aG geodineum-code www-data
+    log_success "www-data added to geodineum-code"
+    # Supplementary groups are read at process start: running FPM workers
+    # keep the old set until respawned.
+    local unit
+    for unit in php8.3-fpm php8.4-fpm php-fpm; do
+        if systemctl is-active --quiet "$unit" 2>/dev/null; then
+            systemctl reload "$unit" 2>/dev/null \
+                && log_success "${unit} reloaded (workers pick up the new group)" \
+                || log_warning "${unit} reload failed — reload it by hand before serving this app"
+            break
+        fi
+    done
+}
+
+# --- gCore web skeleton: front controller in docroot, app code outside -----
+# public_html/index.php is the only PHP the web server can reach; it requires
+# ../src/bootstrap.php (rendered by the gcore_bootstrap row), which boots the
+# framework through gcore-standalone.php. Application code lives in src/.
+ensure_skeleton_gcore() {
+    local root="${GEODINEUM_WEB_ROOT}/${SVC_DOMAIN}"
+    local docroot="${root}/public_html"
+    if [[ "$SVC_DRY_RUN" == "true" ]]; then
+        log_dry "Create ${root}/src (root:www-data 750) + render public_html/index.php front controller"
+        return 0
+    fi
+    mkdir -p "${root}/src"
+    chown root:www-data "${root}/src"
+    chmod 750 "${root}/src"
+    if [[ -f "${docroot}/index.php" ]]; then
+        log_warning "index.php already exists — skipping front controller"
+    else
+        DOMAIN="$SVC_DOMAIN" SITE_ID="$SVC_NAME" SERVICE_ENV="$SVC_ENV" \
+            render_template "${GEODINEUM_CLI_ROOT}/templates/webapp-gcore/index.php.tpl" \
+            "${docroot}/index.php"
+        log_success "Front controller: public_html/index.php → ../src/bootstrap.php"
+    fi
+    ensure_visit_beacon
 }
 
 # --- PWA skeleton: static shell + web-app manifest + service worker --------
@@ -380,6 +444,8 @@ ensure_gcore_bootstrap() {
         log_warning "bootstrap.php already exists — skipping"
         return 0
     fi
+    # Self-sufficient: the web types have no service_dirs row before this one.
+    mkdir -p "$(dirname "$out")"
     SERVICE_NAME="$SVC_NAME" SERVICE_ID="$SVC_NAME" SITE_ID="$SVC_NAME" \
     SERVICE_ENV="$SVC_ENV" \
         render_template "${GEODINEUM_CLI_ROOT}/templates/bootstrap-gcore.php.tpl" "$out"
@@ -656,6 +722,13 @@ ensure_web_perms() {
     chown -R root:www-data "${root}/public_html"
     find "${root}/public_html" -type d -exec chmod 750 {} +
     find "${root}/public_html" -type f -exec chmod 640 {} +
+    # App code outside the docroot (webapp-gcore): same lock, never writable
+    # by the runtime user.
+    if [[ -d "${root}/src" ]]; then
+        chown -R root:www-data "${root}/src"
+        find "${root}/src" -type d -exec chmod 750 {} +
+        find "${root}/src" -type f -exec chmod 640 {} +
+    fi
     chown -R www-data:www-data "${root}/uploads" 2>/dev/null || true
     chmod 750 "${root}/uploads" 2>/dev/null || true
     log_success "Permissions locked: root:www-data 750/640, no world bits"
@@ -719,10 +792,12 @@ _interview_type() {
             echo "  1) ${GEO_TYPE_LABEL[website-wp]}"
             echo "  2) ${GEO_TYPE_LABEL[website-static]}"
             echo "  3) ${GEO_TYPE_LABEL[app-pwa]}"
-            case "$(_ask "  Choice [1-3]: " "")" in
+            echo "  4) ${GEO_TYPE_LABEL[webapp-gcore]}"
+            case "$(_ask "  Choice [1-4]: " "")" in
                 1) SVC_TYPE=website-wp ;;
                 2) SVC_TYPE=website-static ;;
                 3) SVC_TYPE=app-pwa ;;
+                4) SVC_TYPE=webapp-gcore ;;
                 *) log_error "No type chosen"; exit 1 ;;
             esac
             ;;
@@ -931,6 +1006,11 @@ cmd_service_new() {
             echo "    # deploy your code, then:"
             echo "    sudo systemctl start geodineum-${SVC_NAME}"
             ;;
+        webapp-gcore)
+            echo "    # app code: ${SVC_PATH}/src (outside the docroot)"
+            echo "    # front controller: ${SVC_PATH}/public_html/index.php → ../src/bootstrap.php"
+            echo "    curl -sI https://${SVC_DOMAIN}/ | head -1"
+            ;;
     esac
     if [[ "$SVC_ENV" != "production" ]]; then
         echo "    # promote when ready: geodineum env set ${SVC_NAME} production"
@@ -951,7 +1031,7 @@ a per-type requirement matrix decides what runs; every type ends on the same
 paved road (provision → register → heartbeat → mail-verify → verify).
 
 Types (--type):
-  public:   website-wp | website-static | app-pwa
+  public:   website-wp | website-static | app-pwa | webapp-gcore
   internal: daemon | gcore-service | custom
 
 Options:
@@ -978,6 +1058,7 @@ Options:
 Examples:
   sudo geodineum service new                                  # interview
   sudo geodineum service new example.com --type website-static --env production
+  sudo geodineum service new app.example.com --type webapp-gcore --env production
   sudo geodineum service new worker1 --type daemon --env production --yes
   sudo geodineum service new ml_api --type daemon --env production --node gpu-node-1
   geodineum service new --matrix

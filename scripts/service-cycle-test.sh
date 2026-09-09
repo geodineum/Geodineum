@@ -4,24 +4,27 @@
 # =============================================================================
 # Proves the taxonomy onboarding is idempotent and reversible: each tested
 # type must reach the same green state on install and reinstall, and leave
-# nothing behind on removal. Covers website-static and daemon (the two ends
-# of the matrix); website-wp is covered by install-cycle-test.sh --site.
+# nothing behind on removal. Covers website-static, webapp-gcore and daemon
+# (both ends of the matrix plus the public-gCore row); website-wp is covered
+# by install-cycle-test.sh --site.
 #
 # Touches live state (ValKey identities, apache vhosts, systemd units) using
 # throwaway cycletest_* names, and removes everything it created.
 #
 # Usage (root, from a repo checkout, on a box with gNode + ValKey live):
-#   sudo ./scripts/service-cycle-test.sh --confirm [--type static|daemon|both]
+#   sudo ./scripts/service-cycle-test.sh --confirm [--type static|webapp|daemon|all]
 #
-# Exit: 0 = both cycles green; 1 = a phase failed (state left for inspection).
+# Exit: 0 = every cycle green; 1 = a phase failed (state left for inspection).
 # =============================================================================
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GNODE_SCRIPTS_DIR="${GNODE_SCRIPTS:-/opt/geodineum/gNode/scripts}"
-TYPE="both"; CONFIRM="false"
+TYPE="all"; CONFIRM="false"
 STATIC_DOMAIN="cycletest-static.invalid"
 STATIC_ID="cycletest_static_invalid"
+WEBAPP_DOMAIN="cycletest-webapp.invalid"
+WEBAPP_ID="cycletest_webapp_invalid"
 DAEMON_ID="cycletest_daemon"
 
 RED=$'\e[31m'; GRN=$'\e[32m'; YEL=$'\e[33m'; BLU=$'\e[34m'; BLD=$'\e[1m'; NC=$'\e[0m'
@@ -89,6 +92,18 @@ remove_static(){
         /etc/geodineum/components/gnode-daemon/discovery-paths.conf 2>/dev/null
 }
 
+remove_webapp(){
+    "${GNODE_SCRIPTS_DIR}/deregister-service.sh" "$WEBAPP_ID" --remove-acl --force >/dev/null 2>&1
+    a2dissite "${WEBAPP_DOMAIN}.conf" >/dev/null 2>&1
+    rm -f "/etc/apache2/sites-available/${WEBAPP_DOMAIN}.conf"
+    systemctl reload apache2 2>/dev/null
+    rm -rf "/var/www/${WEBAPP_DOMAIN}"
+    rm -f "${CRED_DIR}/valkey_client_${WEBAPP_ID}.password" \
+          "${CRED_DIR}/valkey_client_${WEBAPP_ID}.password.owner"
+    sed -i "\\|/var/www/${WEBAPP_DOMAIN}|d" \
+        /etc/geodineum/components/gnode-daemon/discovery-paths.conf 2>/dev/null
+}
+
 remove_daemon(){
     systemctl disable --now "geodineum-${DAEMON_ID}-heartbeat.timer" >/dev/null 2>&1
     systemctl disable --now "geodineum-${DAEMON_ID}.service" >/dev/null 2>&1
@@ -119,6 +134,27 @@ verify_static(){
     assert_mode "${CRED_DIR}/valkey_client_${STATIC_ID}.password" "root:geodineum-web:640"
     assert_registry "$STATIC_ID" 1
     assert_acl_composed "$STATIC_ID"
+}
+
+verify_webapp(){
+    local root="/var/www/${WEBAPP_DOMAIN}"
+    assert_file "${root}/public_html/index.php"
+    assert_file "${root}/public_html/g/hit.php"
+    assert_file "${root}/src/bootstrap.php"
+    assert_no_file "${root}/public_html/form/submit.php"   # --no-form: row is a no-op
+    assert_file "${root}/.geodineum/gnode_services.yaml"
+    assert_file "/etc/apache2/sites-available/${WEBAPP_DOMAIN}.conf"
+    assert_mode "${root}/src" "root:www-data:750"
+    assert_mode "${root}/src/bootstrap.php" "root:www-data:640"
+    assert_mode "${root}/.env-tier" "root:www-data:640"
+    assert_mode "${CRED_DIR}/valkey_client_${WEBAPP_ID}.password" "root:geodineum-web:640"
+    if id -nG www-data 2>/dev/null | tr ' ' '\n' | grep -qx geodineum-code; then
+        ok "www-data ∈ geodineum-code"
+    else
+        no "www-data not in geodineum-code — the app cannot read gCore source"
+    fi
+    assert_registry "$WEBAPP_ID" 1
+    assert_acl_composed "$WEBAPP_ID"
 }
 
 verify_daemon(){
@@ -153,6 +189,25 @@ cycle_static(){
     assert_registry "$STATIC_ID" 0
 }
 
+cycle_webapp(){
+    say "webapp: create"
+    "$CLI" service new "$WEBAPP_DOMAIN" --type webapp-gcore --env testing \
+        --yes --no-ssl --no-mail --no-form || { no "create failed"; return; }
+    verify_webapp
+    say "webapp: remove"
+    remove_webapp
+    assert_no_file "/var/www/${WEBAPP_DOMAIN}"
+    assert_no_file "/etc/apache2/sites-available/${WEBAPP_DOMAIN}.conf"
+    assert_registry "$WEBAPP_ID" 0
+    say "webapp: recreate"
+    "$CLI" service new "$WEBAPP_DOMAIN" --type webapp-gcore --env testing \
+        --yes --no-ssl --no-mail --no-form || { no "recreate failed"; return; }
+    verify_webapp
+    say "webapp: final cleanup"
+    remove_webapp
+    assert_registry "$WEBAPP_ID" 0
+}
+
 cycle_daemon(){
     say "daemon: create"
     "$CLI" service new "$DAEMON_ID" --type daemon --env testing --yes --no-mail \
@@ -176,9 +231,11 @@ cycle_daemon(){
 
 case "$TYPE" in
     static) cycle_static ;;
+    webapp) cycle_webapp ;;
     daemon) cycle_daemon ;;
     both)   cycle_static; cycle_daemon ;;
-    *) die "unknown --type: $TYPE (static|daemon|both)" ;;
+    all)    cycle_static; cycle_webapp; cycle_daemon ;;
+    *) die "unknown --type: $TYPE (static|webapp|daemon|all)" ;;
 esac
 
 echo ""
