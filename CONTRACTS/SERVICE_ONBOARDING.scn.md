@@ -44,7 +44,7 @@ MANIFEST (ONE schema, all generators): .geodineum/gnode_services.yaml —
   services[].capabilities DELETED — was read by nothing.
 POLICY: 8 well-known namespace classes; foreign pattern → POLICY DENY, onboard ABORTS
   (fail-loud, never silent-narrow, never silent-broaden); declared ⇒ composed grants +
-  safe base (own ns + shared gnode bus); UNDECLARED ⇒ REFUSED (legacy uniform set gone;
+  safe base (own ns + own heartbeat key + READ-ONLY {geodineum}:gnode:* via %R~ — daemon tier writes the topology; clients read with FCALL_RO/HGETALL); UNDECLARED ⇒ REFUSED (legacy uniform set gone;
   regenerate: `geodineum register <svc> --force` then `--regrant`)
 COMMANDS: geodineum service new (taxonomy) · geodineum provision-service <svc>
   [--yaml <dir>] (master; no manifest → mints minimal at /etc/geodineum/manifests/<svc>/)

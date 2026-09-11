@@ -22,7 +22,8 @@
 #   4. Ecosystem bus:                {<ecosystem>}:gnode:*
 #   5. Shared default config space:  {default}:gnode:*  and  {default}:gcore:*
 #   6. Environment-tagged streams:   {testing|staging|acceptance|production}:gnode:*
-#   7. Geodineum shared topology:    {geodineum}:gnode:*
+#   7. Geodineum shared topology:    {geodineum}:gnode:*   (READ-ONLY for clients;
+#                                    own heartbeat key excepted — the daemon tier writes)
 #   8. Legacy/migration alias:       gnode:*  and  topology:*  and  membership:*
 #                                    template:*  and  error:<site_id>:*
 #                                    cache:<site_id>:*  and  session:<site_id>:*
@@ -95,6 +96,27 @@ ${site_id}:
 EOF
 }
 
+# ---- Grant form ------------------------------------------------------------
+# The shared topology namespace ({<ecosystem>}:gnode:*) is written by the
+# daemon tier only. A manifest may CONSUME it (read), never produce into it —
+# except the service's own heartbeat key. Emitting `%R~` here means a
+# declaration cannot hand a service raw write on another service's entity,
+# whichever section it appears in. Everything else keeps the plain `~` form.
+# Usage: policy_key_grant_form <interpolated-pattern> <site_id> [ecosystem]
+policy_key_grant_form() {
+    local p="$1"
+    local site_id="$2"
+    local ecosystem="${3:-geodineum}"
+    case "$p" in
+        "{${ecosystem}}:gnode:heartbeat:"*":${site_id}:"*|"{geodineum}:gnode:heartbeat:"*":${site_id}:"*)
+            printf '~%s' "$p" ;;
+        "{${ecosystem}}:gnode:"*|"{geodineum}:gnode:"*)
+            printf '%%R~%s' "$p" ;;
+        *)
+            printf '~%s' "$p" ;;
+    esac
+}
+
 # ---- Validation ------------------------------------------------------------
 
 # Validate a single (interpolated) pattern against the static policy.
@@ -151,11 +173,12 @@ policy_read_patterns() {
 
 # Compose validated, interpolated keyspace patterns from a manifest.
 # Reads .data.consumes.{streams,keys} (read-only) and .data.produces.{streams,keys}
-# (read-write). v1 ValKey ACL does not distinguish RW from RO for keys at the
-# pattern level, so both sets are output as `~<pattern>` prefixes; the
-# distinction lives in the manifest as documentation + future audit hook.
-# Echoes one ACL grant token per line (`~{site}:svc:*`). Refuses the whole
-# composition on any policy violation.
+# (read-write). Own-namespace patterns are emitted as `~<pattern>` whichever
+# section they sit in (the manifest records intent; a per-section split is a
+# later audit hook). Shared-topology patterns are the exception: they are
+# emitted read-only (`%R~`) regardless of section, own heartbeat key excepted —
+# see policy_key_grant_form. Echoes one ACL grant token per line. Refuses the
+# whole composition on any policy violation.
 # Usage: policy_compose_key_grants <manifest_path> <site_id> [service] [ecosystem]
 policy_compose_key_grants() {
     local manifest_path="$1"
@@ -177,7 +200,7 @@ policy_compose_key_grants() {
             [[ -n "$raw" ]] || continue
             interp=$(policy_interpolate "$raw" "$site_id" "$service_name" "$ecosystem")
             if policy_validate_pattern "$interp" "$site_id" "$service_name" "$ecosystem"; then
-                out+=("~${interp}")
+                out+=("$(policy_key_grant_form "$interp" "$site_id" "$ecosystem")")
             else
                 failed=$((failed + 1))
             fi
@@ -188,7 +211,7 @@ policy_compose_key_grants() {
     if [[ "$(yq eval '.data.ecosystem_well_known // false' "$manifest_path" 2>/dev/null)" == "true" ]]; then
         # These are well-known and unconditionally allowed when explicitly opted in
         out+=("~{${site_id}}:gnode:*")
-        out+=("~{${ecosystem}}:gnode:*")
+        out+=("%R~{${ecosystem}}:gnode:*")
         out+=("~{default}:gnode:*")
         out+=("~{default}:gcore:*")
     fi

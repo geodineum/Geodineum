@@ -76,6 +76,24 @@ assert_acl_composed(){
     else
         ok "ACL for ${user} is manifest-composed (no legacy powerset)"
     fi
+    # TOPOLOGY-ACL-SCOPE: the shared topology is daemon-written. As the client:
+    # a raw mutation must be NOPERM, a no-writes read via FCALL_RO must work.
+    local pw shared='{geodineum}:gnode:services' reply
+    pw=$(cat "${CRED_DIR}/valkey_client_$1.password" 2>/dev/null) || { no "client password unreadable for ${user}"; return; }
+    reply=$(REDISCLI_AUTH="$pw" valkey-cli -p "${VALKEY_PORT:-47445}" --user "$user" --no-auth-warning \
+        HDEL "${shared}:entities" __cycletest_never_exists__ 2>&1)
+    if grep -q NOPERM <<< "$reply"; then
+        ok "shared topology is read-only for ${user} (HDEL → NOPERM)"
+    else
+        no "shared topology is WRITABLE by ${user} (HDEL reply: ${reply})"
+    fi
+    reply=$(REDISCLI_AUTH="$pw" valkey-cli -p "${VALKEY_PORT:-47445}" --user "$user" --no-auth-warning \
+        FCALL_RO GNODE_TOPO_STATS 1 "$shared" 2>&1)
+    if grep -q NOPERM <<< "$reply"; then
+        no "shared topology not readable via FCALL_RO for ${user}: ${reply}"
+    else
+        ok "shared topology readable via FCALL_RO for ${user}"
+    fi
 }
 
 # ---- removal (reverses every filesystem row the type creates) ---------------

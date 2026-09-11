@@ -72,8 +72,11 @@ produces:
   - "{myservice}:gnode:comms:*"   # {site_id}/{service}/{ecosystem} interpolate
 ```
 
-The ACL is composed from the declarations (plus a safe base: own namespace +
-the shared gnode bus). **A manifest that declares nothing is refused** — the
+The ACL is composed from the declarations (plus a safe base: own namespace, the
+service's own heartbeat key, and **read-only** access to the shared gnode bus
+`{geodineum}:gnode:*` — the shared topology is written by the daemon tier only,
+so read it with `FCALL_RO`/`HGETALL`, never expect a write there to succeed).
+**A manifest that declares nothing is refused** — the
 old fallback (a broad legacy-uniform grant set) is retired: it silently
 handed `{testing..production}:gnode:*`, `gnode:*`, `topology:*`,
 `template:*`, `membership:*` to services that asked for nothing, and looked
