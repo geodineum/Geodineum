@@ -976,7 +976,7 @@ cmd_register() {
 
     echo -e "  ${BOLD}What happens next:${NC}"
     echo "    1. Daemon discovers capabilities within 120s (or restart for immediate)"
-    echo "    2. Service appears in 23D topology (geodineum info ${site_id})"
+    echo "    2. Service appears in the service topology (geodineum info ${site_id})"
     echo "    3. Other services can discover it via geometric_discover"
     echo ""
 }
@@ -991,7 +991,7 @@ Usage: geodineum register <site_id> [options]
 
 Register an existing service into the Geodineum ecosystem.
 Creates .geodineum/ directory, ACL user, streams, site registry entry,
-and capability configuration for 23D topology discovery.
+and capability configuration for topology discovery.
 
 This is the ONLY registration path. Theme-side registration is removed.
 

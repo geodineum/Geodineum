@@ -11,7 +11,7 @@ set -euo pipefail
 # Changes propagate to running services via PUBLISH notifications.
 #
 # Two config namespaces per service:
-#   {site_id}:config:capabilities   — 23D topology dimensions (service identity)
+#   {site_id}:config:capabilities   — topology dimensions (service identity)
 #   {site_id}:config:app            — application config imported from service files
 #
 # Config authority chain:

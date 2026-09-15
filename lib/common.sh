@@ -237,7 +237,7 @@ print_kv() {
 #     ├── credentials/
 #     │   └── valkey_client_{site_id}.password → /etc/geodineum/credentials/...
 #     ├── config.yaml            (unified: identity, environment, valkey, capabilities, metadata)
-#     ├── gnode_services.yaml    (23D capability config — daemon discovers this)
+#     ├── gnode_services.yaml    (capability config — daemon discovers this)
 #     ├── config-schema.yaml     (developer config option schema — generated on import)
 #     └── .registered            (marker: ISO timestamp + sha256 of config)
 #
