@@ -1664,79 +1664,145 @@ geodeploy_fix_all_credentials() {
 }
 
 # =============================================================================
-# Pro extension helpers
+# Pro components: pro/gCore/* and pro/gNode/*
 # =============================================================================
+# Pulls every checkout on disk; manifest.yaml only clones missing ones, and a
+# `pro/<type>/<name>` line in unmanaged-repos.conf holds one back. Ownership is
+# left as cloned: gCore reaches Pro code through vendor symlinks into pro/gCore,
+# so a web-readable group here would switch Pro managers on for every site.
+_gd_pro_unmanaged() {
+    [[ -r "${GEODINEUM_ROOT}/unmanaged-repos.conf" ]] || return 1
+    grep -qxE "[[:space:]]*${1}[[:space:]]*(#.*)?" "${GEODINEUM_ROOT}/unmanaged-repos.conf"
+}
+
 geodeploy_deploy_pro() {
-    local manifest="$1"
+    local pro_root="${GEODINEUM_ROOT}/pro"
+    [[ -d "$pro_root" ]] || return 0
 
-    [[ ! -f "$manifest" ]] && return 0
+    local manifest="${pro_root}/manifest.yaml"
+    local pending
+    pending="$(dirname "$GEODEPLOY_LOG")/.pro-gnode-rebuild-pending"
+    local failed=0 php_changed=0 lua_changed=0
+    local entries name branch remote comp_type pro_dir label changed local_rev remote_rev count
 
-    local parsed
-    parsed=$(python3 -c "
+    if [[ -r "$manifest" ]]; then
+        if entries=$(python3 -c "
 import yaml, sys
 with open(sys.argv[1]) as f:
     d = yaml.safe_load(f) or {}
 for e in d.get('pro', []):
-    print('{name}|{branch}|{remote}|{type}'.format(**e))
-" "$manifest" 2>/dev/null) || {
-        geodeploy_log "MANIFEST: ERROR parse-failed"
-        return 1
-    }
-
-    echo "$parsed" | while IFS='|' read -r name branch remote comp_type; do
-        [[ -z "$name" ]] && continue
-
-        local pro_dir="${GEODINEUM_ROOT}/pro/${comp_type}/${name}"
-
-        # Clone if missing
-        if [[ ! -d "$pro_dir" ]]; then
-            if geodeploy_as_deploy git clone --branch "$branch" "$remote" "$pro_dir" 2>> "$GEODEPLOY_LOG"; then
-                geodeploy_log "pro/${name}: CLONE success"
-            else
-                geodeploy_log "pro/${name}: ERROR clone-failed"
-                continue
-            fi
+    print('|'.join(str(e.get(k, dflt)) for k, dflt in (('name', ''), ('branch', 'main'), ('remote', ''), ('type', ''))))
+" "$manifest" 2>/dev/null); then
+            while IFS='|' read -r name branch remote comp_type; do
+                [[ -n "$name" && ( "$comp_type" == "gCore" || "$comp_type" == "gNode" ) ]] || continue
+                pro_dir="${pro_root}/${comp_type}/${name}"
+                label="pro/${comp_type}/${name}"
+                if [[ -e "$pro_dir" ]] || _gd_pro_unmanaged "$label"; then continue; fi
+                if geodeploy_as_deploy git clone --branch "$branch" "$remote" "$pro_dir" 2>> "$GEODEPLOY_LOG"; then
+                    geodeploy_log "${label}: CLONE success"
+                    if [[ "$comp_type" == "gNode" ]]; then : > "$pending"; fi
+                else
+                    geodeploy_log "${label}: ERROR clone-failed"
+                    failed=1
+                fi
+            done <<< "$entries"
+        else
+            geodeploy_log "pro: ERROR manifest parse-failed (${manifest})"
+            failed=1
         fi
+    fi
 
-        # Skip symlinks (local dev packages)
-        [[ -L "$pro_dir" ]] && continue
-        [[ ! -d "${pro_dir}/.git" ]] && continue
+    for pro_dir in "$pro_root"/gCore/*/ "$pro_root"/gNode/*/; do
+        pro_dir="${pro_dir%/}"
+        [[ -d "${pro_dir}/.git" && ! -L "$pro_dir" ]] || continue
+        comp_type="$(basename "$(dirname "$pro_dir")")"
+        label="pro/${comp_type}/$(basename "$pro_dir")"
+        if _gd_pro_unmanaged "$label"; then continue; fi
+        cd "$pro_dir" || { failed=1; continue; }
 
-        cd "$pro_dir" || continue
+        branch=$(geodeploy_as_deploy git rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=""
+        [[ -n "$branch" && "$branch" != "HEAD" ]] || branch="main"
 
-        geodeploy_fetch "$branch" || continue
+        if ! geodeploy_fetch "$branch"; then
+            geodeploy_log "${label}: ERROR fetch-failed"
+            failed=1
+            continue
+        fi
         geodeploy_has_changes "$branch" || continue
 
-        local revs changed
         IFS='|' read -r local_rev remote_rev count <<< "$(geodeploy_get_revs "$branch")"
-
-        geodeploy_handle_dirty "$_GD_DIRTY" "pro/${name}" || continue
-
         changed=$(geodeploy_get_changed "$branch")
-        if geodeploy_pull "$branch"; then
-            geodeploy_log "pro/${name}: PULL ${local_rev}→${remote_rev} (${count} commits)"
-
-            # Type-based actions
-            case "$comp_type" in
-                gCore)
-                    if echo "$changed" | grep -qE '\.php$'; then
-                        geodeploy_action_opcache_clear "pro/${name}"
-                    fi
-                    geodeploy_fix_perms "$pro_dir" "${GEODEPLOY_DEPLOY_USER}" "www-data"
-                    ;;
-                gNode)
-                    if echo "$changed" | grep -qE '\.lua$'; then
-                        geodeploy_action_lua_reload "pro/${name}"
-                    fi
-                    geodeploy_fix_perms "$pro_dir" "${GEODEPLOY_DEPLOY_USER}" "gnode"
-                    ;;
-            esac
-        else
-            geodeploy_log "pro/${name}: ERROR pull-failed"
+        geodeploy_handle_dirty discard "$label"
+        if ! geodeploy_pull "$branch"; then
+            geodeploy_log "${label}: ERROR pull-failed"
+            failed=1
+            continue
         fi
+        geodeploy_log "${label}: PULL ${local_rev}→${remote_rev} (${count} commits)"
 
-        geodeploy_stash_pop "pro/${name}"
+        if [[ "$comp_type" == "gCore" ]]; then
+            if grep -qE '\.php$' <<< "$changed"; then php_changed=1; fi
+        else
+            if grep -qE '^(functions/.*\.lua|extension\.yaml)$' <<< "$changed"; then lua_changed=1; fi
+            if grep -qE '^(src/|extension\.(yaml|sig)$)' <<< "$changed"; then : > "$pending"; fi
+        fi
     done
+
+    if [[ -f "$pending" ]]; then
+        geodeploy_pro_rebuild_daemon "$pending" || failed=1
+    fi
+    if (( lua_changed )); then
+        geodeploy_action_lua_reload "pro/gNode"
+    fi
+    if (( php_changed )); then
+        geodeploy_action_opcache_clear "pro/gCore"
+    fi
+    return "$failed"
+}
+
+# build.rs skips an extension whose signature fails, so a rebuild waits until
+# every extension verifies. A failed attempt records its inputs and is retried
+# only once gNode or an extension has a new commit.
+geodeploy_pro_rebuild_daemon() {
+    local pending="$1"
+    local gnode_dir="${GEODINEUM_ROOT}/gNode"
+    local bin="${gnode_dir}/daemon/target/release/gnode-daemon"
+    local inputs ext bad=""
+
+    inputs=$(for ext in "$gnode_dir" "${GEODINEUM_ROOT}"/pro/gNode/*/; do
+        geodeploy_as_deploy git -C "$ext" rev-parse HEAD 2>/dev/null || true
+    done | sha256sum | cut -c1-16)
+    if [[ "$(cat "$pending" 2>/dev/null)" == "$inputs" ]]; then return 1; fi
+
+    if [[ ! -x "$bin" ]]; then
+        geodeploy_log "pro/gNode: ERROR rebuild held (no daemon binary to verify extensions with)"
+        echo "$inputs" > "$pending"
+        return 1
+    fi
+    for ext in "${GEODINEUM_ROOT}"/pro/gNode/*/; do
+        [[ -f "${ext}extension.yaml" ]] || continue
+        geodeploy_as_deploy "$bin" verify-extension "${ext%/}" >/dev/null 2>&1 || bad+=" $(basename "$ext")"
+    done
+    if [[ -n "$bad" ]]; then
+        geodeploy_log "pro/gNode: ERROR rebuild held (signature verification failed:${bad}; a rebuild would drop them)"
+        echo "$inputs" > "$pending"
+        return 1
+    fi
+
+    if ! geodeploy_parse_descriptor "${gnode_dir}/geodeploy.yaml"; then
+        geodeploy_log "pro/gNode: ERROR rebuild held (gNode descriptor unreadable)"
+        echo "$inputs" > "$pending"
+        return 1
+    fi
+    _GD_BUILD_CMD="${_GD_BUILD_CMD:-scripts/build.sh} --force"
+    if ! geodeploy_action_build "$gnode_dir" "pro/gNode"; then
+        echo "$inputs" > "$pending"
+        return 1
+    fi
+    geodeploy_fix_binaries "$gnode_dir" "gNode"
+    geodeploy_fix_gnode_dirs "$gnode_dir"
+    geodeploy_action_restart "gNode" || return 1
+    rm -f "$pending"
 }
 
 # =============================================================================

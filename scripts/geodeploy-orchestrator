@@ -116,6 +116,9 @@ for entry in "${CORE_REPOS[@]}"; do
     geodeploy_repo "$name" "$branch" || { _GD_FAILED_REPOS+=("$name"); geodeploy_log "${name}: deploy FAILED (continuing)"; }
 done
 
+# Pro components cloned under pro/ (no-op on a host without them).
+geodeploy_deploy_pro || { _GD_FAILED_REPOS+=("pro"); geodeploy_log "pro: deploy FAILED (continuing)"; }
+
 # =============================================================================
 # Site-local repos (opt-in, never shipped)
 # =============================================================================
@@ -195,23 +198,6 @@ geodeploy_harden_all_wp "/var/www" || geodeploy_log "harden_all_wp: FAILED (cont
 # Guardrail: verify the web tree is still Apache-readable (logs a WARNING on
 # any group/traversal regression — detection, not a routine restart).
 geodeploy_verify_web_readable "${GEODINEUM_ROOT}" || true
-
-# pro/ extensions are deployed manually (never pulled here) — surface their
-# HEAD age once a day so staleness is at least visible instead of silent.
-if [[ -d "${GEODINEUM_ROOT}/pro" ]]; then
-    _gd_today=$(date '+%Y-%m-%d')
-    _gd_pro_stamp="${GEODEPLOY_LOG_DIR}/.pro-staleness-day"
-    if [[ "$(cat "$_gd_pro_stamp" 2>/dev/null)" != "$_gd_today" ]]; then
-        echo "$_gd_today" > "$_gd_pro_stamp" 2>/dev/null || true
-        for _gd_pro_dir in "${GEODINEUM_ROOT}"/pro/*/*/; do
-            [[ -d "${_gd_pro_dir}.git" ]] || continue
-            # as-deploy: the cron process is root; bare git in a deploy-user-
-            # owned repo dies on dubious-ownership (and set -e killed the run).
-            _gd_pro_head=$(geodeploy_as_deploy git -C "$_gd_pro_dir" log -1 --format='%h %cr' 2>/dev/null) || _gd_pro_head=""
-            geodeploy_log "pro/${_gd_pro_dir#${GEODINEUM_ROOT}/pro/}: manual-deploy HEAD ${_gd_pro_head:-unreadable} — not auto-pulled, verify currency"
-        done
-    fi
-fi
 
 # =============================================================================
 # Orchestration coverage — nothing rots unseen
