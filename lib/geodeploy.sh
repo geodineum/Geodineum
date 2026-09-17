@@ -551,8 +551,10 @@ geodeploy_action_service_install() {
     for svc in $service_files; do
         local src="${repo_dir}/${svc}"
         if [[ -f "$src" ]]; then
-            if /usr/bin/sudo /usr/bin/cp "$src" /etc/systemd/system/ 2>> "$GEODEPLOY_LOG"; then
+            if /usr/bin/sudo -n /usr/bin/cp "$src" /etc/systemd/system/ 2>> "$GEODEPLOY_LOG"; then
                 geodeploy_log "${name}: SERVICE installed $(basename "$svc")"
+            else
+                geodeploy_log "${name}: ERROR SERVICE install refused for $(basename "$svc") — no sudoers cp rule for ${src%/*}/*.service (templates/sudoers-geodeploy.tpl); the installed unit is unchanged"
             fi
         fi
     done

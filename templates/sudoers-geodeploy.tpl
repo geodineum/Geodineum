@@ -21,6 +21,7 @@
 
 # --- Service file installation ---
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/cp /opt/geodineum/gNode/daemon/config/*.service /etc/systemd/system/
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/cp /opt/geodineum/Geodineum-COMMS/config/*.service /etc/systemd/system/
 
 # --- Permission fixes: chown to correct owner:group per component ---
 # Daemon components ({{DEPLOY_USER}}:gnode)
