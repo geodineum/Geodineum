@@ -42,6 +42,9 @@ MANIFEST (ONE schema, all generators): .geodineum/gnode_services.yaml —
   flag|manifest|abort) + services[].metadata (daemon discovery) +
   consumes:/produces: (flat lists; {site_id}/{service}/{ecosystem} interpolate).
   services[].capabilities DELETED — was read by nothing.
+DISCOVERY PLACEMENT: a discovered service registers into ITS OWN site only —
+  services[].site if registered, else the registered site == services[].id;
+  neither ⇒ registered nowhere + WARN; never copied into other sites.
 POLICY: 8 well-known namespace classes; foreign pattern → POLICY DENY, onboard ABORTS
   (fail-loud, never silent-narrow, never silent-broaden); declared ⇒ composed grants +
   safe base (own ns + own heartbeat key + READ-ONLY {geodineum}:gnode:* via %R~ — daemon tier writes the topology; clients read with FCALL_RO/HGETALL); UNDECLARED ⇒ REFUSED (legacy uniform set gone;

@@ -106,6 +106,12 @@ correct on every own-namespace check. Regenerate an undeclared manifest with
 > root registers nothing; putting the discovery shape in `.geodineum/` composes
 > no grants — and both fail silently.
 >
+> The daemon registers each discovered service into **its own site only**: the
+> registered site named by `services[].site`, or else the registered site whose
+> id equals `services[].id`. A service with neither is registered nowhere and
+> the scan logs a warning. A service is never copied into other sites'
+> topologies.
+>
 > The discovery manifest was also called `gnode_services.yaml`, which is what
 > made the two indistinguishable. The daemon still accepts the old name so
 > nothing breaks on upgrade; new deployments should use `gnode_discovery.yaml`. The allow-list is the **8 well-known
