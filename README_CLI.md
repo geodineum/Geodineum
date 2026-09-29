@@ -24,7 +24,7 @@ sudo ln -sf /opt/geodineum/Geodineum/geodineum /usr/local/bin/gcli
 
 ### `register` — Register an existing service
 
-The **single registration authority** for the entire ecosystem. Creates the `.geodineum/` directory in the service root, provisions ACL credentials and streams, and generates capability configuration for 30D topology discovery.
+The **single registration authority** for the entire ecosystem. Creates the `.geodineum/` directory in the service root, provisions ACL credentials and streams, and generates capability configuration for topology discovery.
 
 ```bash
 sudo geodineum register <site_id> [options]
@@ -56,7 +56,7 @@ sudo geodineum register <site_id> [options]
   ├── credentials/
   │   └── valkey_client_{site_id}.password  → /etc/geodineum/credentials/...
   ├── config.yaml            Unified config (identity, environment, ValKey, capabilities)
-  ├── gnode_services.yaml    30D capability config (daemon discovers this)
+  ├── gnode_services.yaml    capability config (daemon discovers this)
   ├── config-schema.yaml     Config option schema (generated on import)
   └── .registered            Timestamp + hash marker
 ```
@@ -173,7 +173,7 @@ sudo geodineum new pipeline log_ingest --source https://logs.internal/stream --s
 Read, write, and import configuration via ValKey. Changes propagate to running services via `PUBLISH` notifications (gCore ConfigWatcher).
 
 Two config namespaces per service:
-- **`capabilities`** — 25 discovery dimensions (service identity in the 30D space)
+- **`capabilities`** — the service's declared axes (its identity in the topology space)
 - **`app`** — application config imported from service files
 
 #### `config set`
@@ -497,7 +497,7 @@ Every registered service gets a `.geodineum/` directory in its root. This is the
   ├── credentials/
   │   └── valkey_client_{site_id}.password   Symlink → /etc/geodineum/credentials/
   ├── config.yaml                        Unified service config (identity, env, ValKey, capabilities)
-  ├── gnode_services.yaml                30D capability config (daemon discovers via discovery-paths.conf)
+  ├── gnode_services.yaml                capability config (daemon discovers via discovery-paths.conf)
   ├── config-schema.yaml                 Config option schema (developer-editable, generated on import)
   └── .registered                        Registration marker (timestamp + config hash)
 ```
@@ -587,7 +587,7 @@ See `templates/config-schema.yaml.tpl` for the full reference with examples.
 
 ## Topology Capability Dimensions
 
-The 25 discovery dimensions that define a service's identity in the 30D topology space (25 discovery + 5 storage). Set via `register --express`, `--template`, or `config set`.
+The axes that define a service's identity in the topology space. An axis's index is its zone: the declared axes a provider sets, then the derived axes the daemon measures, then storage. Counts come from the published schema (`geodineum <component> contract`), never from prose. Set via `register --express`, `--template`, or `config set`.
 
 | Dimension | Valid Values |
 |-----------|-------------|
