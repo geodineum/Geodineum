@@ -38,7 +38,7 @@ IDENTITY: gnode_client_<svc> · cred /etc/geodineum/credentials/valkey_client_<s
 CRED MODEL follows type: web → root:geodineum-web:640 (www-data via group) ·
   internal → root:geodineum:640 (www-data NEVER) · daemon → root:<svc>:640 (own group)
 MANIFEST (ONE schema, all generators): .geodineum/gnode_services.yaml —
-  top-level profile: (drives 30-dim vector) + environment: (REQUIRED,
+  top-level profile: (drives 23-dim vector) + environment: (REQUIRED,
   flag|manifest|abort) + services[].metadata (daemon discovery) +
   consumes:/produces: (flat lists; {site_id}/{service}/{ecosystem} interpolate).
   services[].capabilities DELETED — was read by nothing.
@@ -91,7 +91,7 @@ onboard is ALWAYS the last row — one paved road, many matrices.
 0 INTERVIEW sudo geodineum service new [--type --env --yes]  → runs 1-5 for you
 1 DECLARE   gnode_services.yaml (ONE schema); consumes/produces = OWN namespace only
 2 PROVISION sudo geodineum provision-service <svc>          [master]
-3 REGISTER  sudo geodineum register service <svc> <profile> [node-local, review 30-dim]
+3 REGISTER  sudo geodineum register service <svc> <profile> [node-local, review 23-dim]
 4 HEARTBEAT wire the SETEX loop into the service runtime (or the gated timer pair)
 5 VERIFY    ACL GETUSER exact · topology shows entity · heartbeat fresh ·
             ping round-trip (reply + verified receipt) · grants show = expected ledger ·

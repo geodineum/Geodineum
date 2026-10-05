@@ -54,7 +54,7 @@ scaffolder templates) emits this same shape:
 
 ```yaml
 profile: service                  # web | headless | service | system | component
-                                  # THIS drives the 30-dim capability vector.
+                                  # THIS drives the 23-dim capability vector.
 environment: production           # DTAP tier — REQUIRED (flag|manifest|abort)
 
 services:
@@ -87,7 +87,7 @@ correct on every own-namespace check. Regenerate an undeclared manifest with
 > `manifest-policy.sh` consumes only `consumes`/`produces`, and the daemon's
 > periodic discovery does not probe `.geodineum/` at all. Generators no
 > longer emit it; per-dimension capability data lives in
-> `.geodineum/config.yaml`. The 30-dim vector comes from the top-level
+> `.geodineum/config.yaml`. The 23-dim vector comes from the top-level
 > **`profile:`** key above (or `--profile`, which overrides it).
 >
 > **Declare `profile:` — do not rely on the default.** It falls back to `web`,
@@ -136,7 +136,7 @@ sudo geodineum provision-service myservice   # wraps onboard-service.sh --yaml .
 # 2. Register the topology entity (NODE-LOCAL — run where the service lives):
 sudo geodineum register service myservice service
 #    profiles: web | headless | service | system | component
-#    Review the 30-dim vector — meaningful capabilities beat profile defaults.
+#    Review the 23-dim vector — meaningful capabilities beat profile defaults.
 
 # 3. Wire the heartbeat (in your service, every ~60s):
 #    SETEX {geodineum}:gnode:heartbeat:production:myservice:$(hostname -s) 120 '{"ts":<unix>,"node":"<short-hostname>"}'   # node segment: CONTRACTS/heartbeat.md — add yourself to its census
