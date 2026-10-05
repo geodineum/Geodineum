@@ -728,7 +728,7 @@ phase_deploy_user() {
     #                    0640). Sole member www-data. A secret group; no
     #                    source is ever filed here.
     #   geodineum-code — reads deployed shared SOURCE only (gCore, gNode-Client,
-    #                    GeoV, themes). Members www-data (web) + geodine (the
+    #                    themes). Members www-data (web) + geodine (the
     #                    in-process library consumer) + future gCore consumers.
     #                    Non-secret source; adding a member leaks no credential.
     # Keeping source and creds in separate groups is what lets geodine read the
