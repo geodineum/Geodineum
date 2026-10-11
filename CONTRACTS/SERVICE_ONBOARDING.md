@@ -214,7 +214,7 @@ keyspace — they ask, the daemon crosses the boundary):
 
 ```bash
 FCALL GNODE_TENANT_LIST_SITES 0 acme
-FCALL GNODE_TENANT_DISCOVER   0 acme '{"protocol":"http_rest"}' 10
+FCALL_RO GNODE_TOPO_QUERY 1 '{acme}:gnode:constellation' <layer_lo> <layer_hi> '{"facets":{"protocol":["http_rest"]}}' '{"limit":10}'   # one topology (GNODE_TENANT_DISCOVER retired 2026-10-11)
 ```
 
 Implementation: `gNode/daemon/functions/gnode_site.lua`.

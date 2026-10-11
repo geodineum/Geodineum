@@ -114,7 +114,7 @@ SILENT-EXPIRY: replies are EX 10 — poll immediately; the receipt is the durabl
 FALSE-GREEN-HEARTBEAT: a bare timer heartbeats a dead service; the shipped pair is
   ExecCondition-gated on the main unit — keep that property when hand-rolling.
 TENANT: `--owner acme` → `gnode:tenant:acme:sites` SET; cross-site discover = daemon-level
-  (GNODE_TENANT_LIST_SITES / GNODE_TENANT_DISCOVER, gnode_site.lua); clients stay keyspace-isolated.
+  (GNODE_TENANT_LIST_SITES, gnode_site.lua; cross-site discovery = GNODE_TOPO_QUERY on the constellation key since 2026-10-11); clients stay keyspace-isolated.
 CREATES: ACL user + cred 0640 (group per type) + unified/health streams ×DTAP +
   sites:registry + discovery-path + intent + type rows (vhost/unit/heartbeat/manifest).
 DECOMMISSION: deregister-service.sh [--dry-run|--remove-acl]; tenant cleanup automatic;
