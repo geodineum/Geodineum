@@ -87,11 +87,10 @@ extract_metadata() {
 }
 
 # Generate gnode_services.yaml — the UNIFIED onboarding manifest schema.
-# One schema everywhere: top-level profile: drives the 30-dim vector,
-# environment: is the DTAP tier, consumes:/produces: compose the ValKey ACL
-# (manifest-policy.sh). The old services[].capabilities list was read by
-# nothing and is gone; per-dimension capability data lives in
-# .geodineum/config.yaml.
+# One schema everywhere: the gnode: block is the declaration the daemon
+# registers by name (shape, axes, heartbeat, labels), profile: is its source
+# and the fallback, environment: is the DTAP tier, consumes:/produces: compose
+# the ValKey ACL (manifest-policy.sh).
 generate_services_yaml() {
     local site_id="$1"
     local output_file="$2"
@@ -118,6 +117,8 @@ generate_services_yaml() {
 
 profile: ${profile}
 environment: ${CAP_ENVIRONMENT:-production}
+
+$(CAP_LANGUAGE="${lang:-php}" gnode_block_yaml "${profile}" "${site_id}")
 
 services:
   - id: "${site_id}"

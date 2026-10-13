@@ -38,9 +38,12 @@ IDENTITY: gnode_client_<svc> · cred /etc/geodineum/credentials/valkey_client_<s
 CRED MODEL follows type: web → root:geodineum-web:640 (www-data via group) ·
   internal → root:geodineum:640 (www-data NEVER) · daemon → root:<svc>:640 (own group)
 MANIFEST (ONE schema, all generators): .geodineum/gnode_services.yaml —
-  top-level profile: (drives 23-dim vector) + environment: (REQUIRED,
-  flag|manifest|abort) + services[].metadata (daemon discovery) +
-  consumes:/produces: (flat lists; {site_id}/{service}/{ecosystem} interpolate).
+  gnode: block = the declaration by NAME on the one topology (constellation, shape
+  site|app|daemon, heartbeat, holds/requires = REACH labels, fundamentality,
+  capacity_weight, axes in the service body's vocabulary; SPEC-ONE-TOPOLOGY §10) +
+  profile: (names the shape when gnode: absent) + environment: (REQUIRED,
+  flag|manifest|abort) + services[].metadata + consumes:/produces: (flat lists;
+  {site_id}/{service}/{ecosystem}=gnode.constellation interpolate).
   services[].capabilities DELETED — was read by nothing.
 DISCOVERY PLACEMENT: a discovered service registers into ITS OWN site only —
   services[].site if registered, else the registered site == services[].id;

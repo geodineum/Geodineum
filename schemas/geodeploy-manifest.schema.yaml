@@ -67,11 +67,12 @@ $defs:
     minLength: 3
     description: |
       ValKey key/stream pattern (ACL-grammar). Supports `{site_id}` and `{ecosystem}` placeholders
-      that the orchestrator interpolates at registration time. Validated against namespace policy.
+      that the orchestrator interpolates at registration time; `{ecosystem}` is the manifest's
+      `gnode.constellation` (default geodineum). Validated against namespace policy.
     examples:
       - "{site_id}:<name>:state:*"
       - "{site_id}:gnode:unified:*"
-      - "{ecosystem}:gnode:heartbeat"
+      - "{ecosystem}:gnode:heartbeat:*:{site_id}:*"
 
   channel_pattern:
     type: string
@@ -420,6 +421,33 @@ properties:
   # ===========================================================================
   # LAYER 5 — DATA (the keyspace contract; Tier-2 anchor)
   # ===========================================================================
+  gnode:
+    type: object
+    additionalProperties: false
+    description: |
+      The one topology's declaration (SPEC-ONE-TOPOLOGY §10): where the component
+      registers and what it declares by NAME. The daemon codes the words and refuses
+      one it does not know. `requires` here are REACH labels and never collide with
+      the installer's top-level `requires:` (install dependencies). `tier:` above is an
+      install tier, never a shape.
+    properties:
+      constellation: { $ref: "#/$defs/slug", default: geodineum, description: "The owner's constellation; `{ecosystem}` interpolates to it." }
+      shape: { type: string, enum: [site, app, daemon], description: "3.1 | 3.2 | 3.3" }
+      heartbeat: { $ref: "#/$defs/slug", description: "The component name in the heartbeat key, when it differs from the id." }
+      holds: { type: array, items: { $ref: "#/$defs/slug" }, description: "REACH labels this entity carries." }
+      requires: { type: array, items: { $ref: "#/$defs/slug" }, description: "Labels a caller must hold to reach it (fail closed)." }
+      peers: { type: array, items: { $ref: "#/$defs/slug" }, description: "Entities reachable regardless of potential." }
+      fundamentality: { type: number, minimum: 0, maximum: 1, description: "Optional; the shape's default applies (D11)." }
+      capacity_weight: { type: integer, minimum: 0, default: 1, description: "Per placement; 0 = standby (D13)." }
+      axes:
+        type: object
+        description: "axis name → word, list of words, or fraction in [0, 1]; the shape's body vocabulary."
+        additionalProperties:
+          oneOf:
+            - { type: string }
+            - { type: number }
+            - { type: array, items: { type: string } }
+
   data:
     type: object
     additionalProperties: false
@@ -450,9 +478,10 @@ properties:
         type: boolean
         default: true
         description: |
-          Grants access to the canonical bus streams: `{site_id}:gnode:unified:*`,
-          `{ecosystem}:gnode:heartbeat`, `&{ecosystem}:gnode:broadcast:*`. Set false
-          only for isolated services that should not see ecosystem traffic.
+          Grants the canonical bus: `{site_id}:gnode:*`, read-only `{ecosystem}:gnode:*`
+          (the one topology), write on the service's own heartbeat key,
+          `&{ecosystem}:gnode:broadcast:*`. Set false only for isolated services that
+          should not see ecosystem traffic.
 
   # ===========================================================================
   # LAYER 6 — BACKUP (light; declarative hints)

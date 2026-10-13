@@ -487,6 +487,8 @@ ensure_manifest() {
 profile: ${SVC_PROFILE}
 environment: ${SVC_ENV}
 
+$(CAP_LANGUAGE="${SVC_LANG:-php}" gnode_block_yaml "${SVC_PROFILE}" "${SVC_NAME}")
+
 services:
   - id: "${SVC_NAME}"
     metadata:

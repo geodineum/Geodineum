@@ -3261,12 +3261,14 @@ provision_comms_acl() {
         # produces a daemon that logs "receipt signer ready" and then NOPERMs
         # every actual write — announcing itself and emitting nothing.
         "~*:gnode:receipt_pubkeys" "~*:gnode:receipts:*"
-        # Liveness: its own heartbeat key (CONTRACTS/heartbeat.md). Absent from
-        # the original least-privilege composition, so every COMMS heartbeat
-        # failed NOPERM with the error hidden at debug level — the dashboard
-        # showed COMMS down while it was delivering mail. A grant list composed
-        # without consulting the writer census misses exactly this way.
-        "~*:gnode:heartbeat:*"
+        # Liveness: its own heartbeat key in every constellation it serves
+        # (CONTRACTS/heartbeat.md; the node segment is the short hostname).
+        # Absent from the original least-privilege composition, so every COMMS
+        # heartbeat failed NOPERM with the error hidden at debug level. The
+        # `~*:gnode:comms:*` grant above is the ONE cross-constellation read of
+        # the estate (D17): COMMS delivers for CourseMatch's constellation until
+        # it has a placement of its own (ROADMAP_ONE_TOPOLOGY R-3).
+        "~*:gnode:heartbeat:*:comms:*"
     )
     if ! REDISCLI_AUTH="$(cat "$admin_pwfile")" valkey-cli -p "$valkey_port" \
         ACL SETUSER geodineum_comms \
@@ -3450,7 +3452,7 @@ provision_dashboard_acl() {
         +@read \
         -@write -@admin -@dangerous \
         -flushall -flushdb -shutdown -debug -config -script \
-        +xadd \
+        +xadd +fcall_ro \
         >/dev/null; then
         log_warning "ACL SETUSER geodineum_dashboard failed — see output above"
         log_info "Retry: sudo REDISCLI_AUTH=\"\$(cat ${admin_pwfile})\" valkey-cli -p ${valkey_port} ACL LIST"
@@ -4588,6 +4590,7 @@ GNODE_DAEMON_BIN=${GNODE_DAEMON_BIN:-/opt/geodineum/gNode/daemon/target/release/
 GNODE_FUNCTIONS_DIR=${GNODE_FUNCTIONS_DIR:-/opt/geodineum/gNode/daemon/functions}
 GNODE_SCRIPTS_DIR=${GNODE_SCRIPTS_DIR:-/opt/geodineum/gNode/scripts}
 GNODE_TOPOLOGY_NAMESPACE=${GNODE_TOPOLOGY_NAMESPACE:-geodineum}
+GNODE_CONSTELLATIONS=${GNODE_CONSTELLATIONS:-${GNODE_TOPOLOGY_NAMESPACE:-geodineum}}
 GNODE_STREAM_PREFIX=${GNODE_STREAM_PREFIX:-gnode}
 GNODE_DEFAULT_ENVIRONMENT=${GNODE_DEFAULT_ENVIRONMENT:-production}
 GNODE_LOG_LEVEL=${GNODE_LOG_LEVEL:-info}

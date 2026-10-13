@@ -795,6 +795,10 @@ render_template() {
     content="${content//\{\{DOMAIN\}\}/${DOMAIN:-}}"
     content="${content//\{\{GCORE_ENTRY\}\}/${GCORE_ENTRY:-/opt/geodineum/gCore/gcore-standalone.php}}"
     content="${content//\{\{PROFILE\}\}/${GEO_PROFILE:-web}}"
+    # The one topology's declaration (SPEC-ONE-TOPOLOGY §10), from the profile + CAP_* words
+    local _gnode_block
+    _gnode_block="$(gnode_block_yaml "${GEO_PROFILE:-web}" "${SERVICE_ID:-${SERVICE_NAME:-${SITE_ID:-}}}")"
+    content="${content//\{\{GNODE_BLOCK\}\}/${_gnode_block}}"
     # Runtime wiring (form endpoints, standalone producers)
     content="${content//\{\{TIER_FILE\}\}/${TIER_FILE:-}}"
     content="${content//\{\{CREDENTIAL_FILE\}\}/${CREDENTIAL_FILE:-}}"
@@ -830,4 +834,58 @@ resolve_deploy_user() {
     fi
     user="${user:-${SUDO_USER:-$(whoami)}}"
     echo "$user"
+}
+
+# =============================================================================
+# The one topology (SPEC-ONE-TOPOLOGY §10)
+# =============================================================================
+
+# A registration profile names a shape: web → site (3.1), headless → app (3.2),
+# service | system | component → daemon (3.3).
+profile_to_shape() {
+    case "${1:-web}" in
+        web) echo site ;;
+        headless) echo app ;;
+        *) echo daemon ;;
+    esac
+}
+
+# The manifest's `gnode:` block: the declaration by name the daemon registers
+# (the daemon codes the words). Axes come from the CAP_* words when set, else
+# the shape's defaults. holds/requires are REACH labels (D8): daemons require
+# `internal` and hold it; sites hold nothing and require nothing.
+# Usage: gnode_block_yaml <profile> <service_id> [constellation]
+gnode_block_yaml() {
+    local profile="${1:-web}" id="${2:-}" c="${3:-${GNODE_TOPOLOGY_NAMESPACE:-geodineum}}"
+    local shape; shape="$(profile_to_shape "$profile")"
+    local protocol scope auth labels heartbeat domain
+    case "$shape" in
+        site) protocol="${CAP_PROTOCOL:-http_rest}"; scope="${CAP_SCOPE:-client_facing}"; auth="${CAP_AUTH:-session_cookie}"; labels="[]"; heartbeat=""; domain="${CAP_DOMAIN:-content}, ${CAP_DOMAIN_SECONDARY:-presentation}" ;;
+        app)  protocol="${CAP_PROTOCOL:-http_rest}"; scope="${CAP_SCOPE:-bff}"; auth="${CAP_AUTH:-bearer_token}"; labels="[internal]"; heartbeat="$id"; domain="${CAP_DOMAIN:-gateway}" ;;
+        *)    protocol="${CAP_PROTOCOL:-gnode_stream}"; scope="${CAP_SCOPE:-internal_api}"; auth="${CAP_AUTH:-api_key}"; labels="[internal]"; heartbeat="$id"; domain="${CAP_DOMAIN:-compute}" ;;
+    esac
+    cat <<EOF
+# The one topology (SPEC-ONE-TOPOLOGY §10): the declaration by name. The daemon
+# codes the words and refuses one it does not know; the derived slots are its.
+gnode:
+  constellation: ${c}
+  shape: ${shape}${heartbeat:+
+  heartbeat: ${heartbeat}}
+  holds: ${labels}
+  requires: ${labels}
+  capacity_weight: 1
+  axes:
+    protocol: [${protocol}]
+    native_format: ${CAP_FORMAT:-json}
+    contract_version: ${CAP_CONTRACT_VERSION:-v1}
+    contract_stability: ${CAP_STABILITY:-stable}
+    auth_method: ${auth}
+    service_scope: ${scope}
+    domain: [${domain}]
+    throughput_tier: ${CAP_THROUGHPUT:-standard}
+    latency_class: ${CAP_LATENCY:-responsive}
+    reliability_tier: ${CAP_RELIABILITY:-standard}
+    execution_priority: ${CAP_PRIORITY:-normal}
+    implementation_language: ${CAP_LANGUAGE:-php}
+EOF
 }

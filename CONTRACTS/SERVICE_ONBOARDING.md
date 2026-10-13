@@ -54,8 +54,32 @@ scaffolder templates) emits this same shape:
 
 ```yaml
 profile: service                  # web | headless | service | system | component
-                                  # THIS drives the 23-dim capability vector.
+                                  # names the shape when gnode: is absent
 environment: production           # DTAP tier — REQUIRED (flag|manifest|abort)
+
+# The one topology: the declaration by NAME the daemon registers (SPEC-ONE-TOPOLOGY §10).
+# The daemon codes the words and refuses one it does not know; derived slots are its.
+gnode:
+  constellation: geodineum        # where it registers; {ecosystem} interpolates to it
+  shape: daemon                   # site (3.1) | app (3.2) | daemon (3.3)
+  heartbeat: myservice            # the component name in the heartbeat key
+  holds: [internal]               # REACH labels this entity carries
+  requires: [internal]            # labels a caller must hold to reach it (fail closed)
+  fundamentality: 0.3             # optional; the shape's default applies
+  capacity_weight: 1              # per placement; 0 = standby
+  axes:                           # the service body's vocabulary, by name
+    protocol: [gnode_stream]
+    native_format: json
+    contract_version: v1
+    contract_stability: stable
+    auth_method: api_key
+    service_scope: internal_api
+    domain: [compute]
+    throughput_tier: standard
+    latency_class: responsive
+    reliability_tier: standard
+    execution_priority: normal
+    implementation_language: rust
 
 services:
   - id: "myservice"
@@ -73,8 +97,8 @@ produces:
 ```
 
 The ACL is composed from the declarations (plus a safe base: own namespace, the
-service's own heartbeat key, and **read-only** access to the shared gnode bus
-`{geodineum}:gnode:*` — the shared topology is written by the daemon tier only,
+service's own heartbeat key, and **read-only** access to its constellation's bus
+`{<constellation>}:gnode:*` — the one topology is written by the daemon tier only,
 so read it with `FCALL_RO`/`HGETALL`, never expect a write there to succeed).
 **A manifest that declares nothing is refused** — the
 old fallback (a broad legacy-uniform grant set) is retired: it silently
@@ -84,11 +108,10 @@ correct on every own-namespace check. Regenerate an undeclared manifest with
 `sudo geodineum register <service> --force`, then `--regrant`.
 
 > **`services[].capabilities` is gone.** It was read by nothing —
-> `manifest-policy.sh` consumes only `consumes`/`produces`, and the daemon's
-> periodic discovery does not probe `.geodineum/` at all. Generators no
-> longer emit it; per-dimension capability data lives in
-> `.geodineum/config.yaml`. The 23-dim vector comes from the top-level
-> **`profile:`** key above (or `--profile`, which overrides it).
+> `manifest-policy.sh` consumes only `consumes`/`produces`. The declaration is
+> the **`gnode:`** block above, registered by name through `register-tools
+> --manifest`; the top-level **`profile:`** key (or `--profile`) names the shape
+> when the block is absent.
 >
 > **Declare `profile:` — do not rely on the default.** It falls back to `web`,
 > which describes a client-facing HTTP service. An internal daemon registered

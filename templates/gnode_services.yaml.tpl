@@ -7,6 +7,8 @@
 profile: {{PROFILE}}
 environment: {{SERVICE_ENV}}
 
+{{GNODE_BLOCK}}
+
 services:
   - id: "{{SERVICE_ID}}"
     metadata:

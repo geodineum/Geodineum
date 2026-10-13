@@ -52,6 +52,17 @@ policy_interpolate() {
     printf '%s' "$p"
 }
 
+# The constellation a manifest registers in: its gnode.constellation, else the
+# caller's default (SPEC-ONE-TOPOLOGY §10). `{ecosystem}` interpolates to it.
+# Usage: policy_manifest_constellation <manifest_path> [default]
+policy_manifest_constellation() {
+    local manifest_path="$1" dflt="${2:-${GNODE_TOPOLOGY_NAMESPACE:-geodineum}}" c=""
+    if [[ -f "$manifest_path" ]] && command -v yq &>/dev/null; then
+        c=$(yq eval '.gnode.constellation // ""' "$manifest_path" 2>/dev/null | tr -d '"')
+    fi
+    [[ -n "$c" && "$c" != "null" ]] && printf '%s' "$c" || printf '%s' "$dflt"
+}
+
 # ---- Allowed prefix list ---------------------------------------------------
 
 # Print the well-known allowed pattern prefixes (one per line, after
@@ -73,18 +84,20 @@ _policy_well_known_prefixes() {
 {${site_id}}:results:
 {${site_id}}:
 {${ecosystem}}:gnode:
+$( [[ "$ecosystem" == "geodineum" ]] && cat <<LEGACY
 {default}:gnode:
 {default}:gcore:
 {testing}:gnode:
 {staging}:gnode:
 {acceptance}:gnode:
 {production}:gnode:
-{geodineum}:gnode:
 gnode:
 gnode:routing:
 topology:
 template:
 membership:
+LEGACY
+)
 error:${site_id}:
 cache:${site_id}:
 session:${site_id}:
@@ -184,7 +197,7 @@ policy_compose_key_grants() {
     local manifest_path="$1"
     local site_id="$2"
     local service_name="${3:-$site_id}"
-    local ecosystem="${4:-geodineum}"
+    local ecosystem="${4:-$(policy_manifest_constellation "$manifest_path")}"
 
     local raw interp
     local failed=0
@@ -207,13 +220,18 @@ policy_compose_key_grants() {
         done < <(policy_read_patterns "$manifest_path" "$yq_path")
     done
 
-    # Optional well-known ecosystem grants if requested via the manifest
+    # Optional well-known grants if requested via the manifest: the service's own
+    # gnode namespace, read-only on its constellation's one topology, write on
+    # its own heartbeat key. The legacy untagged/{default} families stay only for
+    # the geodineum constellation, until the keys retire (SPEC §9).
     if [[ "$(yq eval '.data.ecosystem_well_known // false' "$manifest_path" 2>/dev/null)" == "true" ]]; then
-        # These are well-known and unconditionally allowed when explicitly opted in
         out+=("~{${site_id}}:gnode:*")
         out+=("%R~{${ecosystem}}:gnode:*")
-        out+=("~{default}:gnode:*")
-        out+=("~{default}:gcore:*")
+        out+=("~{${ecosystem}}:gnode:heartbeat:*:${site_id}:*")
+        if [[ "$ecosystem" == "geodineum" ]]; then
+            out+=("~{default}:gnode:*")
+            out+=("~{default}:gcore:*")
+        fi
     fi
 
     if [[ $failed -gt 0 ]]; then
