@@ -166,37 +166,36 @@ update_valkey_env() {
     [[ "$exists" == "0" ]]
 }
 
-# Reconcile the geometric env coordinate (dim-20) with the new active_environment,
-# and notify the daemon. The two env stores otherwise diverge: env set updates
-# active_environment, but dim-20 was embedded once at registration (defaulting to
-# production). Re-registering with --env re-embeds dim-20. The entity id IS the
-# site_id, so GNODE_REGISTER_CAPABILITY_VECTOR upserts in place (no duplicate) and
-# touches ONLY the topology entity — never creds/viewkey/wp-admin. Best-effort: a
-# failure leaves active_environment correct (what PHP reads) and the daemon
-# reconverges on its next periodic discovery scan.
+# Reconcile the environment slot of the one topology (header slot 1) with the new
+# active_environment, and notify the daemon. The entity id IS the site_id, so a
+# re-registration with --env upserts in place and touches ONLY the topology
+# entity — never creds/viewkey/wp-admin. Best-effort: a failure leaves
+# active_environment correct (what PHP reads).
 reembed_dim20_and_broadcast() {
     local site_id="$1"
     local new_env="$2"
     local dcred="${GEODINEUM_CREDENTIALS_DIR:-/etc/geodineum/credentials}/valkey_daemon.password"
     local port="${VALKEY_PORT:-47445}"
 
-    # Re-register with the SAME profile the entity already has (m.type), so only
-    # env changes — all other capabilities are preserved. Default to 'web'.
+    # Re-register with the SAME shape the entity already has (its `sh`), so only
+    # env changes — the declared words are preserved. Default to 'web' (a site).
     local profile="web"
     if [[ -r "$dcred" ]] && command -v python3 >/dev/null 2>&1; then
-        local entity_json detected
+        local ns="${GNODE_TOPOLOGY_NAMESPACE:-geodineum}" entity_json detected
         entity_json=$(REDISCLI_AUTH="$(cat "$dcred")" valkey-cli -p "$port" --user gnode_daemon \
-            FCALL GNODE_TOPO_GET_ENTITY 1 "{${site_id}}:gnode:services" "$site_id" 2>/dev/null)
+            HGET "{${ns}}:gnode:constellation:entities" "$site_id" 2>/dev/null)
         detected=$(printf '%s' "$entity_json" | python3 -c 'import sys,json
-try: print((json.load(sys.stdin).get("m") or {}).get("type") or "")
+try:
+    e=json.load(sys.stdin); sh=str(e.get("sh",""))
+    print({"3.1":"web","3.2":"headless","3.3":"service"}.get(sh) or (e.get("m") or {}).get("type") or "")
 except Exception: print("")' 2>/dev/null)
         [[ -n "$detected" ]] && profile="$detected"
     fi
 
     if geodineum topology register service "$site_id" "$profile" --env "$new_env" >/dev/null 2>&1; then
-        log_success "Topology: dim-20 re-embedded (${profile} profile → ${new_env})"
+        log_success "Topology: environment slot re-embedded (${profile} → ${new_env})"
     else
-        log_warning "Could not re-embed dim-20 — geometric placement may lag active_environment"
+        log_warning "Could not re-embed the environment slot — the topology may lag active_environment"
         log_info "  Re-run: sudo geodineum topology register service ${site_id} ${profile} --env ${new_env}"
     fi
 

@@ -5273,7 +5273,7 @@ phase_functions() {
                VALKEY_USER="gnode_daemon" \
                VALKEY_PORT="${VALKEY_PORT:-47445}" \
                "$daemon_bin" register-tools --tier tool; then
-                log_success "Ecosystem tool topology populated (dependency pyramid)"
+                log_success "Ecosystem components registered on the one topology (shape 2)"
             else
                 log_warning "Tool registration had issues (see stderr above) — register later: VALKEY_USER=gnode_daemon GNODE_REDIS_AUTH_FILE=${daemon_pass_file} gnode-daemon register-tools --tier tool"
                 # Non-fatal for Ch.1 launch — the daemon can

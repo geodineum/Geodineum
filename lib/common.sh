@@ -506,24 +506,22 @@ valkey:
   user: "gnode_client_${site_id}"
   password_file: "${geodineum_dir}/credentials/valkey_client_${site_id}.password"
 
-# --- gNode Topology Capabilities ---
+# --- gNode Topology: the service body, declared by name (the daemon codes) ---
 capabilities:
-  protocol: ${CAP_PROTOCOL:-http_rest}
+  protocol: [${CAP_PROTOCOL:-http_rest}]
   native_format: ${CAP_FORMAT:-json}
-  api_version: ${CAP_API_VERSION:-v1}
+  contract_version: ${CAP_CONTRACT_VERSION:-v1}
   contract_stability: ${CAP_STABILITY:-stable}
   clearance_required: ${CAP_CLEARANCE:-public}
   auth_method: ${CAP_AUTH:-session_cookie}
   data_sensitivity: ${CAP_SENSITIVITY:-internal}
   service_scope: ${CAP_SCOPE:-client_facing}
-  domain_primary: ${CAP_DOMAIN:-content}
-  domain_secondary: ${CAP_DOMAIN_SECONDARY:-template}
-  specialization: ${CAP_SPECIALIZATION:-generalist}
+  domain: [${CAP_DOMAIN:-content}, ${CAP_DOMAIN_SECONDARY:-presentation}]
   throughput_tier: ${CAP_THROUGHPUT:-standard}
   latency_class: ${CAP_LATENCY:-responsive}
   reliability_tier: ${CAP_RELIABILITY:-standard}
-  pipeline_stage: ${CAP_PIPELINE_STAGE:-deliver}
   execution_priority: ${CAP_PRIORITY:-normal}
+  implementation_language: php
 
 # --- Service Metadata ---
 metadata:

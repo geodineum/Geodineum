@@ -78,7 +78,7 @@ assert_acl_composed(){
     fi
     # TOPOLOGY-ACL-SCOPE: the shared topology is daemon-written. As the client:
     # a raw mutation must be NOPERM, a no-writes read via FCALL_RO must work.
-    local pw shared='{geodineum}:gnode:services' reply
+    local pw shared="{${GNODE_TOPOLOGY_NAMESPACE:-geodineum}}:gnode:constellation" reply
     pw=$(cat "${CRED_DIR}/valkey_client_$1.password" 2>/dev/null) || { no "client password unreadable for ${user}"; return; }
     reply=$(REDISCLI_AUTH="$pw" valkey-cli -p "${VALKEY_PORT:-47445}" --user "$user" --no-auth-warning \
         HDEL "${shared}:entities" __cycletest_never_exists__ 2>&1)

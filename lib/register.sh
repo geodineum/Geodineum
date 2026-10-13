@@ -156,19 +156,19 @@ map_flat_key_to_cap() {
     case "$key" in
         protocol)           echo "CAP_PROTOCOL" ;;
         native_format)      echo "CAP_FORMAT" ;;
-        api_version)        echo "CAP_API_VERSION" ;;
+        contract_version)   echo "CAP_CONTRACT_VERSION" ;;
+        api_version)        echo "CAP_CONTRACT_VERSION" ;;
         contract_stability) echo "CAP_STABILITY" ;;
         clearance_required) echo "CAP_CLEARANCE" ;;
         auth_method)        echo "CAP_AUTH" ;;
         data_sensitivity)   echo "CAP_SENSITIVITY" ;;
         service_scope)      echo "CAP_SCOPE" ;;
+        domain)             echo "CAP_DOMAIN" ;;
         domain_primary)     echo "CAP_DOMAIN" ;;
         domain_secondary)   echo "CAP_DOMAIN_SECONDARY" ;;
-        specialization)     echo "CAP_SPECIALIZATION" ;;
         throughput_tier)    echo "CAP_THROUGHPUT" ;;
         latency_class)      echo "CAP_LATENCY" ;;
         reliability_tier)   echo "CAP_RELIABILITY" ;;
-        pipeline_stage)     echo "CAP_PIPELINE_STAGE" ;;
         execution_priority) echo "CAP_PRIORITY" ;;
         *)                  echo "" ;;
     esac
@@ -533,7 +533,6 @@ express_confirm() {
     printf "  ${DIM}%-24s${NC} %s\n" "service_scope:" "$CAP_SCOPE"
     printf "  ${DIM}%-24s${NC} %s\n" "domain_primary:" "$CAP_DOMAIN"
     printf "  ${DIM}%-24s${NC} %s\n" "domain_secondary:" "$CAP_DOMAIN_SECONDARY"
-    printf "  ${DIM}%-24s${NC} %s\n" "specialization:" "$CAP_SPECIALIZATION"
     printf "  ${DIM}%-24s${NC} %s\n" "throughput_tier:" "$CAP_THROUGHPUT"
     printf "  ${DIM}%-24s${NC} %s\n" "latency_class:" "$CAP_LATENCY"
     printf "  ${DIM}%-24s${NC} %s\n" "reliability_tier:" "$CAP_RELIABILITY"
@@ -541,7 +540,6 @@ express_confirm() {
     printf "  ${DIM}%-24s${NC} %s\n" "clearance_required:" "$CAP_CLEARANCE"
     printf "  ${DIM}%-24s${NC} %s\n" "auth_method:" "$CAP_AUTH"
     printf "  ${DIM}%-24s${NC} %s\n" "data_sensitivity:" "$CAP_SENSITIVITY"
-    printf "  ${DIM}%-24s${NC} %s\n" "pipeline_stage:" "$CAP_PIPELINE_STAGE"
     printf "  ${DIM}%-24s${NC} %s\n" "execution_priority:" "$CAP_PRIORITY"
     echo ""
 
@@ -577,7 +575,6 @@ express_edit_capabilities() {
         "CAP_SCOPE:service_scope"
         "CAP_DOMAIN:domain_primary"
         "CAP_DOMAIN_SECONDARY:domain_secondary"
-        "CAP_SPECIALIZATION:specialization"
         "CAP_THROUGHPUT:throughput_tier"
         "CAP_LATENCY:latency_class"
         "CAP_RELIABILITY:reliability_tier"
@@ -585,7 +582,6 @@ express_edit_capabilities() {
         "CAP_CLEARANCE:clearance_required"
         "CAP_AUTH:auth_method"
         "CAP_SENSITIVITY:data_sensitivity"
-        "CAP_PIPELINE_STAGE:pipeline_stage"
         "CAP_PRIORITY:execution_priority"
     )
 

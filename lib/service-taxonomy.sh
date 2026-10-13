@@ -590,9 +590,10 @@ ensure_heartbeat() {
 # Key contract: CONTRACTS/heartbeat.md (node segment = short hostname).
 set -euo pipefail
 node="$(hostname -s)"
+ns="${GNODE_TOPOLOGY_NAMESPACE:-geodineum}"
 REDISCLI_AUTH="$(cat "${VALKEY_PASSWORD_FILE}")" \
     valkey-cli -h "${VALKEY_HOST}" -p "${VALKEY_PORT}" --user "${VALKEY_USER}" \
-    SETEX "{geodineum}:gnode:heartbeat:${GNODE_ENVIRONMENT}:${GNODE_SITE_ID}:${node}" \
+    SETEX "{${ns}}:gnode:heartbeat:${GNODE_ENVIRONMENT}:${GNODE_SITE_ID}:${node}" \
     120 "{\"ts\":$(date +%s),\"node\":\"${node}\"}" >/dev/null
 HSEOF
         chown "root:${SVC_GROUP}" "$hb_script"
@@ -629,7 +630,7 @@ HTEOF
         systemctl daemon-reload
         systemctl enable --now "geodineum-${SVC_NAME}-heartbeat.timer" >/dev/null 2>&1 || true
     fi
-    log_success "Heartbeat wired: {geodineum}:gnode:heartbeat:${SVC_ENV}:${SVC_NAME}:$(hostname -s)"
+    log_success "Heartbeat wired: {${GNODE_TOPOLOGY_NAMESPACE:-geodineum}}:gnode:heartbeat:${SVC_ENV}:${SVC_NAME}:$(hostname -s)"
 }
 
 # --- mail: DKIM + authorized sender domain (setup-mail-stack.sh) -------------

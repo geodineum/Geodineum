@@ -1,10 +1,10 @@
-# Geodineum Ecosystem Tools — Chapter 1 Base Components
-# Schema: tool_schema.yaml (16D)
-# Keyspace: ecosystem:tools:topology:{entity_id}
+# Geodineum Ecosystem Components — Chapter 1 Base Components
+# Shape 2 (component) of the one topology: {<constellation>}:gnode:constellation.
 #
-# Each component declares its capabilities in SEMANTIC form (human-readable).
-# The register-tools pipeline translates these to 16D coordinates at registration.
-# The `depends_on` field drives the dependency pyramid layout (x/y/z computed).
+# Each component declares its axes by NAME, in the component body's vocabulary
+# (gNode/daemon/config/topology_schema.yaml); the daemon codes the words and refuses
+# one it does not know. `requires` are the REACH labels a caller must hold.
+# `depends_on` is the edge list and the source of the fundamentality ladder (D11).
 #
 # Pyramid hierarchy (top → bottom):
 #   Level 0: gMath                                   (mathematical truth)
@@ -14,8 +14,7 @@
 #   Level 4: gCube                                   (end-user theme)
 #   Level 5: Geodineum-BAK                           (utility — depends on gNode scripts)
 
-schema: tool_schema.yaml
-tier: tool
+shape: component
 
 components:
   # ─── Level 0: Mathematical Truth ────────────────────────────
@@ -34,12 +33,12 @@ components:
         value: library
       - name: native_format
         value: fixed_point
-      - name: api_version
+      - name: contract_version
         value: v1
       - name: contract_stability
         value: frozen
-      - name: domain_primary
-        value: math
+      - name: domain
+        value: [math]
       - name: implementation_language
         value: rust
       - name: build_type
@@ -52,8 +51,6 @@ components:
         value: "no"
       - name: systemd_managed
         value: "no"
-      - name: data_sensitivity
-        value: public
 
   # ─── Level 1: Infrastructure ────────────────────────────────
 
@@ -65,17 +62,18 @@ components:
       affordances:
         - "doc:gNode/docs/valkey/VALKEY_CONFIGURATION.md"
     depends_on: []
+    requires: [credentials]
     capabilities:
       - name: protocol
         value: resp3_direct
       - name: native_format
         value: resp3
-      - name: api_version
+      - name: contract_version
         value: v1
       - name: contract_stability
         value: stable
-      - name: domain_primary
-        value: storage
+      - name: domain
+        value: [storage]
       - name: implementation_language
         value: c
       - name: build_type
@@ -88,8 +86,6 @@ components:
         value: "no"
       - name: systemd_managed
         value: "yes"
-      - name: data_sensitivity
-        value: credentials
 
   - id: gNode
     metadata:
@@ -102,17 +98,18 @@ components:
         - "doc:gNode/COMMAND_SCHEMA.md"
         - "doc:gNode/CONTRACT.md"
     depends_on: [gMath, ValKey]
+    requires: [internal]
     capabilities:
       - name: protocol
         value: gnode_stream
       - name: native_format
         value: resp3
-      - name: api_version
+      - name: contract_version
         value: v1
       - name: contract_stability
         value: stable
-      - name: domain_primary
-        value: infrastructure
+      - name: domain
+        value: [infrastructure]
       - name: implementation_language
         value: rust
       - name: build_type
@@ -125,8 +122,6 @@ components:
         value: "yes"
       - name: systemd_managed
         value: "yes"
-      - name: data_sensitivity
-        value: internal
 
   # ─── Level 2: Application Framework ─────────────────────────
 
@@ -139,17 +134,18 @@ components:
         - "describe:gnode"
         - "doc:pro/gNode/gNode-CMS/CONTRACT.md"
     depends_on: [gNode]
+    requires: [internal]
     capabilities:
       - name: protocol
         value: gnode_stream
       - name: native_format
         value: json
-      - name: api_version
+      - name: contract_version
         value: v1
       - name: contract_stability
         value: stable
-      - name: domain_primary
-        value: template
+      - name: domain
+        value: [template]
       - name: implementation_language
         value: rust
       - name: build_type
@@ -162,8 +158,6 @@ components:
         value: "yes"
       - name: systemd_managed
         value: "no"  # part of gNode daemon
-      - name: data_sensitivity
-        value: internal
 
   - id: gNode-Client
     metadata:
@@ -174,17 +168,18 @@ components:
         - "cli:gNode-Client/geodeploy.yaml"
         - "doc:gNode-Client/CONTRACT.md"
     depends_on: [ValKey]
+    requires: [credentials]
     capabilities:
       - name: protocol
         value: php_internal
       - name: native_format
         value: php_array
-      - name: api_version
+      - name: contract_version
         value: v1
       - name: contract_stability
         value: stable
-      - name: domain_primary
-        value: infrastructure
+      - name: domain
+        value: [infrastructure]
       - name: implementation_language
         value: php
       - name: build_type
@@ -197,8 +192,6 @@ components:
         value: "yes"
       - name: systemd_managed
         value: "no"
-      - name: data_sensitivity
-        value: credentials
 
   - id: gCore
     metadata:
@@ -209,17 +202,18 @@ components:
         - "cli:gCore/geodeploy.yaml"
         - "doc:gCore/CONTRACT.md"
     depends_on: [gNode-Client]
+    requires: [internal]
     capabilities:
       - name: protocol
         value: php_internal
       - name: native_format
         value: php_array
-      - name: api_version
+      - name: contract_version
         value: v1
       - name: contract_stability
         value: stable
-      - name: domain_primary
-        value: framework
+      - name: domain
+        value: [framework]
       - name: implementation_language
         value: php
       - name: build_type
@@ -232,8 +226,6 @@ components:
         value: "yes"
       - name: systemd_managed
         value: "no"
-      - name: data_sensitivity
-        value: internal
 
   - id: Geodineum-COMMS
     metadata:
@@ -244,17 +236,18 @@ components:
         - "cli:Geodineum-COMMS/geodeploy.yaml"
         - "doc:Geodineum-COMMS/CONTRACT.md"
     depends_on: [gNode, ValKey]
+    requires: [internal]
     capabilities:
       - name: protocol
         value: gnode_stream
       - name: native_format
         value: json
-      - name: api_version
+      - name: contract_version
         value: v1
       - name: contract_stability
         value: stable
-      - name: domain_primary
-        value: messaging
+      - name: domain
+        value: [messaging]
       - name: implementation_language
         value: rust
       - name: build_type
@@ -267,8 +260,6 @@ components:
         value: "yes"
       - name: systemd_managed
         value: "yes"
-      - name: data_sensitivity
-        value: internal
 
   # ─── Level 3: Presentation Framework ────────────────────────
 
@@ -286,12 +277,12 @@ components:
         value: php_internal
       - name: native_format
         value: php_array
-      - name: api_version
+      - name: contract_version
         value: v1
       - name: contract_stability
         value: stable
-      - name: domain_primary
-        value: presentation
+      - name: domain
+        value: [presentation]
       - name: implementation_language
         value: php
       - name: build_type
@@ -304,8 +295,6 @@ components:
         value: "no"
       - name: systemd_managed
         value: "no"
-      - name: data_sensitivity
-        value: public
 
   # ─── Level 4: End-User Theme ────────────────────────────────
 
@@ -323,12 +312,12 @@ components:
         value: php_internal
       - name: native_format
         value: php_array
-      - name: api_version
+      - name: contract_version
         value: v1
       - name: contract_stability
         value: stable
-      - name: domain_primary
-        value: presentation
+      - name: domain
+        value: [presentation]
       - name: implementation_language
         value: php
       - name: build_type
@@ -341,8 +330,6 @@ components:
         value: "no"
       - name: systemd_managed
         value: "no"
-      - name: data_sensitivity
-        value: public
 
   # ─── Level 5: Utilities ─────────────────────────────────────
 
@@ -355,17 +342,18 @@ components:
         - "cli:Geodineum-BAK/geodeploy.yaml"
         - "doc:Geodineum-BAK/CONTRACT.md"
     depends_on: [gNode, ValKey]
+    requires: [internal]
     capabilities:
       - name: protocol
         value: cli
       - name: native_format
         value: binary
-      - name: api_version
+      - name: contract_version
         value: v1
       - name: contract_stability
         value: stable
-      - name: domain_primary
-        value: backup
+      - name: domain
+        value: [backup]
       - name: implementation_language
         value: bash
       - name: build_type
@@ -378,5 +366,3 @@ components:
         value: "yes"
       - name: systemd_managed
         value: "yes"
-      - name: data_sensitivity
-        value: internal

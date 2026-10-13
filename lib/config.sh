@@ -24,28 +24,27 @@ set -euo pipefail
 #
 
 # =============================================================================
-# Capability dimension schema (valid values for topology dimensions)
+# Capability vocabulary: the service body of gNode's topology_schema.yaml (one topology).
+# clearance_required / data_sensitivity become REACH labels; the daemon codes every word.
 # =============================================================================
 
 CAPABILITY_SCHEMA=(
-    "protocol|http_rest|graphql|grpc|gnode_stream|websocket|mqtt"
-    "native_format|json|xml|protobuf|msgpack|html|binary"
-    "api_version|v1|v2|v3|beta|alpha|latest"
-    "contract_stability|stable|beta|alpha|experimental|deprecated"
-    "clearance_required|public|authenticated|elevated|admin|system"
-    "auth_method|none|session_cookie|bearer_token|api_key|mtls|oauth2"
-    "data_sensitivity|public|internal|confidential|restricted|secret"
-    "service_scope|client_facing|daemon|worker|internal|partner"
-    "domain_primary|content|compute|ml_inference|integration|storage|auth|payment|communication"
-    "domain_secondary|template|platform|data|cache|search|messaging|monitoring"
-    "specialization|generalist|focused|specialist"
-    "throughput_tier|minimal|standard|professional|enterprise|unlimited"
-    "latency_class|interactive|responsive|patient|batch|async"
-    "reliability_tier|minimal|standard|high|critical"
-    "pipeline_stage|ingest|transform|process|deliver|archive"
+    "protocol|http_rest|graphql|grpc|websocket|gnode_stream|resp3_direct|amqp|kafka|custom_tcp"
+    "native_format|plaintext|json|xml|yaml|msgpack|protobuf|cbor|resp3|custom_binary"
+    "contract_version|v1|v2|v3|v4|v5"
+    "contract_stability|experimental|alpha|beta|stable|frozen"
+    "clearance_required|public|authenticated|authorized|privileged|confidential|classified"
+    "auth_method|none|api_key|bearer_token|session_cookie|mtls|hardware_token"
+    "data_sensitivity|public|internal|confidential|pii|regulated"
+    "service_scope|infrastructure|daemon|worker|cron_scheduled|internal_api|bff|client_facing|edge"
+    "domain|platform|identity|configuration|storage|cache|compute|transform|messaging|workflow|template|content|gateway|integration|analytics|logging|ml_inference|search|notification|presentation"
+    "domain_primary|platform|identity|configuration|storage|cache|compute|transform|messaging|workflow|template|content|gateway|integration|analytics|logging|ml_inference|search|notification|presentation"
+    "domain_secondary|platform|identity|configuration|storage|cache|compute|transform|messaging|workflow|template|content|gateway|integration|analytics|logging|ml_inference|search|notification|presentation"
+    "throughput_tier|minimal|standard|professional|enterprise|hyperscale"
+    "latency_class|realtime|interactive|responsive|patient|batch"
+    "reliability_tier|best_effort|standard|high|critical|ultra"
     "execution_priority|background|low|normal|high|critical"
-    "service_tier|TOOL|SERVICE|PIPELINE|INFRASTRUCTURE|ORCHESTRATOR"
-    "environment|testing|staging|acceptance|production"
+    "implementation_language|rust|php|lua|python|go|javascript|bash"
 )
 
 get_valid_values() {
