@@ -59,6 +59,11 @@ COMMANDS: geodineum service new (taxonomy) · geodineum provision-service <svc>
 HEARTBEAT: SETEX {geodineum}:gnode:heartbeat:{env}:<svc>:<node> 120 '{"ts":<unix>,"node":...}' every ~60s (node = short hostname; census in CONTRACTS/heartbeat.md, update SAME commit)
   — dashboard tile green ≤75s, lagging ≤120s, red after · daemon/gcore types get a
   timer pair GATED on the main unit being active (never false-green)
+HEARTBEAT-WRAPPER: a service with no heartbeat of its own integrates with geodineum-heartbeat
+  (scripts/heartbeat/: geodineum-heartbeat.sh + geodineum-heartbeat@.service/.timer 30s +
+  install-heartbeat.sh <svc> --probe unit:|tcp:|http:|pid:|cmd: [--apply]); spec at
+  /etc/geodineum/heartbeat/<svc>.env 0640; the probe is the proof — SETEX only on pass,
+  fail = no write + journal line, key expires, placement reads dead
 WIRE: XADD {site}:gnode:unified:{env} (t=c, p carries _request_id) → poll {site}:res:{id}
   (EX 10) → signed receipt on {site}:gnode:receipts:{env} (ed25519; pubkeys at
   {geodineum}:gnode:receipt_pubkeys) · cross-service via _rt (relay), _rr (reply-to)

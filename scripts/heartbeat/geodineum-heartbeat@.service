@@ -1,0 +1,13 @@
+[Unit]
+Description=Geodineum probe-gated heartbeat for %i
+ConditionPathExists=/etc/geodineum/heartbeat/%i.env
+
+[Service]
+Type=oneshot
+User=gnode-heartbeat
+ExecStart=/usr/local/lib/geodineum/heartbeat/geodineum-heartbeat.sh /etc/geodineum/heartbeat/%i.env
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+UMask=0027

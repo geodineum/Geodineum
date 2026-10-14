@@ -164,6 +164,10 @@ sudo geodineum register service myservice service
 # 3. Wire the heartbeat (in your service, every ~60s):
 #    SETEX {geodineum}:gnode:heartbeat:production:myservice:$(hostname -s) 120 '{"ts":<unix>,"node":"<short-hostname>"}'   # node segment: CONTRACTS/heartbeat.md — add yourself to its census
 #    → your tile on the wp-admin dashboard goes green; missing/stale = red.
+#    A service that writes no heartbeat of its own integrates with geodineum-heartbeat;
+#    the probe is the proof (the key is written ONLY when the probe passes):
+#    on <host>: scripts/heartbeat/install-heartbeat.sh myservice --probe unit:myservice [--apply]
+#    probes: unit:<unit> | tcp:<host>:<port> | http:<url> | pid:<pidfile> | cmd:</abs/path>
 
 # 4. Prove the round-trip (any registered site stream):
 #    XADD your own stream, poll the reply key, find your receipt (§5).
