@@ -31,8 +31,7 @@ done
 probe_fail() { echo "geodineum-heartbeat: ${COMPONENT} probe failed (${PROBE}): $1 - no heartbeat written" >&2; exit 1; }
 
 kind="${PROBE%%:*}"; arg="${PROBE#*:}"
-[[ "$kind" == https ]] && kind=http
-[[ "$kind" == http ]] && arg="$PROBE"
+[[ "$PROBE" =~ ^https?:// ]] && { kind=http; arg="$PROBE"; }
 case "$kind" in
     unit)
         systemctl is-active --quiet -- "$arg" || probe_fail "unit not active" ;;
