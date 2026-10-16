@@ -220,6 +220,7 @@ usage() {
     echo "  --with-comms            Force-include Geodineum-COMMS (non-interactive)"
     echo "  --install-root <path>   Production install location (default: /opt/geodineum)"
     echo "  --constellation <type>  new or private"
+    echo "  --constellation-name <n> Name of a new constellation (default: geodineum; a-z, 0-9, _)"
     echo "  --deploy-tier <tier>    web, full, compute, or replica (join an existing constellation)"
     echo "  --master-ip <ip>        Constellation master's VPN IP (with --deploy-tier; e.g. 10.66.0.1)"
     echo "  --site <domain>         Deploy a WordPress site after install"
@@ -267,6 +268,7 @@ parse_args() {
             --skip-build)   SKIP_BUILD=true; shift ;;
             --yes|-y)       YES_MODE=true; shift ;;
             --constellation) CONSTELLATION="$2"; shift 2 ;;
+            --constellation-name) GNODE_TOPOLOGY_NAMESPACE="$2"; CONSTELLATION_NAME_SET=true; shift 2 ;;
             --deploy-tier)  DEPLOY_TIER="$2"; shift 2 ;;
             --master-ip)    MASTER_IP="$2"; shift 2 ;;
             --install-root) INSTALL_ROOT="$2"; shift 2 ;;
@@ -1362,6 +1364,31 @@ wizard_apply_constellation_bundle() {
     return 0
 }
 
+# The constellation's name is its hash tag {<name>}: every topology key, heartbeat and
+# grant carries it, so an existing host keeps the name it has and only a new one asks.
+ask_constellation_name() {
+    local existing=/etc/geodineum/components/gnode-daemon/daemon.env cur=""
+    [[ -r "$existing" ]] && cur="$(sed -n 's/^GNODE_CONSTELLATIONS="\{0,1\}\([^",]*\).*/\1/p' "$existing" | sed -n 1p)"
+    if [[ -n "$cur" ]]; then
+        GNODE_TOPOLOGY_NAMESPACE="$cur"
+        log_info "Constellation name: ${cur} (kept from ${existing})"
+        return 0
+    fi
+    if [[ "${CONSTELLATION_NAME_SET:-false}" != "true" && "$YES_MODE" != "true" ]]; then
+        local _ans
+        echo -e "  ${DIM}The name tags every topology key ({name}:gnode:…); it cannot change later without a migration.${NC}"
+        read -r -p "  Constellation name [geodineum]: " _ans
+        GNODE_TOPOLOGY_NAMESPACE="${_ans:-geodineum}"
+    fi
+    GNODE_TOPOLOGY_NAMESPACE="${GNODE_TOPOLOGY_NAMESPACE:-geodineum}"
+    if [[ ! "$GNODE_TOPOLOGY_NAMESPACE" =~ ^[a-z][a-z0-9_]{1,31}$ ]]; then
+        log_error "Constellation name '${GNODE_TOPOLOGY_NAMESPACE}' is invalid: lowercase letter first, then a-z, 0-9, _ (2-32 characters)"
+        exit 1
+    fi
+    GNODE_CONSTELLATIONS="$GNODE_TOPOLOGY_NAMESPACE"
+    log_info "Constellation name: ${GNODE_TOPOLOGY_NAMESPACE}"
+}
+
 # Worker enrollment entry point: offer the one-paste `expand` bundle; if the
 # operator skips it (or it's invalid), fall back to manual WireGuard +
 # credential entry.
@@ -1520,6 +1547,7 @@ phase_selection() {
         *)
             CONSTELLATION="new"
             log_info "Constellation: new (standalone deployment)"
+            ask_constellation_name
             ;;
     esac
 
@@ -4574,6 +4602,10 @@ phase_config() {
     log_success "Wrote /etc/geodineum/bootstrap.env (root:geodineum-bootstrap 0640, 3 strict keys)"
 
     # ── 7. Tier 2 — populate ValKey-resident config ────────────────────────
+    if [[ ! "${GNODE_TOPOLOGY_NAMESPACE:-geodineum}" =~ ^[a-z][a-z0-9_]{1,31}$ ]]; then
+        log_error "Constellation name '${GNODE_TOPOLOGY_NAMESPACE}' is invalid: lowercase letter first, then a-z, 0-9, _ (2-32 characters)"
+        exit 1
+    fi
     if [[ -r "${cfg_valkey_creds_path}/valkey.password" ]]; then
         load_bootstrap_disk_tier
         if populate_valkey_tier <<EOF
