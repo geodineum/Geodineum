@@ -32,16 +32,15 @@ NODE      register  sudo geodineum topology register node <id> --role observer|h
 COMPONENTS register sudo geodineum topology register components     (from config/ecosystem_tools.yaml; append entry + re-run to add)
 SITE      register  sudo geodineum new site <domain> --env <e>  |  service new <d> --type website-wp|website-static|app-pwa|webapp-gcore --env <e>
                     |  register <id> --express|--yaml|--template … |  topology register service <id> web [--env <e>]
-          bind host: gnode-daemon register-tools --tier service --site <id> --profile web --on <node>
-                    (VALKEY_USER=gnode_daemon GNODE_REDIS_AUTH_FILE=…/valkey_daemon.password) — `--on` exists ONLY here
+          bind host: sudo geodineum topology register service <id> web --on <node>   (web defaults to THIS node; --on '' = no placement; --manifest <path>)
 DAEMON    register  sudo geodineum service new <n> --type daemon|gcore-service --env <e> --yes  |  provision-service <n> + topology register service <n> service
 APP       register  sudo geodineum topology register service <n> headless   (or manifest shape: app)
 NON-GEO   register  sudo geodineum service new <n> --type custom --env <e> --yes ; on the node: scripts/heartbeat/install-heartbeat.sh <n>
                     --probe unit:<u>|tcp:<h>:<p>|http:<url>|pid:<file>|cmd:</abs> [--apply]  (plan by default; the probe is the proof;
                     component name == manifest heartbeat:)
 CHECK     sudo geodineum topology [all|show <id>|load [id]|verify|stats] · sudo geodineum status [--json] · geodineum info <id> · geodineum list
-DEREG     sudo geodineum deregister <id> [--remove-acl]   (streams, config, ACL, .geodineum/ — NOT the topology)
-          THEN sudo geodineum topology deregister <id>    (entity, indexes, edges, placements)
+DEREG     sudo geodineum deregister <id> [--remove-acl]   (streams, config, ACL, .geodineum/ AND the topology entity)
+          sudo geodineum topology deregister <id>         (the topology entity only: entity, indexes, edges, placements)
           sudo geodineum topology deregister --shape site|app|daemon|component|node --confirm   (every entity of one shape)
 ```
 

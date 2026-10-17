@@ -45,7 +45,7 @@ declare -A GEO_TYPE_VISIBILITY=(
     [custom]=internal
 )
 
-# Capability profile driving the 30-dim topology vector (manifest profile:).
+# Capability profile: the manifest profile: word the one topology declares by name.
 declare -A GEO_TYPE_PROFILE=(
     [website-wp]=web
     [website-static]=web

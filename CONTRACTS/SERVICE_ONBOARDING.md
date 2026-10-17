@@ -266,5 +266,5 @@ Implementation: `gNode/daemon/functions/gnode_site.lua`.
 ```
 
 Tenant-group cleanup is automatic. (Both scripts live in `gNode/scripts/`.)
-Neither touches the topology: also run `sudo geodineum topology deregister
-my_service` ([REGISTRATION.md](REGISTRATION.md)).
+`deregister-service.sh` also removes the service's entity, placements and index
+entries from the one topology ([REGISTRATION.md](REGISTRATION.md)).

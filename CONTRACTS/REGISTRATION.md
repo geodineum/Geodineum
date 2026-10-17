@@ -137,15 +137,15 @@ sudo geodineum register example_com --express --path /var/www/example.com --env 
 sudo geodineum topology register service example_com web --env production
 ```
 
-To bind the site to the node that serves it, register it through the daemon,
-which is the one place `--on` exists:
+A web site is placed on the node that runs the command, so its health is that
+node's daemon heartbeat. `--on <node>` places it on another node; `--on ''` skips
+the placement. `--manifest <path>` registers from the site's manifest instead of
+the profile:
 
 ```bash
 # on master
-sudo env VALKEY_USER=gnode_daemon \
-  GNODE_REDIS_AUTH_FILE=/etc/geodineum/credentials/valkey_daemon.password \
-  /opt/geodineum/gNode/daemon/target/release/gnode-daemon register-tools \
-  --tier service --site example_com --profile web --environment production --on <node>
+sudo geodineum topology register service example_com web --env production --on <node>
+sudo geodineum topology register service example_com --manifest /var/www/example.com/.geodineum/gnode_services.yaml
 ```
 
 Check and deregister:
@@ -155,12 +155,10 @@ sudo geodineum topology show example_com     # shape 3.1, placement example_com@
 sudo geodineum status                         # health = the host daemon's heartbeat
 geodineum info example_com
 
-sudo geodineum deregister example_com --remove-acl     # streams, config, ACL, .geodineum/
-sudo geodineum topology deregister example_com         # entity, placements, edges
+sudo geodineum deregister example_com --remove-acl     # streams, config, ACL, .geodineum/ and the topology entity
 ```
 
-`geodineum deregister` removes the site's streams, config and identity; it does
-not touch the topology, so the second command is not optional.
+`geodineum deregister` removes the site's streams, config and identity, and its entity, placements and index entries in the one topology. `geodineum topology deregister <id>` removes only the topology entity.
 
 ## 5. Service: a daemon or a headless app
 
