@@ -39,8 +39,9 @@ audit. The paved road below is five commands.
 - **Three separate permission layers** — never conflate them:
   1. **Disk** — Unix users/groups (see `permission-model.md`).
   2. **ValKey ACL** — which keys/streams this identity may touch (this doc §4).
-  3. **Relay policy** — which services may message which, per command,
-     enforced by the daemon on every relayed message.
+  3. **Reach labels** — which services may message which: `holds` /
+     `requires` labels plus a deny list, checked by the daemon on every relayed
+     message and fail-closed (`REGISTRATION.md` section 6).
 - **Cross-service access is never a self-declared grant.** Your manifest can
   only grant your OWN namespace + well-known shared trees. To reach another
   service: message it via the relay (§5), or request a grant through the
@@ -156,10 +157,10 @@ dispatch-verification probe. Delegated provisioning for a worker node:
 #    admin credential exists only there):
 sudo geodineum provision-service myservice   # wraps onboard-service.sh --yaml ...
 
-# 2. Register the topology entity (NODE-LOCAL — run where the service lives):
-sudo geodineum register service myservice service
+# 2. Register the topology entity (on the master; recipes per shape: REGISTRATION.md):
+sudo geodineum topology register service myservice service
 #    profiles: web | headless | service | system | component
-#    Review the 23-dim vector — meaningful capabilities beat profile defaults.
+#    The manifest's gnode: block, when present, is the declaration instead.
 
 # 3. Wire the heartbeat (in your service, every ~60s):
 #    SETEX {geodineum}:gnode:heartbeat:production:myservice:$(hostname -s) 120 '{"ts":<unix>,"node":"<short-hostname>"}'   # node segment: CONTRACTS/heartbeat.md — add yourself to its census
@@ -200,8 +201,8 @@ The credential's disk model follows the type: web types →
   the pubkey registry `{geodineum}:gnode:receipt_pubkeys`). Observers use
   their own consumer groups here — this is the audit/observability channel.
 - **Another service**: add `_rt` (relay target) to your command — the daemon
-  routes it to the target's stream and applies relay policy (per
-  source:target pair, per command). You never write into a foreign keyspace.
+  routes it to the target's stream after the reach check (labels, then the
+  deny list; undeclared is refused). You never write into a foreign keyspace.
 
 ## 6. Need more access? The grant-request loop
 
@@ -254,7 +255,6 @@ Implementation: `gNode/daemon/functions/gnode_site.lua`.
 | Credential (0640, group-readable) | `/etc/geodineum/credentials/valkey_client_{service_id}.password` |
 | Unified + health streams (per DTAP env) | `{service_id}:gnode:unified:{env}` |
 | Site-registry membership | `gnode:sites:registry` SET |
-| Discovery path | `discovery-paths.conf` |
 | Registration intent | `{ns}:gnode:registrations` |
 | Tenant-group membership (with `--owner`) | `gnode:tenant:{owner}:sites` SET |
 
@@ -266,3 +266,5 @@ Implementation: `gNode/daemon/functions/gnode_site.lua`.
 ```
 
 Tenant-group cleanup is automatic. (Both scripts live in `gNode/scripts/`.)
+Neither touches the topology: also run `sudo geodineum topology deregister
+my_service` ([REGISTRATION.md](REGISTRATION.md)).

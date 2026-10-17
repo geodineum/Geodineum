@@ -36,8 +36,8 @@ constellation entity id. Default and convention: **short hostname**
 (first dot-label of the kernel hostname, `hostname -s`). Components with
 no node configuration of their own derive exactly that.
 
-It is a name, not a role. `master` belongs in `node_role`
-(constellation schema dim 0), never in an identity slot — a role in an
+It is a name, not a role. `master` belongs in the node entity's `node_role`
+axis, never in an identity slot — a role in an
 identity slot renames the node when its role changes, and heartbeats,
 consumer names and constellation entities all silently fork.
 

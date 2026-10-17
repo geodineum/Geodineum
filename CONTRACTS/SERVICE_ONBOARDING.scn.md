@@ -19,7 +19,7 @@ NEVER raw-XADD unregistered: registration buys delivery guarantees (consumer gro
   orphan reclaim), a least-privilege identity, receipts/heartbeat observability, and
   a capability-topology position.
 THREE permission layers, never conflated:
-  disk (unix groups) ∥ ValKey ACL (key/stream patterns) ∥ relay policy (per-pair per-command)
+  disk (unix groups) ∥ ValKey ACL (key/stream patterns) ∥ reach labels (holds/requires + deny list, fail closed)
 CROSS-SERVICE is NEVER self-declared: own-namespace grants only; foreign reach =
   relay (_rt, daemon-bridged, policy-checked) OR the grant-request approval loop.
 UNDECLARED ⇒ REFUSED: the legacy uniform grant set is RETIRED (fail-loud, never
@@ -54,7 +54,7 @@ POLICY: 8 well-known namespace classes; foreign pattern → POLICY DENY, onboard
   regenerate: `geodineum register <svc> --force` then `--regrant`)
 COMMANDS: geodineum service new (taxonomy) · geodineum provision-service <svc>
   [--yaml <dir>] (master; no manifest → mints minimal at /etc/geodineum/manifests/<svc>/)
-  · geodineum register service <svc> <profile> (node-local) · geodineum grants
+  · geodineum topology register service <svc> <profile> (master) · geodineum grants
   request|pending|approve|deny|show|sweep
 HEARTBEAT: SETEX {geodineum}:gnode:heartbeat:{env}:<svc>:<node> 120 '{"ts":<unix>,"node":...}' every ~60s (node = short hostname; census in CONTRACTS/heartbeat.md, update SAME commit)
   — dashboard tile green ≤75s, lagging ≤120s, red after · daemon/gcore types get a
@@ -99,7 +99,7 @@ onboard is ALWAYS the last row — one paved road, many matrices.
 0 INTERVIEW sudo geodineum service new [--type --env --yes]  → runs 1-5 for you
 1 DECLARE   gnode_services.yaml (ONE schema); consumes/produces = OWN namespace only
 2 PROVISION sudo geodineum provision-service <svc>          [master]
-3 REGISTER  sudo geodineum register service <svc> <profile> [node-local, review 23-dim]
+3 REGISTER  sudo geodineum topology register service <svc> <profile> [master; recipes: REGISTRATION.md]
 4 HEARTBEAT wire the SETEX loop into the service runtime (or the gated timer pair)
 5 VERIFY    ACL GETUSER exact · topology shows entity · heartbeat fresh ·
             ping round-trip (reply + verified receipt) · grants show = expected ledger ·

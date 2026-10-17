@@ -24,7 +24,7 @@ sudo ln -sf /opt/geodineum/Geodineum/geodineum /usr/local/bin/gcli
 
 ### `register` — Register an existing service
 
-The **single registration authority** for the entire ecosystem. Creates the `.geodineum/` directory in the service root, provisions ACL credentials and streams, and generates capability configuration for topology discovery.
+The **single registration authority** for the entire ecosystem. Creates the `.geodineum/` directory in the service root, provisions ACL credentials and streams, and writes the `gnode:` declaration its topology entity is registered from ([CONTRACTS/REGISTRATION.md](CONTRACTS/REGISTRATION.md)).
 
 ```bash
 sudo geodineum register <site_id> [options]
@@ -56,7 +56,7 @@ sudo geodineum register <site_id> [options]
   ├── credentials/
   │   └── valkey_client_{site_id}.password  → /etc/geodineum/credentials/...
   ├── config.yaml            Unified config (identity, environment, ValKey, capabilities)
-  ├── gnode_services.yaml    capability config (daemon discovers this)
+  ├── gnode_services.yaml    manifest; its `gnode:` block is the topology declaration
   ├── config-schema.yaml     Config option schema (generated on import)
   └── .registered            Timestamp + hash marker
 ```
@@ -182,7 +182,7 @@ Two config namespaces per service:
 geodineum config set <site_id> <key> <value> [options]
 ```
 
-Auto-detects namespace: known topology dimensions go to `capabilities`, everything else to `app`.
+Auto-detects namespace: known topology axes go to `capabilities`, everything else to `app`.
 
 | Flag | Description |
 |------|-------------|
@@ -222,11 +222,11 @@ Full config overview from ValKey + `.geodineum/` status. Shows schema descriptio
 | Flag | Description |
 |------|-------------|
 | `--json` | Machine-readable JSON output |
-| `--schema` | Show all available topology dimensions and valid values |
+| `--schema` | Show all topology axes and valid values |
 
 ```bash
 geodineum config list example_site
-geodineum config list --schema            # Dimension reference
+geodineum config list --schema            # Axis reference
 ```
 
 #### `config import`
@@ -387,10 +387,12 @@ sudo geodineum deregister <site_id> [options]
 
 **Steps performed:**
 1. Remove ValKey config hashes (`{site_id}:config:capabilities`, `{site_id}:config:app`)
-2. Remove entry from `discovery-paths.conf`
+2. Remove the legacy discovery-path entry, if one exists
 3. Remove `.geodineum/` directory
 4. Deregister streams, registry, metadata (via `deregister-service.sh`)
 5. Optionally remove ACL user and credential file
+
+The topology entity is not touched: follow with `sudo geodineum topology deregister <site_id>`.
 
 ```bash
 geodineum deregister my_old_service --dry-run
@@ -422,10 +424,35 @@ Runs automatically after `geodineum update`. Safe to re-run (idempotent).
 
 ---
 
-### `status` — Ecosystem health check
+### `status` — The constellation at a glance
 
 ```bash
-geodineum status [options]
+sudo geodineum status [--json]
+```
+
+Nodes (heartbeat age, load, memory), what runs where, services (shape, health, placements), components. Reads only ValKey.
+
+---
+
+### `topology` — Inspect, register and deregister topology entities
+
+```bash
+sudo geodineum topology [list|all|show <id>|stats|sites|load [id]|verify]
+sudo geodineum topology register components
+sudo geodineum topology register service <site> [profile] [--env <dtap>]
+sudo geodineum topology register node <id> [--role <word>] [--specialization <word>] [--constellation <c>]
+sudo geodineum topology deregister <id>
+sudo geodineum topology deregister --shape <site|app|daemon|component|node> --confirm
+```
+
+One recipe per entity type, with checks and refusals: [CONTRACTS/REGISTRATION.md](CONTRACTS/REGISTRATION.md).
+
+---
+
+### `check` — Ecosystem config health check
+
+```bash
+geodineum check [options]
 ```
 
 | Flag | Description |
@@ -497,7 +524,7 @@ Every registered service gets a `.geodineum/` directory in its root. This is the
   ├── credentials/
   │   └── valkey_client_{site_id}.password   Symlink → /etc/geodineum/credentials/
   ├── config.yaml                        Unified service config (identity, env, ValKey, capabilities)
-  ├── gnode_services.yaml                capability config (daemon discovers via discovery-paths.conf)
+  ├── gnode_services.yaml                manifest; its `gnode:` block is the topology declaration (CONTRACTS/REGISTRATION.md)
   ├── config-schema.yaml                 Config option schema (developer-editable, generated on import)
   └── .registered                        Registration marker (timestamp + config hash)
 ```
@@ -585,32 +612,27 @@ See `templates/config-schema.yaml.tpl` for the full reference with examples.
 
 ---
 
-## Topology Capability Dimensions
+## Topology Axes
 
-The axes that define a service's identity in the topology space. An axis's index is its zone: the declared axes a provider sets, then the derived axes the daemon measures, then storage. Counts come from the published schema (`geodineum <component> contract`), never from prose. Set via `register --express`, `--template`, or `config set`.
+The words a site, app or daemon declares by name in the `axes:` map of its manifest's `gnode:` block ([CONTRACTS/REGISTRATION.md](CONTRACTS/REGISTRATION.md)). The daemon encodes them and refuses a word it does not know. The authority is the published vocabulary, `gNode/daemon/config/topology_schema.yaml`; this table is a reader's copy.
 
-| Dimension | Valid Values |
-|-----------|-------------|
-| `protocol` | http_rest, graphql, grpc, gnode_stream, websocket, mqtt |
-| `native_format` | json, xml, protobuf, msgpack, html, binary |
-| `api_version` | v1, v2, v3, beta, alpha, latest |
-| `contract_stability` | stable, beta, alpha, experimental, deprecated |
-| `clearance_required` | public, authenticated, elevated, admin, system |
-| `auth_method` | none, session_cookie, bearer_token, api_key, mtls, oauth2 |
-| `data_sensitivity` | public, internal, confidential, restricted, secret |
-| `service_scope` | client_facing, daemon, worker, internal, partner |
-| `domain_primary` | content, compute, ml_inference, integration, storage, auth, payment, communication |
-| `domain_secondary` | template, platform, data, cache, search, messaging, monitoring |
-| `specialization` | generalist, focused, specialist |
-| `throughput_tier` | minimal, standard, professional, enterprise, unlimited |
-| `latency_class` | interactive, responsive, patient, batch, async |
-| `reliability_tier` | minimal, standard, high, critical |
-| `pipeline_stage` | ingest, transform, process, deliver, archive |
+| Axis | Valid Values |
+|------|-------------|
+| `protocol` (list) | http_rest, graphql, grpc, websocket, gnode_stream, resp3_direct, amqp, kafka, custom_tcp, undefined |
+| `auth_method` | none, api_key, bearer_token, session_cookie, mtls, hardware_token |
+| `service_scope` | infrastructure, daemon, worker, cron_scheduled, internal_api, bff, client_facing, edge |
+| `domain` (list) | platform, identity, configuration, storage, cache, compute, transform, messaging, workflow, template, content, gateway, integration, analytics, logging, ml_inference, search, notification, presentation, undefined |
+| `contract_stability` | experimental, alpha, beta, stable, frozen |
+| `contract_version` | v1 ... v5, undefined |
+| `throughput_tier` | minimal, standard, professional, enterprise, hyperscale |
+| `latency_class` | realtime, interactive, responsive, patient, batch |
+| `reliability_tier` | best_effort, standard, high, critical, ultra |
 | `execution_priority` | background, low, normal, high, critical |
-| `service_tier` | TOOL, SERVICE, PIPELINE, INFRASTRUCTURE, ORCHESTRATOR |
-| `environment` | testing, staging, acceptance, production |
+| `implementation_language` | rust, php, lua, python, go, javascript, bash, undefined |
+| `native_format` | plaintext, json, xml, yaml, msgpack, protobuf, cbor, resp3, custom_binary, undefined |
+| `fundamentality` | foundation, daemon, app, site, endpoint, or a fraction 0 to 1 |
 
-View this table anytime: `geodineum config list --schema`
+The environment (`testing`, `staging`, `acceptance`, `production`) is the manifest's `environment:` key, not an axis. Load, health and lifecycle are measured by the daemon and are never declared.
 
 ---
 

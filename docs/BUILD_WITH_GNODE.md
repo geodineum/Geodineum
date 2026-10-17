@@ -10,8 +10,8 @@ Everything is stateless-yet-state-aware through shared ValKey. A service:
 
 1. **authenticates** as its own ACL identity (`gnode_client_<name>`), granted
    least-privilege from its manifest;
-2. **registers** as a geometric entity so others discover it by capability,
-   not by name;
+2. **registers** as an entity of the constellation's one topology so others
+   discover it by capability, not by name (`CONTRACTS/REGISTRATION.md`);
 3. **speaks** by `XADD` to unified streams and polls `{site}:res:<id>` for
    replies — one wire format, whichever internal lane serves it;
 4. **announces liveness** with a heartbeat key; absence *is* the down signal.
@@ -57,7 +57,7 @@ last three and nobody noticed — that is why this list exists.
 [ ] .geodineum/gnode_services.yaml   — onboarding manifest (ACL consumes/produces)
 [ ] onboard-service.sh run           — WITH --profile and --environment; both
                                        omissions have silently mis-registered
-                                       services (wrong vector / DTAP-gated out)
+                                       services (wrong shape / DTAP-gated out)
 [ ] geodeploy.yaml: runtime.service  — unit name deploys restart
 [ ] geodeploy.yaml: triggers + build — what redeploys you
 [ ] config/<name>.service            — the unit itself (see gSchedule's as reference)

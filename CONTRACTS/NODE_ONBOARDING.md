@@ -148,7 +148,8 @@ Joining any non-standalone tier requires the master's VPN IP: pass `--master-ip`
   unbounded (`StartLimitIntervalSec=0`) so a master mid-reboot can't exhaust the
   worker's start limit and give up for good.
 - The daemon **started and enabled**, registering itself into the master's
-  topology on first connect. No manual registration step.
+  topology on first connect. No manual registration step (a machine that runs
+  no daemon is declared by hand: [REGISTRATION.md](REGISTRATION.md)).
 
 On first start the daemon also **generates its own receipt signing key** at
 `/etc/geodineum/components/gnode-daemon/receipt_signing.key` (`0600`, held only
@@ -194,10 +195,9 @@ sudo systemctl restart gnode-daemon && systemctl is-active gnode-daemon
 ```
 
 ```bash
-# On the MASTER — the node appears in the live topology
-sudo bash -c 'REDISCLI_AUTH=$(cat /etc/geodineum/credentials/valkey.password) \
-  valkey-cli -p 47445 --no-auth-warning HGETALL "{geodineum}:gnode:topology:services"' \
-  | grep -i mynode
+# On the MASTER — the node is an entity of the constellation's one topology
+sudo geodineum topology show mynode
+sudo geodineum status
 
 # Its receipt signer is published (a field per live signer)
 sudo bash -c 'REDISCLI_AUTH=$(cat /etc/geodineum/credentials/valkey.password) \

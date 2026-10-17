@@ -181,10 +181,9 @@ the installer states both instead of failing.
 systemctl status gnode-daemon
 journalctl -u gnode-daemon -n 20   # expect "Stream discovery status: N sites"
 
-# On the MASTER - the worker appears in the live topology
-sudo bash -c 'REDISCLI_AUTH=$(cat /etc/geodineum/credentials/valkey.password) \
-  valkey-cli -p 47445 --no-auth-warning HGETALL "{geodineum}:gnode:topology:services"' \
-  | grep -i "<worker-hostname>"
+# On the MASTER - the worker is a node entity of the constellation's one topology
+sudo geodineum topology show <worker-hostname>
+sudo geodineum status
 ```
 
 Check from either server:

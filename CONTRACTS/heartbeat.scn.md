@@ -4,7 +4,7 @@
 
 **Value** `{"ts":u64,"pid":u32,"comp":str,"node":str}` — self-describing detached. Daemon adds `la1,cores,mem_used_mb,mem_total_mb` (node authority; additive, readers treat as optional). Consumers: `geodineum status [--json]` ≡ daemon cmd `constellation_status` (same JSON shape).
 
-**node** = identity = `GNODE_NODE_ID` = consumer name = constellation entity id = **short hostname** (first dot-label). NEVER `master` — role ≠ identity; role lives at node_role dim 0. Pre-segment failure: all nodes → one key → last-writer-wins → dead daemon hides behind live peer's ts.
+**node** = identity = `GNODE_NODE_ID` = consumer name = constellation entity id = **short hostname** (first dot-label). NEVER `master` — role ≠ identity; role lives in the node entity's `node_role` axis. Pre-segment failure: all nodes → one key → last-writer-wins → dead daemon hides behind live peer's ts.
 
 **Read** HGETALL `{ns}:gnode:constellation:entities` → node list (no SCAN) → GET per component×env×node → judge by ts ≤75s. READ grant `~{geodineum}:gnode:*` covers all; WRITE needs the family in the WRITER's ACL (comms: `~*:gnode:heartbeat:*` in installer acl_comms_patterns — was missing once, NOPERM'd invisibly). New census row ⇒ `ACL DRYRUN <user> SETEX` first.
 

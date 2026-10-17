@@ -105,8 +105,6 @@ steps. Copy `services/hello-world/` and validate it with `geodineum validate`.
 - **Multi-node replica tier is experimental**: headless and full nodes ship
   today; a local read/write-split ValKey replica does not. And yes, we are
   already working on it.
-- **Topology tier is implicit**: services register on the 30-D service tier;
-  choosing a tier per manifest is not yet a manifest field.
 - **`config.defaults` seeding is deferred**: the orchestrator does not yet
   NX-seed a manifest's config defaults at install time.
 - **Backup is wholesale, not per-service**: the RDB snapshot covers everything;

@@ -78,7 +78,7 @@ RE-MINT (already-joined node lost its cred): master mint-node-identity.sh <name>
              OR install.sh --constellation private --deploy-tier <tier> --master-ip 10.66.0.1 --yes
 3 EXPOSE   sudo geodineum node expose <set> ; sudo systemctl restart gnode-daemon
 4 VERIFY   node: systemctl status gnode-daemon; journalctl (Stream discovery + Receipt signer ready);
-             restart survives · master: topology HGETALL shows <name> · receipt_pubkeys has its signer ·
+             restart survives · master: `sudo geodineum topology show <name>` · receipt_pubkeys has its signer ·
              geodineum constellation status (ValKey NOT exposed) · geodineum node show (exposure = role)
 REJOIN     after ANY disconnect: sudo systemctl start gnode-daemon  [NO re-registration/re-mint/bundle]
 ```
