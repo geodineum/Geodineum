@@ -1444,6 +1444,7 @@ phase_selection() {
     if [[ "$YES_MODE" == "true" ]] && [[ -z "$PROFILE" ]] && [[ -z "$COMPONENTS" ]]; then
         PROFILE="standard"
         log_info "Profile: standard (--yes default)"
+        [[ -z "${MASTER_IP:-}" ]] && ask_constellation_name
         return
     fi
 
@@ -1451,6 +1452,7 @@ phase_selection() {
         # Non-interactive: profile/components already set via CLI args
         [[ -n "$PROFILE" ]] && log_info "Profile: ${PROFILE}"
         [[ -n "$COMPONENTS" ]] && log_info "Components: ${COMPONENTS}"
+        [[ -z "${MASTER_IP:-}" ]] && ask_constellation_name
         return
     fi
 
@@ -5175,7 +5177,7 @@ phase_services() {
             GNODE_NODE_ID="$(hostname -s 2>/dev/null || echo unknown-node)"
             log_info "Node ID defaulted to ${GNODE_NODE_ID} (short hostname)"
         fi
-        export GNODE_NODE_ID
+        export GNODE_NODE_ID GNODE_CONSTELLATIONS
         if ! "$service_script"; then
             log_warning "Service installation had issues — see output above"
             rc=1
