@@ -56,63 +56,56 @@ everything a node needs.
   at install time; the master ships **credentials, never code**).
 - The master's VPN IP (`10.66.0.1` by convention).
 
-## 3. Get the bundle — one command on the master
-
-Initialize the master once (idempotent; skips if already up):
+## 3. Add the node — one command on the master
 
 ```bash
-# On the MASTER
-sudo geodineum constellation init
+# On the MASTER — <name> is the node's id (its short hostname); <ip:port> is where
+# the master reaches it for the WireGuard handshake (its public IP + 51820).
+sudo geodineum node add mynode 203.0.113.50:51820 --tier compute
 ```
 
-Then enroll the new node in a single command. `expand` is the paved road — it
-mints the worker's WireGuard keypair, registers the peer (assigns the next VPN
-IP, appends the `[Peer]` block, hot-reloads the tunnel), and prints one base64
-**bundle**:
+`node add` is the one route. The first time, it also sets up the constellation's
+mesh on the master: WireGuard, ValKey bound to the VPN address as well as
+localhost (one ValKey restart, after a confirmation), and fail2ban. Then it:
+
+- mints the node's WireGuard keypair and registers the peer at the lowest free VPN
+  address;
+- mints a **per-node ValKey identity**, user `gnode_node_<name>` with its own
+  password, from the daemon-tier ACL rule (one definition of the grant). If the
+  master cannot mint one, the node falls back to the shared `gnode_daemon` login;
+- writes a **bundle file** (`~/<name>.geodineum-bundle`, `0600`, never printed).
+  It holds the WireGuard config, the credentials, the master's VPN address,
+  **the constellations the master serves** (so the node serves the same ones) and
+  the tier;
+- prints the commands for both machines.
+
+The bundle contains a private key and live credentials: copy it over a trusted
+channel (`scp`) and delete it once the node has joined. The installer deletes its
+own copy after applying it.
+
+A machine that makes its own WireGuard key (an admin laptop, or a worker set up by
+hand) is added with its public key instead; `node add` then prints that machine's
+WireGuard lines:
 
 ```bash
-# On the MASTER — <name> is the node's id; <ip:port> is where the master
-# reaches it for the WireGuard handshake (its public IP + 51820).
-sudo geodineum constellation expand mynode 203.0.113.50:51820
+sudo geodineum node add laptop roaming --pubkey "<its public key>"
 ```
-
-The bundle carries everything the node needs and **nothing it must guess**:
-
-- the worker's WireGuard config (private key + master peer + assigned VPN IP);
-- the shared daemon credential (`valkey_daemon.password`);
-- the replica credential (`valkey_replica.password`), for a replica-tier node;
-- a **per-node ValKey identity** — user `gnode_node_<name>` with its own password,
-  minted from the daemon-tier ACL rule so the master can tell one node from
-  another. (If the master cannot mint one, the node falls back to the shared
-  `gnode_daemon` login and still works.)
-
-The bundle contains a private key and live credentials — **treat it as a secret**
-and copy it over a trusted channel.
-
-**Manual alternative** (no bundle): `sudo geodineum constellation add-peer
-<name> <worker_pubkey> <ip:port>` then `geodineum constellation show-config` —
-the worker generates its own keypair and pastes the shown config. `expand`
-collapses all of this into one step.
 
 ## 4. Run the join — on the new node
 
-### Easiest — the guided installer
-
 ```bash
 # On the NEW NODE
-git clone https://github.com/geodineum/Geodineum.git
+git clone -b <the master's branch> https://github.com/geodineum/Geodineum.git
 cd Geodineum
-sudo ./install.sh
+sudo ./install.sh --join ~/mynode.geodineum-bundle --yes
 ```
 
-Choose **Join constellation**, pick the node's **tier** (below), and paste the
-single-line bundle from §3 at the prompt. The installer decodes it, writes the
-WireGuard config, brings the tunnel up, captures the credentials, and converges
-the node.
+`--join` applies the bundle (tunnel up, credentials, constellations, node id,
+master address, tier) and converges the node with no prompts. Without `--yes`, or
+without a tier in the bundle, the installer asks for the tier. The interactive
+installer's **Join constellation** also takes the bundle's path at its prompt.
 
-### Flag-driven (scripted) join
-
-Pre-stage the WireGuard config and the daemon credential, then:
+### Without a bundle (WireGuard and the daemon credential staged by hand)
 
 ```bash
 # On the NEW NODE
@@ -165,8 +158,8 @@ member covers the entry's routing hint (`_gh`). Manage it with:
 ```bash
 geodineum node show                          # current exposure + daemon state
 sudo geodineum node expose inference,gpu_compute   # set the whole set
-sudo geodineum node add sync                 # add one class
-sudo geodineum node remove gpu_compute       # remove one (never leaves it empty)
+sudo geodineum node expose add sync          # add one class
+sudo geodineum node expose remove gpu_compute    # remove one (never leaves it empty)
 ```
 
 Built-in exposures: `general` (default work), `inference`, `gpu_compute`, `all`.
@@ -247,8 +240,23 @@ sudo /opt/geodineum/gNode/scripts/mint-node-identity.sh mynode           # idemp
 sudo /opt/geodineum/gNode/scripts/mint-node-identity.sh mynode --rotate  # only if truly lost
 ```
 
-(Never re-run `constellation expand` against a working member just to reissue a
-credential — its add-peer step is not idempotent and would strand the old peer.)
+(Never re-run `node add` against a working member just to reissue a credential:
+it mints a new WireGuard key and the running node keeps the old one.)
+
+## 7a. Remove a node — one command on the master
+
+```bash
+# On the MASTER (stop the node's daemon first, or it declares itself again)
+sudo geodineum node remove mynode --dry-run
+sudo geodineum node remove mynode
+```
+
+It removes the node from every constellation the master serves, with the
+placements on it (it names them first: those services stay registered, without
+that placement), the legacy node record, its WireGuard peer, its state and its
+ValKey identity. It ends with a residue check, then prints what to run on the
+node itself (stop the daemon and tunnel, remove its credentials, or uninstall).
+It refuses while the node's daemon heartbeat is fresh.
 
 ## 8. What a node NEVER holds
 

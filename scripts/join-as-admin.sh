@@ -86,7 +86,7 @@ verify() {
         say "last handshake       $(( $(date +%s) - hs ))s ago"
     else
         say "last handshake       NEVER — the master has not accepted this peer"
-        say "                     on aesir: sudo geodineum constellation add-peer $NODE_NAME \"\$(cat $KEY_FILE.pub)\" -"
+        say "                     on aesir: sudo geodineum node add $NODE_NAME roaming --pubkey \"\$(cat $KEY_FILE.pub)\""
         rc=1
     fi
 
@@ -173,7 +173,7 @@ fi
 # ──────────────────────────────────────────────── 3. the master's turn
 hr; echo "on the laptop: 3. membership is granted by the master, never taken"
 echo
-echo "  on aesir:  sudo geodineum constellation add-peer $NODE_NAME \"$PUBKEY\" -"
+echo "  on aesir:  sudo geodineum node add $NODE_NAME roaming --pubkey \"$PUBKEY\""
 echo
 say "the trailing \"-\" means roaming: no Endpoint is written for this peer and"
 say "WireGuard learns the address from the first packet this laptop sends."

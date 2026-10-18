@@ -40,13 +40,15 @@ NODE-ID: unique per node = consumer name in shared groups. TWO daemons sharing a
 EXPOSURE: GNODE_NODE_TYPE in daemon.env = comma set; daemon processes an entry if ANY member
   covers its _gh hint. Built-in: general|inference|gpu_compute|all. Custom hint needs
   daemon/config/nodes/<hint>.yaml on master else matches NOTHING. Manage: geodineum node
-  show|expose <set>|add <hint>|remove <hint> (wraps node-exposure.sh show|set|add|remove).
+  show | node expose <set> | node expose add|remove <hint> (wraps node-exposure.sh).
   Effect on next `systemctl restart gnode-daemon`. remove never leaves it empty (→general).
-BUNDLE (master `constellation expand <name> <ip:port>`): mints worker WG keypair + registers
-  peer (next VPN IP, appends [Peer], hot-reload) + reads valkey_daemon.password +
+BUNDLE (master `node add <name> <ip:port> [--tier t]`; the first one sets up the mesh): mints
+  worker WG keypair + registers peer (LOWEST FREE VPN IP, appends [Peer], hot-reload) + reads valkey_daemon.password +
   valkey_replica.password + mints per-node identity gnode_node_<name> (random 32-char pw,
   grants from acl-daemon-tier.rule — ONE definition, identity-only not scope) → base64
-  BUNDLE-V2. SECRET (private key + creds). Fallback if mint fails: shared gnode_daemon login.
+  BUNDLE-V2 + master_ip, constellations (= master's GNODE_CONSTELLATIONS), tier; written to
+  ~/<name>.geodineum-bundle 0600, NEVER printed. SECRET. Fallback if mint fails: shared gnode_daemon login.
+  Own-key machine (admin laptop): node add <name> roaming --pubkey <k> → peer only + its WG lines.
 JOIN: wizard "Join constellation" + paste bundle (easiest) OR flag-driven
   `install.sh --constellation private --deploy-tier <web|full|compute|replica> --master-ip
   10.66.0.1 --yes` (pre-stage WG conf + valkey_daemon.password). --master-ip (or VALKEY_HOST)
@@ -72,15 +74,15 @@ RE-MINT (already-joined node lost its cred): master mint-node-identity.sh <name>
 ## ::SEQUENCE (execute in order)
 
 ```
-0 MASTER   sudo geodineum constellation init                       [idempotent; VPN + ValKey bind + fail2ban]
-1 EXPAND   sudo geodineum constellation expand <name> <ip:port>    [master mints bundle — SECRET]
-2 JOIN     node: install.sh → "Join constellation" + paste bundle  [node-local]
-             OR install.sh --constellation private --deploy-tier <tier> --master-ip 10.66.0.1 --yes
+1 ADD      master: sudo geodineum node add <name> <ip:port> --tier <t>   [first one sets up the mesh; bundle file — SECRET]
+2 JOIN     node: sudo ./install.sh --join ~/<name>.geodineum-bundle --yes  [no prompts; installer deletes its copy]
 3 EXPOSE   sudo geodineum node expose <set> ; sudo systemctl restart gnode-daemon
 4 VERIFY   node: systemctl status gnode-daemon; journalctl (Stream discovery + Receipt signer ready);
              restart survives · master: `sudo geodineum topology show <name>` · receipt_pubkeys has its signer ·
              geodineum constellation status (ValKey NOT exposed) · geodineum node show (exposure = role)
 REJOIN     after ANY disconnect: sudo systemctl start gnode-daemon  [NO re-registration/re-mint/bundle]
+REMOVE     node: systemctl disable --now gnode-daemon · master: sudo geodineum node remove <name> [--dry-run]
+             (all served constellations + placements on it, legacy record, WG peer, identity; residue check)
 ```
 
 ## ::FAILURE_MODES

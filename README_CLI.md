@@ -425,6 +425,26 @@ Runs automatically after `geodineum update`. Safe to re-run (idempotent).
 
 ---
 
+### `node` and `constellation new` — machines
+
+```bash
+sudo ./geodineum constellation new <name> [preflight + installer options]   # fresh machine, from the checkout
+sudo geodineum node add <name> <ip:port> [--tier web|full|compute|replica]  # on the master
+sudo geodineum node add <name> roaming --pubkey <key>                       # a machine with its own key
+sudo geodineum node remove <name> [--dry-run]                               # on the master
+geodineum node show                                                         # this node's exposure
+sudo geodineum node expose <set> | expose add <hint> | expose remove <hint>
+```
+
+`node add` writes a bundle file (`~/<name>.geodineum-bundle`, `0600`) with the
+node's tunnel, credentials and the constellations it will serve; the new machine
+joins with `sudo ./install.sh --join <bundle> --yes`. The first `node add` sets
+up the mesh. `node remove` removes the node from every served constellation
+(with the placements on it), its peer and its identity, and checks for residue.
+See [CONTRACTS/NODE_ONBOARDING.md](CONTRACTS/NODE_ONBOARDING.md).
+
+---
+
 ### `status` — The constellation at a glance
 
 ```bash

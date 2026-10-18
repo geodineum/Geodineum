@@ -289,8 +289,9 @@ Commands:
   config import <id>         Scan service root, import config files into ValKey
   update-service <id>       Update capabilities and config for an existing service
   deregister <id>           Remove a service: the inverse of registering it (--help)
-  constellation <action>    Multi-node VPN: init, add-peer, expand, status, join-replica, close
-  node <action>             This node's role: show, expose <hints>, add, remove
+  constellation new <name>  Start a new constellation on a fresh machine (also: status, close, join-replica)
+  node add|remove <name>    Add a machine to the constellation, or remove one (on the master)
+  node expose|show          The work classes this node processes
   provision-service <svc>   Mint a service's ValKey auth on the master for a node to use
   service <action>          Per-service install/uninstall/health for manifest services
   harden                    Deploy web-deny rules to all ecosystem directories
@@ -558,10 +559,12 @@ main() {
             ;;
         constellation)
             source "${LIB_DIR}/common.sh"
+            source "${LIB_DIR}/node.sh"
             cmd_constellation "$@"
             ;;
         node)
             source "${LIB_DIR}/common.sh"
+            source "${LIB_DIR}/node.sh"
             cmd_node "$@"
             ;;
         provision-service)
@@ -2003,71 +2006,23 @@ cmd_constellation() {
     done
 
     case "$action" in
+        new)
+            cmd_constellation_new "$@"
+            ;;
+
         init)
-            # Initialize this server as constellation master (WireGuard VPN)
-            require_sudo "Constellation initialization"
-
-            if [[ -n "$vp_script" ]]; then
-                "$vp_script" --init-master "$@"
-            else
-                log_error "constellation-setup.sh not found"
-                log_info "Ensure gNode is installed at ${GNODE_PATH}"
-                log_info "Or install manually: apt install wireguard-tools fail2ban"
-                exit 1
-            fi
+            echo "geodineum constellation init is gone: the mesh is set up by the first  sudo geodineum node add <name> <ip:port>" >&2
+            exit 2
             ;;
 
-        add-peer)
-            # Add a worker node to the constellation
-            require_sudo "Adding constellation peer"
-
-            if [[ -n "$vp_script" ]]; then
-                "$vp_script" --add-peer "$@"
-            else
-                log_error "Constellation not initialized. Run: sudo geodineum constellation init"
-                exit 1
-            fi
-            ;;
-
-        expand)
-            # One-shot worker enrollment: mint a worker key, register the peer,
-            # and emit a single bundle (WireGuard config + ValKey credentials)
-            # the worker pastes into its installer. Collapses add-peer +
-            # show-config + credential copy into one command.
-            require_sudo "Expanding constellation"
-
-            if [[ -n "$vp_script" ]]; then
-                "$vp_script" --expand "$@"
-            else
-                log_error "Constellation not initialized. Run: sudo geodineum constellation init"
-                exit 1
-            fi
+        add-peer|expand|show-config)
+            echo "geodineum constellation ${action} is gone: use  sudo geodineum node add <name> <ip:port> [--tier ...]" >&2
+            exit 2
             ;;
 
         remove-peer)
-            # Remove a worker node
-            require_sudo "Removing constellation peer"
-
-            if [[ -n "$vp_script" ]]; then
-                "$vp_script" --remove-peer "$@"
-            else
-                log_error "Constellation not initialized. Run: sudo geodineum constellation init"
-                exit 1
-            fi
-            ;;
-
-        show-config)
-            # Show WireGuard config for a new worker. Reads master state under
-            # /etc/wireguard + the root-owned setup-state file, so it needs
-            # root — without it, show_config misreads the unreadable state as
-            # "master not initialized".
-            require_sudo "Reading constellation config"
-            if [[ -n "$vp_script" ]]; then
-                "$vp_script" --show-config "$@"
-            else
-                log_error "Constellation not initialized. Run: sudo geodineum constellation init"
-                exit 1
-            fi
+            echo "geodineum constellation remove-peer is gone: use  sudo geodineum node remove <name>" >&2
+            exit 2
             ;;
 
         close)
@@ -2095,7 +2050,7 @@ cmd_constellation() {
                 echo ""
                 echo "  ValKey bind: $(grep '^bind ' /etc/valkey/valkey-gnode.conf 2>/dev/null || echo 'unknown')"
                 echo "  Listening:   $(ss -tlnp 2>/dev/null | grep ":${VALKEY_PORT:-47445} " | awk '{print $4}' | tr '\n' ' ')"
-                echo "  WireGuard:   not configured (run: sudo geodineum constellation init)"
+                echo "  WireGuard:   no mesh yet (the first  sudo geodineum node add  sets it up)"
                 echo ""
             fi
             ;;
@@ -2171,162 +2126,35 @@ cmd_constellation() {
             cat << 'EOF'
 Usage: geodineum constellation <action> [options]
 
-Manage multi-node constellation networking via WireGuard VPN.
-ValKey is never exposed to the public internet — only reachable
-via the encrypted private network between constellation nodes.
+A constellation is created once, on a fresh machine; machines join and leave it
+with `geodineum node add|remove` on its master.
 
 Actions:
-  init                  Initialize this server as constellation master
-                        Sets up WireGuard VPN, binds ValKey to VPN IP,
-                        deploys fail2ban (3 strikes → permanent ban)
+  new <name> [...]      On a fresh machine, from the installer checkout: preflight,
+                        then install a new constellation called <name>.
+                        sudo ./geodineum constellation new <name> --help
 
-  add-peer <name> <pubkey> <endpoint>
-                        Add a worker node to the constellation (manual: needs
-                        the worker's pubkey).
+  status                Show the mesh: VPN, peers, ValKey bind, fail2ban
 
-  expand <name> <worker_ip:port>
-                        One-shot enrollment: mint the worker's key, register
-                        the peer, and print a single bundle (WireGuard config +
-                        ValKey credentials) to paste into the worker's
-                        installer. The easy path — no manual key exchange.
-
-  remove-peer <name>    Remove a worker node
-
-  show-config           Show WireGuard config for a new worker to use
-
-  close                 Tear down VPN, revert to single-node localhost
-
-  status                Show VPN, peers, ValKey bind, fail2ban status
+  close                 Tear down the mesh, revert ValKey to localhost only
 
   join-replica [--master <ip>] [--master-port <port>]
                [--master-user <name>] [--master-password-file <path>]
-                        Configure local ValKey as a read replica of the
-                        constellation master. Defaults: --master 10.66.0.1
-                        --master-port 47445 --master-user gnode_replica.
-                        Persistent overrides: set CONSTELLATION_MASTER_IP,
-                        CONSTELLATION_MASTER_PORT, CONSTELLATION_MASTER_USER,
-                        CONSTELLATION_MASTER_PASSWORD_FILE
-                        in /etc/geodineum/bootstrap.env (sourced on every CLI run).
+                        Make this node's ValKey a read replica of the master
+                        (defaults: 10.66.0.1, 47445, gnode_replica)
 
-  leave-replica         Revert local ValKey from replica back to standalone mode.
+  leave-replica         Revert this node's ValKey to standalone
 
-Flow (network):
-  1. Master:  sudo geodineum constellation init
-  2. Worker:  install WireGuard, generate keypair, share public key
-  3. Master:  sudo geodineum constellation add-peer worker1 <pubkey> <ip>:51820
-  4. Master:  geodineum constellation show-config
-  5. Worker:  apply config, start WireGuard, connect daemon to VPN IP
-
-Flow (replica — after worker is on VPN):
-  6. Master:  sudo cat /etc/geodineum/credentials/valkey_replica.password  # copy
-  7. Worker:  save it to /etc/geodineum/credentials/valkey_replica.password
-  8. Worker:  sudo geodineum constellation join-replica
-  9. Local ValKey replicates from master as gnode_replica; daemon writes via
-     VPN, components read locally.
-
-Examples:
-  sudo geodineum constellation init
-  sudo geodineum constellation add-peer worker1 "aB3d...=" "203.0.113.50:51820"
-  geodineum constellation show-config
-  sudo geodineum constellation join-replica --master 10.66.0.1
-  geodineum constellation status
-  sudo geodineum constellation leave-replica
-  sudo geodineum constellation close
+Machines:
+  sudo geodineum node add <name> <ip:port> [--tier compute]   on the master
+  sudo geodineum node remove <name>                           on the master
 EOF
             ;;
 
         *)
             log_error "Unknown action: ${action}"
-            echo "Usage: geodineum constellation <init|add-peer|remove-peer|show-config|close|status|join-replica|leave-replica>"
+            echo "Usage: geodineum constellation <new|status|close|join-replica|leave-replica>  (machines: geodineum node add|remove)"
             exit 1
-            ;;
-    esac
-}
-
-# =============================================================================
-# node — this node's role in the constellation (exposure, identity)
-# =============================================================================
-# Exposure is the set of work classes this node processes. The subcommands
-# below are a guided front-end over gNode's node-exposure.sh; each prints the
-# direct command it runs, so a new dev learns the underlying tool by using it.
-cmd_node() {
-    local exposure_script="${GNODE_SCRIPTS}/node-exposure.sh"
-    local sub="${1:-}"; shift || true
-
-    # Help must work with or without gNode installed.
-    if [[ "$sub" == "--help" || "$sub" == "-h" || "$sub" == "help" ]]; then
-        cat <<EOF
-Usage: geodineum node <subcommand>
-
-This node's role in the constellation.
-
-Subcommands:
-  show                     Show current exposure and daemon state (default)
-  expose [<hint[,...]>]    Set the work classes this node processes.
-                           No argument → guided prompt.
-  add <hint>               Add one exposure to the current set
-  remove <hint>            Remove one exposure (never leaves it empty)
-
-Exposure is a SET: a node processes an entry if any member covers the
-entry's routing hint. Built-in: general, inference, gpu_compute, all.
-Custom hints need a routing config on the master.
-
-Direct mechanism (what these wrap):
-  ${GNODE_SCRIPTS}/node-exposure.sh <show|set|add|remove> [hint]
-
-Takes effect on the next daemon restart:
-  sudo systemctl restart gnode-daemon
-
-Examples:
-  geodineum node show
-  sudo geodineum node expose inference,gpu_compute
-  sudo geodineum node add sync
-EOF
-        return 0
-    fi
-
-    if [[ ! -x "$exposure_script" ]]; then
-        log_error "node-exposure.sh not found under ${GNODE_SCRIPTS} — is gNode installed?"
-        return 1
-    fi
-
-    case "$sub" in
-        expose)
-            # geodineum node expose [<hint[,hint...]>]
-            # No arg → guided: show current, list built-ins, prompt.
-            if [[ $# -eq 0 ]]; then
-                "$exposure_script" show
-                echo ""
-                echo "Enter the work classes this node should process, comma-separated."
-                echo "Common: general (default work), inference, gpu_compute, all."
-                echo "A laptop lending its GPU might use: inference,gpu_compute"
-                echo ""
-                local ans
-                read -r -p "Exposure (blank to cancel): " ans
-                [[ -z "$ans" ]] && { echo "Unchanged."; return 0; }
-                echo ""
-                echo "Direct form of what follows:"
-                echo "  sudo geodineum node expose ${ans}"
-                echo ""
-                require_sudo "Setting node exposure"
-                "$exposure_script" set "$ans"
-            else
-                require_sudo "Setting node exposure"
-                "$exposure_script" set "$1"
-            fi
-            ;;
-        add|remove)
-            [[ $# -ge 1 ]] || { log_error "Usage: geodineum node ${sub} <hint>"; return 1; }
-            require_sudo "Changing node exposure"
-            "$exposure_script" "$sub" "$1"
-            ;;
-        show|"")
-            "$exposure_script" show
-            ;;
-        *)
-            log_error "Unknown node subcommand: ${sub}"
-            log_info "Try: geodineum node --help"
-            return 1
             ;;
     esac
 }

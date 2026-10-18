@@ -113,6 +113,7 @@ INTENT="deploy"           # always deploy in public installer
 CONSTELLATION="new"       # new | private
 DEPLOY_TIER=""            # web | full | compute | replica (when joining constellation)
 MASTER_IP=""              # constellation master's VPN IP (non-interactive join)
+JOIN_BUNDLE=""            # file written by `geodineum node add` on the master
 VALKEY_REPLICA="false"    # true if this node runs a ValKey replica
 SKIP_LOCAL_VALKEY="false" # true if using remote ValKey only (web / full / compute node)
 CONSTELLATION_DAEMON_PW=""  # master's valkey_daemon.password, pasted during a join install
@@ -223,6 +224,7 @@ usage() {
     echo "  --constellation-name <n> Name of a new constellation (default: geodineum; a-z, 0-9, _)"
     echo "  --deploy-tier <tier>    web, full, compute, or replica (join an existing constellation)"
     echo "  --master-ip <ip>        Constellation master's VPN IP (with --deploy-tier; e.g. 10.66.0.1)"
+    echo "  --join <bundle>         Join the constellation whose master ran 'geodineum node add' (the file it wrote)"
     echo "  --site <domain>         Deploy a WordPress site after install"
     echo "  --theme <name>          Child theme: gcube (default)"
     echo "  --env <environment>     DTAP: testing, staging, acceptance, production"
@@ -271,6 +273,7 @@ parse_args() {
             --constellation-name) GNODE_TOPOLOGY_NAMESPACE="$2"; CONSTELLATION_NAME_SET=true; shift 2 ;;
             --deploy-tier)  DEPLOY_TIER="$2"; shift 2 ;;
             --master-ip)    MASTER_IP="$2"; shift 2 ;;
+            --join)         JOIN_BUNDLE="$2"; shift 2 ;;
             --install-root) INSTALL_ROOT="$2"; shift 2 ;;
             --branch)       GEODINEUM_BRANCH="$2"; shift 2 ;;
             --help|-h)      banner; usage; exit 0 ;;
@@ -1231,12 +1234,12 @@ wizard_constellation_wireguard_prep() {
 
     echo ""
     echo -e "  ${BOLD}On the MASTER (a separate shell), register this worker:${NC}"
-    echo -e "       sudo geodineum constellation add-peer ${peer_name} \"${my_pub}\" \"${my_ip}:51820\""
-    echo -e "       sudo geodineum constellation show-config"
+    echo -e "       sudo geodineum node add ${peer_name} ${my_ip}:51820 --pubkey \"${my_pub}\""
+    echo -e "  ${DIM}It prints this node's WireGuard lines; paste them below.${NC}"
     echo ""
 
     if [[ "${YES_MODE:-false}" == "true" ]]; then
-        log_info "Non-interactive: after the master add-peer, place the config at ${wg_conf}, then:"
+        log_info "Non-interactive: after the master's node add, place the lines it printed at ${wg_conf}, then:"
         log_info "  sudo systemctl enable --now wg-quick@wg-geodineum"
         return 0
     fi
@@ -1250,7 +1253,7 @@ wizard_constellation_wireguard_prep() {
     pasted="$(cat || true)"
     if [[ -z "${pasted//[[:space:]]/}" ]]; then
         log_info "No config pasted — finish WireGuard before the daemon starts:"
-        log_info "  save the master's show-config to ${wg_conf}, then: systemctl enable --now wg-quick@wg-geodineum"
+        log_info "  save the lines the master's node add printed to ${wg_conf}, then: systemctl enable --now wg-quick@wg-geodineum"
         return 0
     fi
     printf '%s\n' "$pasted" > "$wg_conf" 2>/dev/null || { log_warning "could not write ${wg_conf}"; return 0; }
@@ -1317,18 +1320,52 @@ wizard_constellation_credentials() {
     fi
 }
 
-# Apply a base64 expansion bundle from `geodineum constellation expand`:
+# Apply the bundle `geodineum node add` writes (a path or the base64 line):
 # decode it, write the WireGuard config, and capture the ValKey credential(s)
 # into CONSTELLATION_*_PW (written to disk in phase_config). Returns non-zero
 # if the input isn't a valid bundle so the caller can fall back to manual.
 wizard_apply_constellation_bundle() {
     local b64="$1"
+    # A path to the file `geodineum node add` wrote, or the bundle line itself.
+    [[ -f "$b64" ]] && b64="$(tr -d '[:space:]' < "$b64")"
     local decoded
     decoded="$(printf '%s' "$b64" | base64 -d 2>/dev/null || true)"
-    if ! printf '%s' "$decoded" | grep -q 'GEODINEUM-CONSTELLATION-BUNDLE'; then
+    if [[ "$decoded" != *GEODINEUM-CONSTELLATION-BUNDLE* ]]; then
+        log_error "Not a constellation bundle"
         return 1
     fi
+    # The constellations the master serves, its VPN address, this node's id and
+    # tier: a joined node serves what its master serves, under the name it was given.
+    local _b_name _b_master _b_cs _b_tier
+    _b_name="$(printf '%s\n' "$decoded" | sed -n 's/^name=//p' | head -1)"
+    _b_master="$(printf '%s\n' "$decoded" | sed -n 's/^master_ip=//p' | head -1)"
+    _b_cs="$(printf '%s\n' "$decoded" | sed -n 's/^constellations=//p' | head -1)"
+    _b_tier="$(printf '%s\n' "$decoded" | sed -n 's/^tier=//p' | head -1)"
+    if [[ -n "$_b_cs" ]]; then
+        if [[ "${CONSTELLATION_NAME_SET:-false}" == "true" && ",${_b_cs}," != *",${GNODE_TOPOLOGY_NAMESPACE},"* ]]; then
+            log_error "--constellation-name ${GNODE_TOPOLOGY_NAMESPACE} is not served by this master (it serves ${_b_cs})"
+            return 2
+        fi
+        if [[ "${CONSTELLATION_NAME_SET:-false}" == "true" ]]; then
+            # The named one becomes this node's primary; the rest follow in the master's order.
+            local _rest; _rest="$(tr ',' '\n' <<< "$_b_cs" | grep -vxF "$GNODE_TOPOLOGY_NAMESPACE" | paste -sd, -)"
+            GNODE_CONSTELLATIONS="${GNODE_TOPOLOGY_NAMESPACE}${_rest:+,${_rest}}"
+        else
+            GNODE_CONSTELLATIONS="$_b_cs"
+            GNODE_TOPOLOGY_NAMESPACE="${_b_cs%%,*}"
+        fi
+        log_info "Constellations (from the master): ${GNODE_CONSTELLATIONS}"
+    fi
+    [[ -n "$_b_name" && -z "${GNODE_NODE_ID:-}" ]] && GNODE_NODE_ID="$_b_name"
+    [[ -n "$_b_master" && -z "${MASTER_IP:-}" ]] && MASTER_IP="$_b_master"
+    [[ -n "$_b_tier" && -z "${DEPLOY_TIER:-}" ]] && DEPLOY_TIER="$_b_tier"
+
     local wg_conf="/etc/wireguard/wg-geodineum.conf"
+    if ! command -v wg-quick >/dev/null 2>&1; then
+        log_info "Installing wireguard-tools for the constellation tunnel"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wireguard-tools >/dev/null 2>&1 \
+            || { log_error "Could not install wireguard-tools"; return 1; }
+    fi
     install -d -m 700 /etc/wireguard 2>/dev/null || true
     printf '%s\n' "$decoded" \
         | awk '/^---WIREGUARD---/{f=1;next} /^---VALKEY_DAEMON_PASSWORD---/{f=0} f' > "$wg_conf"
@@ -1412,13 +1449,13 @@ wizard_constellation_join() {
     echo ""
     echo -e "  ${BOLD}Constellation enrollment${NC}"
     echo -e "  ${DIM}Easiest — on the MASTER run:${NC}"
-    echo -e "       sudo geodineum constellation expand ${me_name} ${me_ip}:51820"
-    echo -e "  ${DIM}then paste the single-line bundle it prints.${NC}"
+    echo -e "       sudo geodineum node add ${me_name} ${me_ip}:51820"
+    echo -e "  ${DIM}then give the path of the bundle file it writes (copy it here first).${NC}"
     echo ""
 
     if [[ "${YES_MODE:-false}" != "true" ]]; then
         local bundle=""
-        read -r -p "  Paste expansion bundle (or press Enter to set up manually): " bundle || true
+        read -r -p "  Bundle file path, or the bundle line (Enter to set up manually): " bundle || true
         if [[ -n "$bundle" ]]; then
             if wizard_apply_constellation_bundle "$bundle"; then
                 return 0
@@ -1511,7 +1548,7 @@ phase_selection() {
             # Connection details (via WireGuard VPN)
             echo ""
             echo -e "  ${BOLD}Constellation connection${NC}"
-            echo -e "  ${DIM}The master runs 'geodineum constellation init' and provides${NC}"
+            echo -e "  ${DIM}The master runs 'geodineum node add' for this node and provides${NC}"
             echo -e "  ${DIM}a WireGuard VPN IP. ValKey is only reachable via the VPN.${NC}"
             echo ""
             local master_vpn_ip
@@ -2098,7 +2135,7 @@ phase_prerequisites() {
         log_info "Installing wireguard-tools (for constellation VPN)..."
         apt_update
         apt_install "wireguard-tools" wireguard-tools 2>/dev/null || \
-            log_warning "wireguard-tools install failed — constellation init will install on demand"
+            log_warning "wireguard-tools install failed — the mesh setup (first geodineum node add) installs it on demand"
     else
         log_success "wireguard-tools already installed"
     fi
@@ -3073,7 +3110,7 @@ provision_daemon_acl() {
     # Without it the only thing preventing a repeat of the extension-library
     # wipe is a single code path.
     #
-    # The daemon-tier grant, defined ONCE. `constellation expand` mints a
+    # The daemon-tier grant, defined ONCE. `geodineum node add` mints a
     # per-node user of this same tier on the master, and must not carry its
     # own copy of the rule — two definitions of a privilege boundary drift,
     # and the drift is silent until something is over- or under-permitted.
@@ -5963,6 +6000,21 @@ main() {
 
     # Phase 1: Detection
     run_phase "Detection" phase_detection true
+
+    # --join: the bundle from `geodineum node add` sets the tunnel, credentials,
+    # constellations, node id, master address and (if given there) the tier.
+    if [[ -n "$JOIN_BUNDLE" ]]; then
+        [[ -r "$JOIN_BUNDLE" ]] || { log_error "--join: cannot read ${JOIN_BUNDLE}"; exit 1; }
+        CONSTELLATION="private"
+        wizard_apply_constellation_bundle "$JOIN_BUNDLE" || { log_error "--join: could not apply ${JOIN_BUNDLE} (see above)"; exit 1; }
+        if [[ -z "$DEPLOY_TIER" ]]; then
+            [[ "$YES_MODE" == "true" ]] && { log_error "--join --yes needs a tier: pass --deploy-tier, or --tier to 'geodineum node add'"; exit 1; }
+            read -r -p "  Tier for this node [web/full/compute/replica, default: compute]: " DEPLOY_TIER
+            DEPLOY_TIER="${DEPLOY_TIER:-compute}"
+        fi
+        shred -u "$JOIN_BUNDLE" 2>/dev/null || rm -f "$JOIN_BUNDLE"
+        log_info "Bundle applied and removed from this node"
+    fi
 
     # Non-interactive constellation join: --deploy-tier maps to profile + flags
     # (and sets PROFILE, so the interactive wizard below is skipped).

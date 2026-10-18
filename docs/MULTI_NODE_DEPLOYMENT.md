@@ -56,154 +56,67 @@ packets not signed by a known peer.
   repositories at install time and kept current by the deploy orchestrator;
   only credentials come from the master)
 
-## Step 1: Initialize the Master
+## Step 1: Add the Worker — on the master
 
 ```bash
-# On the MASTER server
-sudo geodineum constellation init
+# On the MASTER: the worker's id (its short hostname) and where the master reaches
+# it for the WireGuard handshake (its public IP + 51820)
+sudo geodineum node add worker1 203.0.113.50:51820 --tier compute
 ```
 
-This:
-- Installs WireGuard tools (if needed)
-- Generates a keypair for the master
-- Creates the `wg-geodineum` VPN interface (10.66.0.1/24)
-- Binds ValKey to `127.0.0.1` + `10.66.0.1` (VPN only)
-- Deploys fail2ban (3 failed auth attempts → permanent ban)
-- Opens UDP 51820 in the firewall (WireGuard handshake only)
+The first `node add` also sets up the mesh on the master (after a confirmation):
+- installs WireGuard and creates `wg-geodineum` (10.66.0.1/24)
+- binds ValKey to `127.0.0.1` + `10.66.0.1` (VPN only; one ValKey restart)
+- deploys fail2ban (3 failed auth attempts → permanent ban)
+- opens UDP 51820 (the WireGuard handshake only)
 
-Note the **public key** shown in the output - the worker needs it.
+Every `node add` then mints the worker's WireGuard key and its own ValKey
+identity, registers the peer at the lowest free VPN address, and writes the
+bundle `~/worker1.geodineum-bundle` (`0600`; never printed). The bundle names
+the constellations the master serves, so the worker serves the same ones. The
+command prints what to run on each machine.
 
-## Step 2: Set Up the Worker
-
-```bash
-# On the WORKER server
-
-# 1. Install WireGuard
-sudo apt install wireguard-tools    # Linux
-# Or: brew install wireguard-tools  (macOS)
-# Or: download from wireguard.com   (Windows)
-
-# 2. Generate a keypair
-wg genkey | sudo tee /etc/wireguard/wg-geodineum.key | wg pubkey
-# Save the public key output - the master needs it
-```
-
-## Step 3: Add the Worker to the Constellation
+## Step 2: Join — on the worker
 
 ```bash
-# On the MASTER server
-sudo geodineum constellation add-peer worker1 "<worker_public_key>" "<worker_public_ip>:51820"
-```
-
-Then get the config the worker needs:
-
-```bash
-geodineum constellation show-config
-```
-
-This prints a complete WireGuard config file. Copy it to the worker.
-
-## Step 4: Connect the Worker
-
-```bash
-# On the WORKER server
-
-# 1. Save the config (replace WORKER_PRIVATE_KEY with your generated key)
-sudo nano /etc/wireguard/wg-geodineum.conf
-
-# 2. Start WireGuard
-sudo systemctl enable --now wg-quick@wg-geodineum
-
-# 3. Verify VPN connectivity
-ping 10.66.0.1    # Should reach the master
-```
-
-## Step 5: Stage the Shared Daemon Credential
-
-Every daemon in the constellation authenticates to the master's ValKey as
-`gnode_daemon`. Copy the credential before installing so the installer can
-pick it up:
-
-```bash
-# On the MASTER
-sudo cat /etc/geodineum/credentials/valkey_daemon.password
+# Copy the bundle over a trusted channel
+scp ~/worker1.geodineum-bundle <user>@203.0.113.50:      # on the MASTER
 
 # On the WORKER
-sudo install -d -m 750 /etc/geodineum/credentials
-echo -n "<paste_password>" | sudo tee /etc/geodineum/credentials/valkey_daemon.password >/dev/null
-sudo chmod 640 /etc/geodineum/credentials/valkey_daemon.password
+git clone -b <the master's branch> https://github.com/geodineum/Geodineum.git && cd Geodineum
+sudo ./install.sh --join ~/worker1.geodineum-bundle --yes
 ```
 
-(The interactive wizard prompts for this instead; pre-staging is what makes
-the fully flag-driven install below possible.)
+The installer applies the bundle (tunnel, credentials, constellations, node id,
+tier), deletes its copy, and converges the worker. The daemon starts and
+declares the node into each constellation itself; there is no registration
+step.
 
-## Step 6: Install Geodineum on the Worker
-
-```bash
-# On the WORKER server
-git clone https://github.com/geodineum/Geodineum.git
-cd Geodineum
-sudo ./install.sh --constellation private --deploy-tier full \
-    --master-ip 10.66.0.1 --yes --no-comms
-```
-
-That single command is the whole node setup. Component code is fetched from
-the public GitHub repositories (the master ships credentials, never code) and
-the installer converges everything a worker needs:
-
-- **bootstrap.env** written with `VALKEY_HOST=<master-ip>` - no hand-editing.
-- **No local ValKey**: only `valkey-cli` is built (client tools); all state
-  lives in the master's ValKey over the VPN.
-- **Every component cloned and built** (daemon compiled with its signed
-  extensions); the deploy orchestrator keeps them updated from `main` every
-  five minutes afterwards.
-- **Unique node id**: defaults to the worker's hostname (the wizard prompts
-  instead when run interactively). Two daemons must never share an id - they
-  would contend over the same stream entries instead of load-balancing - so
-  the flag-driven path never reuses `master`.
-- **Worker-aware systemd unit**: the local-ValKey dependency is stripped, the
-  daemon is ordered after the WireGuard tunnel, and the restart policy is
-  unbounded so a master mid-reboot cannot exhaust the worker's start limit.
-- **Daemon started and enabled**, registering itself into the master's
-  topology on first connect.
-
-Re-running the installer is idempotent: it re-pulls, re-asserts permissions,
-and converges services rather than duplicating anything.
-
-Expected (and correct) worker-tier output: Lua function libraries are managed
-on the master, and the ValKey admin credential stays on the master by design;
-the installer states both instead of failing.
-
-## Step 7: Verify
+## Step 3: Verify
 
 ```bash
-# On the WORKER - daemon up, unique node id on the command line
-systemctl status gnode-daemon
-journalctl -u gnode-daemon -n 20   # expect "Stream discovery status: N sites"
-
-# On the MASTER - the worker is a node entity of the constellation's one topology
-sudo geodineum topology show <worker-hostname>
-sudo geodineum status
-```
-
-Check from either server:
-```bash
-geodineum constellation status
+sudo geodineum status                      # on the master: the worker, fresh heartbeat
+sudo geodineum topology show worker1       # shape 1, in each constellation it serves
+journalctl -u gnode-daemon -f              # on the worker: stream discovery
+geodineum constellation status             # the mesh; ValKey not on the public interface
 ```
 
 ## Managing the Constellation
 
 ```bash
 # Add another worker
-sudo geodineum constellation add-peer worker2 "<pubkey>" "<ip>:51820"
+sudo geodineum node add worker2 <ip>:51820 --tier compute
 
-# Remove a worker
-sudo geodineum constellation remove-peer worker1
+# A machine with its own WireGuard key (an admin laptop)
+sudo geodineum node add laptop roaming --pubkey "<its public key>"
 
-# Show current state
+# Remove a worker (stop its daemon first; prints what to run on the worker)
+sudo geodineum node remove worker1
+
+# Show the mesh
 geodineum constellation status
 
-# Tear down entirely (revert to single-node)
+# Tear down the mesh (revert to single-node)
 sudo geodineum constellation close
 ```
 

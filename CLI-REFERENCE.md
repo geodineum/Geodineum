@@ -87,6 +87,14 @@ sudo geodineum deregister old_service --dry-run         # preview removal
 sudo geodineum deregister old_service --purge-data --force  # remove it and its data
 ```
 
+## Nodes and Constellations
+
+```bash
+sudo ./geodineum constellation new coursematch --components gnode-daemon --yes   # fresh machine
+sudo geodineum node add worker1 203.0.113.50:51820 --tier compute                  # on the master
+sudo geodineum node remove worker1                                                 # on the master
+```
+
 ## Security & Maintenance
 
 ```bash
