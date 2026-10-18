@@ -261,10 +261,13 @@ Implementation: `gNode/daemon/functions/gnode_site.lua`.
 ## Decommissioning
 
 ```bash
-./scripts/deregister-service.sh my_service --dry-run    # preview
-./scripts/deregister-service.sh my_service --remove-acl # streams + keys + registry
+sudo geodineum deregister my_service --dry-run      # the plan
+sudo geodineum deregister my_service                # remove it (data kept)
+sudo geodineum deregister my_service --purge-data   # and the data registration created
 ```
 
-Tenant-group cleanup is automatic. (Both scripts live in `gNode/scripts/`.)
-`deregister-service.sh` also removes the service's entity, placements and index
-entries from the one topology ([REGISTRATION.md](REGISTRATION.md)).
+The inverse of onboarding: the registration intent, the topology entity and its
+placements, the keys, the identity, then what registering created on this host
+from its ledger (`/etc/geodineum/registrations/<id>.tsv`), newest first. It ends
+with a residue check. `gNode/scripts/deregister-service.sh` is its ValKey half
+([REGISTRATION.md](REGISTRATION.md)).

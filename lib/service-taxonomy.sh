@@ -144,12 +144,13 @@ ensure_docroot() {
         log_dry "Create ${root}/public_html + ${root}/uploads (root:www-data 750)"
         return 0
     fi
-    mkdir -p "${root}/public_html" "${root}/uploads"
+    ledger_mkdir "$SVC_NAME" data "${root}/public_html" "${root}/uploads"
     chown root:www-data "$root" "${root}/public_html"
     chown www-data:www-data "${root}/uploads"
     chmod 750 "$root" "${root}/public_html" "${root}/uploads"
     # DTAP tier as a root-owned file: staging/production flips are an operator
     # action, never a code edit. The form endpoint fails safe without it.
+    ledger_file "$SVC_NAME" data "${root}/.env-tier"
     printf '%s\n' "$SVC_ENV" > "${root}/.env-tier"
     chown root:www-data "${root}/.env-tier"
     chmod 640 "${root}/.env-tier"
@@ -166,10 +167,11 @@ ensure_skeleton_static() {
     if [[ -f "${docroot}/index.html" ]]; then
         log_warning "index.html already exists — skipping skeleton"
     else
+        ledger_file "$SVC_NAME" data "${docroot}/index.html"
         DOMAIN="$SVC_DOMAIN" SITE_ID="$SVC_NAME" \
             render_template "${GEODINEUM_CLI_ROOT}/templates/static-site/index.html.tpl" \
             "${docroot}/index.html"
-        mkdir -p "${docroot}/assets"
+        ledger_mkdir "$SVC_NAME" data "${docroot}/assets"
         log_success "Static skeleton rendered (index.html + assets/)"
     fi
     ensure_visit_beacon
@@ -183,7 +185,8 @@ ensure_visit_beacon() {
         log_warning "g/hit.php already exists — skipping"
         return 0
     fi
-    mkdir -p "${docroot}/g"
+    ledger_mkdir "$SVC_NAME" data "${docroot}/g"
+    ledger_file "$SVC_NAME" data "${docroot}/g/hit.php"
     SITE_ID="$SVC_NAME" DOMAIN="$SVC_DOMAIN" \
     CREDENTIAL_FILE="${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${SVC_NAME}.password" \
         render_template "${GEODINEUM_CLI_ROOT}/templates/static-site/hit.php.tpl" \
@@ -236,12 +239,13 @@ ensure_skeleton_gcore() {
         log_dry "Create ${root}/src (root:www-data 750) + render public_html/index.php front controller"
         return 0
     fi
-    mkdir -p "${root}/src"
+    ledger_mkdir "$SVC_NAME" data "${root}/src"
     chown root:www-data "${root}/src"
     chmod 750 "${root}/src"
     if [[ -f "${docroot}/index.php" ]]; then
         log_warning "index.php already exists — skipping front controller"
     else
+        ledger_file "$SVC_NAME" data "${docroot}/index.php"
         DOMAIN="$SVC_DOMAIN" SITE_ID="$SVC_NAME" SERVICE_ENV="$SVC_ENV" \
             render_template "${GEODINEUM_CLI_ROOT}/templates/webapp-gcore/index.php.tpl" \
             "${docroot}/index.php"
@@ -260,12 +264,14 @@ ensure_skeleton_pwa() {
     if [[ -f "${docroot}/index.html" ]]; then
         log_warning "index.html already exists — skipping skeleton"
     else
+        ledger_file "$SVC_NAME" data "${docroot}/index.html"
         DOMAIN="$SVC_DOMAIN" SITE_ID="$SVC_NAME" \
             render_template "${GEODINEUM_CLI_ROOT}/templates/static-site/index.html.tpl" \
             "${docroot}/index.html"
     fi
-    mkdir -p "${docroot}/assets"
+    ledger_mkdir "$SVC_NAME" data "${docroot}/assets"
     if [[ ! -f "${docroot}/manifest.webmanifest" ]]; then
+        ledger_file "$SVC_NAME" data "${docroot}/manifest.webmanifest"
         cat > "${docroot}/manifest.webmanifest" << MANEOF
 {
   "name": "${SVC_DOMAIN}",
@@ -279,6 +285,7 @@ ensure_skeleton_pwa() {
 MANEOF
     fi
     if [[ ! -f "${docroot}/sw.js" ]]; then
+        ledger_file "$SVC_NAME" data "${docroot}/sw.js"
         cat > "${docroot}/sw.js" << 'SWEOF'
 // Minimal offline-first service worker. Extend the cache list as the app grows.
 // The /g/ analytics beacon is never cached — a hit that lands in the cache
@@ -311,7 +318,8 @@ ensure_form_endpoint() {
         log_warning "form/submit.php already exists — skipping"
         return 0
     fi
-    mkdir -p "${docroot}/form"
+    ledger_mkdir "$SVC_NAME" data "${docroot}/form"
+    ledger_file "$SVC_NAME" data "${docroot}/form/submit.php"
     SITE_ID="$SVC_NAME" DOMAIN="$SVC_DOMAIN" \
     TIER_FILE="${root}/.env-tier" \
     CREDENTIAL_FILE="${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${SVC_NAME}.password" \
@@ -368,6 +376,7 @@ ${www_alias:+    ServerAlias ${www_alias}
 VHEOF
         chmod 640 "$conf"
         a2ensite "${SVC_DOMAIN}.conf" >/dev/null
+        ledger_add "$SVC_NAME" config vhost "$SVC_DOMAIN"
         log_success "vhost written + enabled: ${conf}"
     fi
     apachectl configtest >/dev/null 2>&1 && systemctl reload apache2 \
@@ -378,10 +387,14 @@ VHEOF
         local -a cb=(certbot --apache -d "$SVC_DOMAIN")
         [[ -n "$www_alias" ]] && cb+=(-d "$www_alias")
         [[ "$SVC_YES" == "true" ]] && cb+=(--non-interactive --agree-tos)
-        "${cb[@]}" || {
+        local had_cert=false
+        [[ -d "/etc/letsencrypt/live/${SVC_DOMAIN}" ]] && had_cert=true
+        if "${cb[@]}"; then
+            [[ "$had_cert" == true ]] || ledger_add "$SVC_NAME" config cert "$SVC_DOMAIN"
+        else
             log_warning "certbot did not complete (DNS not pointed yet?)"
             log_info "Re-run later: sudo certbot --apache -d ${SVC_DOMAIN}"
-        }
+        fi
     else
         log_warning "certbot not installed — site is HTTP-only"
     fi
@@ -393,10 +406,15 @@ ensure_own_user() {
         log_dry "Create system user+group '${SVC_NAME}' (no shell, no home login)"
         return 0
     fi
-    getent group "$SVC_NAME" >/dev/null 2>&1 || groupadd --system "$SVC_NAME"
-    id "$SVC_NAME" >/dev/null 2>&1 || \
+    if ! getent group "$SVC_NAME" >/dev/null 2>&1; then
+        groupadd --system "$SVC_NAME"
+        ledger_add "$SVC_NAME" config group "$SVC_NAME"
+    fi
+    if ! id "$SVC_NAME" >/dev/null 2>&1; then
         useradd --system --gid "$SVC_NAME" --home-dir "$SVC_PATH" \
             --no-create-home --shell /usr/sbin/nologin "$SVC_NAME"
+        ledger_add "$SVC_NAME" config user "$SVC_NAME"
+    fi
     log_success "System user: ${SVC_NAME}:${SVC_NAME}"
 }
 
@@ -426,7 +444,7 @@ ensure_service_dirs() {
         log_dry "Create ${SVC_PATH}/{src,.geodineum} (root:${SVC_GROUP} 750)"
         return 0
     fi
-    mkdir -p "${SVC_PATH}/src"
+    ledger_mkdir "$SVC_NAME" data "${SVC_PATH}/src"
     create_geodineum_dir "$SVC_PATH" "$SVC_NAME" "$SVC_ENV"
     chown "root:${SVC_GROUP}" "$SVC_PATH" "${SVC_PATH}/src"
     chmod 750 "$SVC_PATH" "${SVC_PATH}/src"
@@ -445,7 +463,8 @@ ensure_gcore_bootstrap() {
         return 0
     fi
     # Self-sufficient: the web types have no service_dirs row before this one.
-    mkdir -p "$(dirname "$out")"
+    ledger_mkdir "$SVC_NAME" data "$(dirname "$out")"
+    ledger_file "$SVC_NAME" data "$out"
     SERVICE_NAME="$SVC_NAME" SERVICE_ID="$SVC_NAME" SITE_ID="$SVC_NAME" \
     SERVICE_ENV="$SVC_ENV" \
         render_template "${GEODINEUM_CLI_ROOT}/templates/bootstrap-gcore.php.tpl" "$out"
@@ -468,7 +487,8 @@ ensure_manifest() {
         log_dry "Write unified manifest ${manifest} (profile=${SVC_PROFILE} env=${SVC_ENV})"
         return 0
     fi
-    mkdir -p "$dir"
+    ledger_mkdir "$SVC_NAME" config "$dir"
+    ledger_add "$SVC_NAME" config geodineum-dir "$dir"
     # finalize_geodineum_dir symlinks the credential into credentials/ after
     # onboarding — the subdir must exist for every local manifest home.
     [[ -z "$SVC_NODE" ]] && mkdir -p "${dir}/credentials"
@@ -479,6 +499,7 @@ ensure_manifest() {
     local produces_extra=""
     [[ "$SVC_FORM" == "true" ]] && produces_extra="
   - \"{${SVC_NAME}}:forms:*\"         # submission archive + rate-limit counters"
+    ledger_file "$SVC_NAME" config "$manifest"
     cat > "$manifest" << MFEOF
 # Geodineum onboarding manifest — ONE schema (profile + environment +
 # consumes/produces drive registration and the composed ValKey ACL).
@@ -518,6 +539,7 @@ ensure_systemd_unit() {
     fi
     mkdir -p /etc/geodineum/services
     if [[ ! -f "$envfile" ]]; then
+        ledger_file "$SVC_NAME" config "$envfile"
         cat > "$envfile" << ENVEOF
 GNODE_SITE_ID=${SVC_NAME}
 GNODE_ENVIRONMENT=${SVC_ENV}
@@ -530,6 +552,7 @@ ENVEOF
         chmod 640 "$envfile"
     fi
     if [[ ! -x "${SVC_PATH}/run" ]]; then
+        ledger_file "$SVC_NAME" data "${SVC_PATH}/run"
         cat > "${SVC_PATH}/run" << 'RUNEOF'
 #!/bin/bash
 # Service entrypoint — replace with the real process (long-running, foreground).
@@ -568,6 +591,7 @@ PrivateTmp=true
 WantedBy=multi-user.target
 UNITEOF
         chmod 644 "$unit"
+        ledger_add "$SVC_NAME" config unit "geodineum-${SVC_NAME}.service"
         systemctl daemon-reload
         systemctl enable "geodineum-${SVC_NAME}.service" >/dev/null 2>&1 || true
         log_success "Unit installed + enabled (not started — deploy code first): ${unit}"
@@ -586,6 +610,7 @@ ensure_heartbeat() {
     fi
     local hb_script="${SVC_PATH}/heartbeat.sh"
     if [[ ! -x "$hb_script" ]]; then
+        ledger_file "$SVC_NAME" config "$hb_script"
         cat > "$hb_script" << 'HSEOF'
 #!/bin/bash
 # Heartbeat sender — env comes from the unit's EnvironmentFile.
@@ -615,6 +640,7 @@ ExecCondition=/bin/systemctl is-active --quiet geodineum-${SVC_NAME}.service
 ExecStart=${hb_script}
 HBEOF
         chmod 644 "$hb_service"
+        ledger_add "$SVC_NAME" config unit "geodineum-${SVC_NAME}-heartbeat.service"
     fi
     if [[ ! -f "$hb_timer" ]]; then
         cat > "$hb_timer" << HTEOF
@@ -629,6 +655,7 @@ OnUnitActiveSec=60
 WantedBy=timers.target
 HTEOF
         chmod 644 "$hb_timer"
+        ledger_add "$SVC_NAME" config unit "geodineum-${SVC_NAME}-heartbeat.timer"
         systemctl daemon-reload
         systemctl enable --now "geodineum-${SVC_NAME}-heartbeat.timer" >/dev/null 2>&1 || true
     fi
@@ -651,6 +678,7 @@ ensure_mail() {
         log_error "Mail-stack provisioning failed for ${SVC_MAIL_DOMAIN}"
         return 1
     }
+    ledger_add "$SVC_NAME" keep mail-domain "$SVC_MAIL_DOMAIN"
     log_info "Publish the printed DNS records, then verify: geodineum mail records ${SVC_MAIL_DOMAIN}"
 }
 

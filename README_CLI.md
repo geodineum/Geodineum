@@ -370,33 +370,34 @@ geodineum update-service my_api --express --dry-run
 
 ---
 
-### `deregister` — Complete service removal
+### `deregister` — remove a service
 
-Removes a service entirely from the ecosystem. Alias: `remove`.
+The one route that removes a service: the inverse of registering it.
 
 ```bash
-sudo geodineum deregister <site_id> [options]
+sudo geodineum deregister <id> [options]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--remove-acl` | Also remove the ValKey ACL user and credential file |
+| `--purge-data` | Also remove the data registration created (docroot, service dir, COMMS history) |
+| `--keep-acl` | Keep the ValKey identity (ACL user + credential file) |
 | `--keep-cache` | Keep cache/rate-limit keys |
+| `--dry-run` | Show the plan only |
 | `--force` | Skip confirmation prompt |
-| `--dry-run` | Preview without making changes |
 
-**Steps performed:**
-1. Remove ValKey config hashes (`{site_id}:config:capabilities`, `{site_id}:config:app`)
-2. Remove the legacy discovery-path entry, if one exists
-3. Remove `.geodineum/` directory
-4. Deregister streams, registry, metadata (via `deregister-service.sh`)
-5. Optionally remove ACL user and credential file
+**In order:**
+1. Stop its heartbeat and the units registration created
+2. ValKey (`gNode/scripts/deregister-service.sh`): the registration intent, the topology entity and its placements in the constellation that holds it, its keys, its identity
+3. Undo what registration created on this host, newest first, from its ledger (`/etc/geodineum/registrations/<id>.tsv`): vhost, certificate, units, env file, system user and group, manifest, discovery entry
+4. Remove the registration marker
+5. Check that nothing is left, and name what was kept
 
-The topology entity is not touched: follow with `sudo geodineum topology deregister <site_id>`.
+Nothing registration did not create is removed. A node leaves with `geodineum node remove`.
 
 ```bash
-geodineum deregister my_old_service --dry-run
-sudo geodineum deregister test_app --remove-acl --force
+sudo geodineum deregister my_old_service --dry-run
+sudo geodineum deregister test_app --purge-data --force
 ```
 
 ---

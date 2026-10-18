@@ -57,11 +57,22 @@ assert_mode(){ # path owner:group:mode
     got=$(stat -c '%U:%G:%a' "$1" 2>/dev/null)
     [[ "$got" == "$2" ]] && ok "perms $1 = $2" || no "perms $1 = ${got:-absent}, want $2"
 }
+vk_admin(){ REDISCLI_AUTH="$(cat "${CRED_DIR}/valkey.password")" valkey-cli --no-auth-warning --raw -p "${VALKEY_PORT:-47445}" "$@"; }
+# <id> <0|1> [placed]: the entity and its intent in the constellation that holds them;
+# "placed" also wants a site's placement on this node.
 assert_registry(){
-    local want="$2" got
-    got=$(VALKEY_USER=gnode_daemon "${GNODE_SCRIPTS_DIR}/valkey-cli-secure.sh" \
-        SISMEMBER gnode:sites:registry "$1" 2>/dev/null | tr -d '[:space:]')
-    [[ "$got" == "$want" ]] && ok "registry[$1] = $want" || no "registry[$1] = ${got:-?}, want $want"
+    local id="$1" want="$2" c got=0 intent=0 placed=0 node
+    node="$(hostname -s)"
+    for c in $(GNODE_DAEMON_ENV=/etc/geodineum/components/gnode-daemon/daemon.env bash -c 'source '"${GNODE_SCRIPTS_DIR}"'/cli/constellation.sh; gnode_cli_constellations'); do
+        [[ "$(vk_admin HEXISTS "{$c}:gnode:constellation:entities" "$id")" == 1 ]] && got=1
+        [[ "$(vk_admin HEXISTS "{$c}:gnode:registrations" "$id")" == 1 ]] && intent=1
+        [[ "$(vk_admin HEXISTS "{$c}:gnode:constellation:entities" "${id}@${node}")" == 1 ]] && placed=1
+    done
+    [[ "$got" == "$want" ]] && ok "topology[$id] = $want" || no "topology[$id] = $got, want $want"
+    [[ "$intent" == "$want" ]] && ok "intent[$id] = $want" || no "intent[$id] = $intent, want $want"
+    if [[ "${3:-}" == placed ]]; then
+        [[ "$placed" == 1 ]] && ok "placement ${id}@${node}" || no "no placement ${id}@${node}"
+    fi
 }
 assert_acl_composed(){
     # The retired legacy-uniform set granted ~template:* to everything; a
@@ -96,49 +107,19 @@ assert_acl_composed(){
     fi
 }
 
-# ---- removal (reverses every filesystem row the type creates) ---------------
+# ---- removal: the one route, which must leave nothing behind ----------------
 
-remove_static(){
-    "${GNODE_SCRIPTS_DIR}/deregister-service.sh" "$STATIC_ID" --remove-acl --force >/dev/null 2>&1
-    a2dissite "${STATIC_DOMAIN}.conf" >/dev/null 2>&1
-    rm -f "/etc/apache2/sites-available/${STATIC_DOMAIN}.conf"
-    systemctl reload apache2 2>/dev/null
-    rm -rf "/var/www/${STATIC_DOMAIN}"
-    rm -f "${CRED_DIR}/valkey_client_${STATIC_ID}.password" \
-          "${CRED_DIR}/valkey_client_${STATIC_ID}.password.owner"
-    sed -i "\\|/var/www/${STATIC_DOMAIN}|d" \
-        /etc/geodineum/components/gnode-daemon/discovery-paths.conf 2>/dev/null
+remove_svc(){   # <id>
+    if "$CLI" deregister "$1" --purge-data --force >/tmp/cycletest-deregister.$$ 2>&1; then
+        ok "deregister $1: residue none"
+    else
+        no "deregister $1 left residue:"; sed -n '/Residue/,$p' /tmp/cycletest-deregister.$$ | sed 's/^/      /'
+    fi
+    rm -f /tmp/cycletest-deregister.$$
 }
-
-remove_webapp(){
-    "${GNODE_SCRIPTS_DIR}/deregister-service.sh" "$WEBAPP_ID" --remove-acl --force >/dev/null 2>&1
-    a2dissite "${WEBAPP_DOMAIN}.conf" >/dev/null 2>&1
-    rm -f "/etc/apache2/sites-available/${WEBAPP_DOMAIN}.conf"
-    systemctl reload apache2 2>/dev/null
-    rm -rf "/var/www/${WEBAPP_DOMAIN}"
-    rm -f "${CRED_DIR}/valkey_client_${WEBAPP_ID}.password" \
-          "${CRED_DIR}/valkey_client_${WEBAPP_ID}.password.owner"
-    sed -i "\\|/var/www/${WEBAPP_DOMAIN}|d" \
-        /etc/geodineum/components/gnode-daemon/discovery-paths.conf 2>/dev/null
-}
-
-remove_daemon(){
-    systemctl disable --now "geodineum-${DAEMON_ID}-heartbeat.timer" >/dev/null 2>&1
-    systemctl disable --now "geodineum-${DAEMON_ID}.service" >/dev/null 2>&1
-    rm -f "/etc/systemd/system/geodineum-${DAEMON_ID}.service" \
-          "/etc/systemd/system/geodineum-${DAEMON_ID}-heartbeat.service" \
-          "/etc/systemd/system/geodineum-${DAEMON_ID}-heartbeat.timer" \
-          "/etc/geodineum/services/${DAEMON_ID}.env"
-    systemctl daemon-reload
-    "${GNODE_SCRIPTS_DIR}/deregister-service.sh" "$DAEMON_ID" --remove-acl --force >/dev/null 2>&1
-    rm -rf "/opt/geodineum/services/${DAEMON_ID}"
-    rm -f "${CRED_DIR}/valkey_client_${DAEMON_ID}.password" \
-          "${CRED_DIR}/valkey_client_${DAEMON_ID}.password.owner"
-    sed -i "\\|/opt/geodineum/services/${DAEMON_ID}|d" \
-        /etc/geodineum/components/gnode-daemon/discovery-paths.conf 2>/dev/null
-    userdel "$DAEMON_ID" 2>/dev/null
-    groupdel "$DAEMON_ID" 2>/dev/null
-}
+remove_static(){ remove_svc "$STATIC_ID"; }
+remove_webapp(){ remove_svc "$WEBAPP_ID"; }
+remove_daemon(){ remove_svc "$DAEMON_ID"; }
 
 # ---- cycles ------------------------------------------------------------------
 
@@ -150,7 +131,7 @@ verify_static(){
     assert_file "/etc/apache2/sites-available/${STATIC_DOMAIN}.conf"
     assert_mode "${root}/.env-tier" "root:www-data:640"
     assert_mode "${CRED_DIR}/valkey_client_${STATIC_ID}.password" "root:geodineum-web:640"
-    assert_registry "$STATIC_ID" 1
+    assert_registry "$STATIC_ID" 1 placed
     assert_acl_composed "$STATIC_ID"
 }
 
@@ -171,7 +152,7 @@ verify_webapp(){
     else
         no "www-data not in geodineum-code — the app cannot read gCore source"
     fi
-    assert_registry "$WEBAPP_ID" 1
+    assert_registry "$WEBAPP_ID" 1 placed
     assert_acl_composed "$WEBAPP_ID"
 }
 

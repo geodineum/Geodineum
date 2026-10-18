@@ -84,7 +84,7 @@ geodineum logs --service valkey                # ValKey logs
 ```bash
 sudo geodineum update-service example_site --express  # re-scan capabilities
 sudo geodineum deregister old_service --dry-run         # preview removal
-sudo geodineum deregister old_service --remove-acl --force  # full removal
+sudo geodineum deregister old_service --purge-data --force  # remove it and its data
 ```
 
 ## Security & Maintenance

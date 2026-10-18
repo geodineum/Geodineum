@@ -25,6 +25,7 @@ GEODINEUM_CONFIG_ROOT="${GEODINEUM_CONFIG_ROOT:-/etc/geodineum}"
 GEODINEUM_CREDENTIALS_DIR="${GEODINEUM_CREDENTIALS_DIR:-${GEODINEUM_CONFIG_ROOT}/credentials}"
 GEODINEUM_WEB_ROOT="${GEODINEUM_WEB_ROOT:-/var/www}"
 GEODINEUM_DISCOVERY_CONF="${GEODINEUM_DISCOVERY_CONF:-${GEODINEUM_CONFIG_ROOT}/components/gnode-daemon/discovery-paths.conf}"
+GEODINEUM_REGISTRATIONS_DIR="${GEODINEUM_REGISTRATIONS_DIR:-${GEODINEUM_CONFIG_ROOT}/registrations}"
 
 # Component paths
 GNODE_PATH="${GEODINEUM_ROOT}/gNode"
@@ -837,6 +838,42 @@ resolve_deploy_user() {
 }
 
 # =============================================================================
+# Registration ledger
+# =============================================================================
+# What registering a service created on THIS host, one line per artifact:
+#   <class>\t<kind>\t<target>     class: config | data | keep
+# `geodineum deregister` undoes it last-in first-out: config always, data only
+# with --purge-data, keep never. Anything registration found already in place
+# is never recorded, so deregister never removes what it did not create.
+# ${GEODINEUM_REGISTRATIONS_DIR}/<id>.tsv, root 0640.
+
+ledger_add() {   # <id> <class> <kind> <target>
+    [[ "${SVC_DRY_RUN:-false}" == "true" ]] && return 0
+    local f="${GEODINEUM_REGISTRATIONS_DIR}/$1.tsv" line="$2"$'\t'"$3"$'\t'"$4"
+    install -d -m 0750 "$GEODINEUM_REGISTRATIONS_DIR"
+    [[ -f "$f" ]] && grep -qxF -- "$line" "$f" && return 0
+    printf '%s\n' "$line" >> "$f"
+    chmod 0640 "$f"
+}
+
+# mkdir -p that records the topmost directory it had to create.
+ledger_mkdir() {   # <id> <class> <dir>...
+    local id="$1" cls="$2" d q top
+    shift 2
+    for d in "$@"; do
+        top="" q="$d"
+        while [[ ! -e "$q" && "$q" != / ]]; do top="$q"; q="$(dirname "$q")"; done
+        [[ -n "$top" ]] && ledger_add "$id" "$cls" dir "$top"
+        mkdir -p "$d"
+    done
+}
+
+# Record a file about to be created (call before writing it; no-op if it exists).
+ledger_file() {   # <id> <class> <path>
+    [[ -e "$3" ]] || ledger_add "$1" "$2" file "$3"
+}
+
+# =============================================================================
 # The one topology (SPEC-ONE-TOPOLOGY §10)
 # =============================================================================
 
@@ -856,8 +893,18 @@ profile_to_shape() {
 # `internal` and hold it; sites hold nothing and require nothing.
 # Usage: gnode_block_yaml <profile> <service_id> [constellation]
 gnode_block_yaml() {
-    local profile="${1:-web}" id="${2:-}" c="${3:-${GNODE_TOPOLOGY_NAMESPACE:-geodineum}}"
+    local profile="${1:-web}" id="${2:-}" c="${3:-}"
+    if [[ -z "$c" ]]; then
+        if [[ -r "${GNODE_SCRIPTS}/cli/constellation.sh" ]]; then
+            # shellcheck source=/dev/null
+            source "${GNODE_SCRIPTS}/cli/constellation.sh"
+            c="$(gnode_cli_constellation)"
+        else
+            c="${GNODE_TOPOLOGY_NAMESPACE:-geodineum}"
+        fi
+    fi
     local shape; shape="$(profile_to_shape "$profile")"
+    local lang; lang="$(gnode_language_word "${CAP_LANGUAGE:-php}")"
     local protocol scope auth labels heartbeat domain
     case "$shape" in
         site) protocol="${CAP_PROTOCOL:-http_rest}"; scope="${CAP_SCOPE:-client_facing}"; auth="${CAP_AUTH:-session_cookie}"; labels="[]"; heartbeat=""; domain="${CAP_DOMAIN:-content}, ${CAP_DOMAIN_SECONDARY:-presentation}" ;;
@@ -886,6 +933,17 @@ gnode:
     latency_class: ${CAP_LATENCY:-responsive}
     reliability_tier: ${CAP_RELIABILITY:-standard}
     execution_priority: ${CAP_PRIORITY:-normal}
-    implementation_language: ${CAP_LANGUAGE:-php}
+    implementation_language: ${lang}
 EOF
+}
+
+# A detected language as the schema's word (topology_schema.yaml implementation_language);
+# the daemon refuses any other word, so an unlisted language is `undefined`.
+gnode_language_word() {
+    case "${1,,}" in
+        rust|php|lua|python|go|bash) echo "${1,,}" ;;
+        node|nodejs|javascript|js|typescript|ts) echo javascript ;;
+        sh|shell) echo bash ;;
+        *) echo undefined ;;
+    esac
 }

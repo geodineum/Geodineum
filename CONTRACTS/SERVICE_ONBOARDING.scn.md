@@ -124,7 +124,9 @@ FALSE-GREEN-HEARTBEAT: a bare timer heartbeats a dead service; the shipped pair 
 TENANT: `--owner acme` → `gnode:tenant:acme:sites` SET; cross-site discover = daemon-level
   (GNODE_TENANT_LIST_SITES, gnode_site.lua; cross-site discovery = GNODE_TOPO_QUERY on the constellation key since 2026-10-11); clients stay keyspace-isolated.
 CREATES: ACL user + cred 0640 (group per type) + unified/health streams ×DTAP +
-  sites:registry + discovery-path + intent + type rows (vhost/unit/heartbeat/manifest).
-DECOMMISSION: deregister-service.sh [--dry-run|--remove-acl]; tenant cleanup automatic;
-  full per-row uninstall parity = service-cycle-test.sh reversal (repo scripts/).
+  sites:registry + discovery-path + intent + type rows (vhost/unit/heartbeat/manifest),
+  each host artifact recorded in the ledger /etc/geodineum/registrations/<id>.tsv.
+DECOMMISSION: sudo geodineum deregister <id> [--dry-run|--purge-data|--keep-acl] = the inverse:
+  ValKey half deregister-service.sh, then the ledger newest-first, then a residue check;
+  service-cycle-test.sh asserts zero residue through it.
 ```

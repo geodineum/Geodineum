@@ -155,10 +155,10 @@ sudo geodineum topology show example_com     # shape 3.1, placement example_com@
 sudo geodineum status                         # health = the host daemon's heartbeat
 geodineum info example_com
 
-sudo geodineum deregister example_com --remove-acl     # streams, config, ACL, .geodineum/ and the topology entity
+sudo geodineum deregister example_com                  # topology, intent, keys, identity, and what registering created here
 ```
 
-`geodineum deregister` removes the site's streams, config and identity, and its entity, placements and index entries in the one topology. `geodineum topology deregister <id>` removes only the topology entity.
+`geodineum deregister` is the one way a service leaves: its intent, its entity and placements in the constellation that holds it, its keys, its identity, and what registering created on this host (data only with `--purge-data`). `geodineum topology deregister <id>` is the primitive underneath it, for the topology entity alone.
 
 ## 5. Service: a daemon or a headless app
 
@@ -189,8 +189,7 @@ sudo geodineum topology show myservice      # shape 3.3, holds/requires, placeme
 sudo geodineum status                       # health, load, where it runs
 sudo geodineum topology load myservice      # what the sampler measured, and its age
 
-sudo geodineum deregister myservice --remove-acl
-sudo geodineum topology deregister myservice
+sudo geodineum deregister myservice
 ```
 
 ## 6. Declaring who may reach whom

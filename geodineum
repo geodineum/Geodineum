@@ -288,7 +288,7 @@ Commands:
   config list <id>           List all config for a site (ValKey + .geodineum/)
   config import <id>         Scan service root, import config files into ValKey
   update-service <id>       Update capabilities and config for an existing service
-  deregister <site_id>      Complete service removal (streams, config, ACL, .geodineum/)
+  deregister <id>           Remove a service: the inverse of registering it (--help)
   constellation <action>    Multi-node VPN: init, add-peer, expand, status, join-replica, close
   node <action>             This node's role: show, expose <hints>, add, remove
   provision-service <svc>   Mint a service's ValKey auth on the master for a node to use
@@ -333,8 +333,10 @@ List options:
   --json                    Machine-readable JSON output
 
 Deregister options:
-  --remove-acl              Also remove ValKey ACL user and credential file
+  --purge-data              Also remove the data registration created
+  --keep-acl                Keep the ValKey identity
   --keep-cache              Keep cache/rate-limit keys
+  --dry-run                 Show the plan only
   --force                   Skip confirmation prompt
 
 Update-service options:
@@ -390,8 +392,8 @@ Examples:
   # Update a service's capabilities after changes
   sudo geodineum update-service my_api --express
 
-  # Deregister a service (with dry-run preview)
-  geodineum deregister my_old_service --dry-run
+  # Deregister a service (plan first)
+  sudo geodineum deregister my_old_service --dry-run
 
   # Update all components from GitHub
   sudo geodineum update
@@ -541,9 +543,14 @@ main() {
                     ;;
             esac
             ;;
-        deregister|remove)
+        deregister)
             source "${LIB_DIR}/common.sh"
+            source "${LIB_DIR}/deregister.sh"
             cmd_deregister "$@"
+            ;;
+        remove)
+            echo "geodineum remove is gone: use  sudo geodineum deregister <id>" >&2
+            exit 2
             ;;
         update-service)
             source "${LIB_DIR}/common.sh"
@@ -1517,217 +1524,6 @@ cmd_info() {
         fi
     fi
 
-    echo ""
-}
-
-# =============================================================================
-# Deregister command — complete service removal
-# =============================================================================
-
-cmd_deregister() {
-    local site_id=""
-    local remove_acl=false
-    local keep_cache=false
-    local dry_run=false
-    local force=false
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --remove-acl) remove_acl=true; shift ;;
-            --keep-cache) keep_cache=true; shift ;;
-            --force)      force=true; shift ;;
-            --dry-run)    dry_run=true; shift ;;
-            --help|-h)
-                cat << 'EOF'
-Usage: geodineum deregister <site_id> [options]
-
-Completely removes a service from the Geodineum ecosystem:
-  1. ValKey config hashes ({site_id}:config:capabilities, {site_id}:config:app)
-  2. Discovery path entry from discovery-paths.conf
-  3. .geodineum/ directory (config, credentials symlink, schema)
-  4. Registry entry, streams, metadata (via deregister-service.sh)
-  5. Optionally: ACL user, cache keys
-
-Options:
-  --remove-acl    Also remove the ValKey ACL user and credential file
-  --keep-cache    Keep cache/rate-limit keys
-  --force         Skip confirmation prompt
-  --dry-run       Preview without making changes
-
-Examples:
-  geodineum deregister my_old_service --dry-run
-  sudo geodineum deregister test_app --remove-acl --force
-EOF
-                exit 0
-                ;;
-            -*)
-                log_error "Unknown option: $1"
-                exit 1
-                ;;
-            *)
-                if [[ -z "$site_id" ]]; then
-                    site_id="$1"
-                else
-                    log_error "Unexpected argument: $1"
-                    exit 1
-                fi
-                shift
-                ;;
-        esac
-    done
-
-    if [[ -z "$site_id" ]]; then
-        log_error "Site/service ID is required"
-        echo "Usage: geodineum deregister <site_id> [--remove-acl] [--dry-run]"
-        exit 1
-    fi
-
-    echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}           ${BOLD}Geodineum Service Deregistration${NC}                        ${CYAN}║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-    print_kv "Site ID" "$site_id"
-
-    # Locate .geodineum/
-    local gdir
-    gdir=$(find_geodineum_dir "$site_id" 2>/dev/null) || gdir=""
-    [[ -n "$gdir" ]] && print_kv ".geodineum" "$gdir"
-
-    # Locate deregister script
-    local deregister=""
-    for candidate in \
-        "${GNODE_SCRIPTS}/deregister-service.sh" \
-        "${GEODINEUM_ROOT}/gNode/scripts/deregister-service.sh"; do
-        if [[ -x "$candidate" ]]; then
-            deregister="$candidate"
-            break
-        fi
-    done
-
-    echo ""
-
-    # =================================================================
-    # Dry-run
-    # =================================================================
-
-    if [[ "$dry_run" == "true" ]]; then
-        log_step "Dry-Run Summary"
-        log_dry "Remove ValKey config: {${site_id}}:config:capabilities"
-        log_dry "Remove ValKey config: {${site_id}}:config:app"
-        [[ -n "$gdir" ]] && log_dry "Remove discovery-paths.conf entry for ${gdir}"
-        [[ -n "$gdir" ]] && log_dry "Remove ${gdir}/ (config, credentials, schema)"
-        [[ -n "$deregister" ]] && log_dry "Run deregister-service.sh (streams, registry)"
-        [[ "$remove_acl" == "true" ]] && log_dry "Remove ACL user: gnode_client_${site_id}"
-        echo ""
-        log_info "No changes made (dry-run mode)"
-        return 0
-    fi
-
-    require_sudo "Service deregistration"
-
-    # Confirmation unless --force
-    if [[ "$force" != "true" ]]; then
-        echo -en "  ${RED}Deregister ${site_id}?${NC} This removes streams, config, and .geodineum/. [y/${BOLD}N${NC}] "
-        local answer
-        read -r answer < /dev/tty
-        if [[ "${answer,,}" != "y" && "${answer,,}" != "yes" ]]; then
-            log_info "Cancelled"
-            return 0
-        fi
-    fi
-
-    # =================================================================
-    # Step 1: Clean ValKey config hashes
-    # =================================================================
-
-    log_step "Step 1/4: Cleaning ValKey Config"
-
-    local cli=""
-    for candidate in \
-        "${GNODE_SCRIPTS}/valkey-cli-secure.sh" \
-        "${GEODINEUM_ROOT}/gNode/scripts/valkey-cli-secure.sh"; do
-        [[ -x "$candidate" ]] && { cli="$candidate"; break; }
-    done
-
-    if [[ -n "$cli" ]]; then
-        "$cli" DEL "{${site_id}}:config:capabilities" >/dev/null 2>&1 && \
-            log_success "Removed {${site_id}}:config:capabilities" || true
-        "$cli" DEL "{${site_id}}:config:app" >/dev/null 2>&1 && \
-            log_success "Removed {${site_id}}:config:app" || true
-    else
-        log_warning "valkey-cli-secure.sh not found — skipping ValKey cleanup"
-    fi
-
-    # =================================================================
-    # Step 2: Remove from discovery-paths.conf
-    # =================================================================
-
-    log_step "Step 2/4: Removing Discovery Path"
-
-    local disc_conf="$GEODINEUM_DISCOVERY_CONF"
-    if [[ -n "$gdir" ]] && [[ -f "$disc_conf" ]]; then
-        if grep -q "$gdir" "$disc_conf" 2>/dev/null; then
-            grep -v "$gdir" "$disc_conf" > "${disc_conf}.tmp" && mv "${disc_conf}.tmp" "$disc_conf"
-            log_success "Removed ${gdir} from discovery-paths.conf"
-        else
-            log_info "Not in discovery-paths.conf (already clean)"
-        fi
-    else
-        log_info "No discovery path to remove"
-    fi
-
-    # =================================================================
-    # Step 3: Remove .geodineum/ directory
-    # =================================================================
-
-    log_step "Step 3/4: Removing .geodineum/"
-
-    if [[ -n "$gdir" ]] && [[ -d "$gdir" ]]; then
-        rm -rf "$gdir" && log_success "Removed ${gdir}/" || log_warning "Could not remove ${gdir}/"
-    else
-        log_info "No .geodineum/ directory found"
-    fi
-
-    # =================================================================
-    # Step 4: Deregister streams + registry (+ optionally ACL)
-    # =================================================================
-
-    log_step "Step 4/4: Deregistering Streams & Registry"
-
-    if [[ -n "$deregister" ]]; then
-        local dereg_args=("$site_id" --force)
-        [[ "$remove_acl" == "true" ]] && dereg_args+=(--remove-acl)
-        [[ "$keep_cache" == "true" ]] && dereg_args+=(--keep-cache)
-
-        "$deregister" "${dereg_args[@]}" || {
-            log_warning "deregister-service.sh had issues — see output above"
-        }
-    else
-        log_error "deregister-service.sh not found"
-        log_error "Is gNode installed at ${GNODE_PATH}?"
-        log_info "Manual cleanup: remove streams ${site_id}:gnode:* and registry entry"
-    fi
-
-    # Remove credential file if ACL removed
-    if [[ "$remove_acl" == "true" ]]; then
-        local cred_file="${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${site_id}.password"
-        if [[ -f "$cred_file" ]]; then
-            rm -f "$cred_file" && log_success "Removed credential: ${cred_file}" || true
-        fi
-    fi
-
-    # =================================================================
-    # Summary
-    # =================================================================
-
-    print_summary_header "Service Deregistered"
-    print_kv "Site ID" "$site_id"
-    print_kv "Config hashes" "removed"
-    print_kv "Discovery path" "removed"
-    print_kv ".geodineum/" "removed"
-    print_kv "Streams/Registry" "removed"
-    [[ "$remove_acl" == "true" ]] && print_kv "ACL user" "removed"
     echo ""
 }
 
