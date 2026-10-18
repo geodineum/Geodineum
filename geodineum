@@ -449,6 +449,18 @@ main() {
 
     discover_manifest_commands
 
+    # --constellation <c> works on every command: it names the constellation the call acts on.
+    local _args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --constellation)   export GNODE_TOPOLOGY_NAMESPACE="${2:?--constellation needs a name}"; shift 2 ;;
+            --constellation=*) export GNODE_TOPOLOGY_NAMESPACE="${1#*=}"; shift ;;
+            *) _args+=("$1"); shift ;;
+        esac
+    done
+    set -- "${_args[@]}"
+    [[ $# -gt 0 ]] || { usage; exit 0; }
+
     local command="$1"
     shift
 
