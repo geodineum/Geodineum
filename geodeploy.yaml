@@ -16,7 +16,7 @@ cli:
   commands:
     - name: geodeploy status
       handler: scripts/cli/geodeploy-status.sh
-      description: Show auto-deploy cron status and last run
+      description: Show whether the auto-deploy sweep is running, and its last run
       category: Deploy
     - name: geodeploy on
       handler: scripts/cli/geodeploy-toggle.sh

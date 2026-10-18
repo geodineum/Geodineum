@@ -14,30 +14,27 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     exit 0
 fi
 
-GEODINEUM_REPO="$(dirname "$(dirname "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)")")"
+LOG_FILE="${GEODEPLOY_LOG:-${GEODINEUM_LOG_ROOT:-/var/log/geodineum}/deploy/auto-deploy.log}"
+STAMP="$(dirname "$LOG_FILE")/.last-success"
 
-ORCHESTRATOR="${GEODINEUM_REPO}/scripts/geodeploy-orchestrator"
-LOG_FILE="${GEODINEUM_ROOT:-/opt/geodineum}/logs/auto-deploy.log"
-
-# Cron status
-cron_line=$(crontab -l 2>/dev/null | grep 'geodeploy-orchestrator' || true)
-if [[ -n "$cron_line" ]]; then
-    schedule=$(echo "$cron_line" | awk '{print $1,$2,$3,$4,$5}')
-    log_success "Auto-deploy cron: ENABLED (${schedule})"
+# The sweep's own stamp is the evidence; the cron line may sit in root's crontab or the deploy user's.
+cron_line="$( { crontab -l 2>/dev/null; sudo -n crontab -l 2>/dev/null; } | grep 'geodeploy-orchestrator' | grep -v '^#' | head -1 || true)"
+last=""; [[ -r "$STAMP" ]] && last="$(<"$STAMP")"
+age=-1; [[ -n "$last" ]] && age=$(( $(date +%s) - $(date -d "$last" +%s 2>/dev/null || echo 0) ))
+if (( age >= 0 && age <= 900 )); then
+    log_success "Auto-deploy: RUNNING (last successful sweep ${last}, $((age / 60)) min ago)"
+elif (( age > 900 )); then
+    log_warning "Auto-deploy: STALLED or OFF (last successful sweep ${last})"
 else
-    log_warning "Auto-deploy cron: DISABLED"
+    log_warning "Auto-deploy: no successful sweep recorded (${STAMP})"
 fi
+[[ -n "$cron_line" ]] && echo "  Schedule: $(echo "$cron_line" | awk '{print $1,$2,$3,$4,$5}')"
 
-# Last run
-if [[ -f "$LOG_FILE" ]]; then
-    last_line=$(tail -1 "$LOG_FILE" 2>/dev/null || true)
-    if [[ -n "$last_line" ]]; then
-        echo "  Last log entry: ${last_line}"
-    fi
-    line_count=$(wc -l < "$LOG_FILE")
-    echo "  Log file: ${LOG_FILE} (${line_count} lines)"
+if [[ -r "$LOG_FILE" ]]; then
+    echo "  Last log entry: $(tail -1 "$LOG_FILE")"
+    echo "  Log file: ${LOG_FILE} ($(wc -l < "$LOG_FILE") lines)"
 else
-    echo "  Log file: not found (${LOG_FILE})"
+    echo "  Log file: not readable (${LOG_FILE})"
 fi
 
 # Managed repos
