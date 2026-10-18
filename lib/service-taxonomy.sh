@@ -4,7 +4,7 @@
 set -euo pipefail
 
 #
-# Geodineum CLI — Service Taxonomy (geodineum service new)
+# Geodineum CLI — Service Taxonomy (the NEW branch of geodineum register)
 # ==========================================================
 # The interview asks WHAT IT IS; the requirement matrix decides WHAT RUNS;
 # the paved road (provision → register → heartbeat → mail-verify → verify)
@@ -23,14 +23,16 @@ set -euo pipefail
 # Taxonomy — the requirement matrix as data
 # =============================================================================
 
-GEO_SERVICE_TYPES=(website-wp website-static app-pwa webapp-gcore daemon gcore-service custom)
+GEO_SERVICE_TYPES=(website-wp website-static app-pwa webapp-gcore app daemon scheduled gcore-service custom)
 
 declare -A GEO_TYPE_LABEL=(
     [website-wp]="WordPress website (full CMS + gCore runtime)"
     [website-static]="Static website (plain files, optional COMMS form endpoint)"
     [app-pwa]="App / PWA (static shell + web-app manifest + service worker)"
     [webapp-gcore]="gCore web app (PHP on the shared framework, public, no WordPress)"
+    [app]="App (an HTTP service on its own port behind a proxy: own user, unit, health probe)"
     [daemon]="Daemon (systemd unit, own system user)"
+    [scheduled]="Scheduled job (runs on a timer under its own user, then exits)"
     [gcore-service]="gCore service (PHP headless, no WordPress)"
     [custom]="Custom (mesh identity only — bring your own runtime)"
 )
@@ -40,7 +42,9 @@ declare -A GEO_TYPE_VISIBILITY=(
     [website-static]=public
     [app-pwa]=public
     [webapp-gcore]=public
+    [app]=internal
     [daemon]=internal
+    [scheduled]=internal
     [gcore-service]=internal
     [custom]=internal
 )
@@ -51,7 +55,9 @@ declare -A GEO_TYPE_PROFILE=(
     [website-static]=web
     [app-pwa]=web
     [webapp-gcore]=web
+    [app]=headless
     [daemon]=service
+    [scheduled]=service
     [gcore-service]=service
     [custom]=service
 )
@@ -65,7 +71,9 @@ declare -A GEO_TYPE_CRED_GROUP=(
     [website-static]=geodineum-web
     [app-pwa]=geodineum-web
     [webapp-gcore]=geodineum-web
+    [app]=OWN
     [daemon]=OWN
+    [scheduled]=OWN
     [gcore-service]=geodineum
     [custom]=geodineum
 )
@@ -78,8 +86,10 @@ declare -A GEO_TYPE_ROWS=(
     [website-static]="docroot skeleton_static form_endpoint vhost manifest mail onboard web_perms"
     [app-pwa]="docroot skeleton_pwa form_endpoint vhost manifest mail onboard web_perms"
     [webapp-gcore]="docroot web_code_group skeleton_gcore gcore_bootstrap form_endpoint vhost manifest mail onboard web_perms"
-    [daemon]="own_user service_dirs manifest systemd_unit heartbeat mail onboard"
-    [gcore-service]="code_group service_dirs gcore_bootstrap manifest systemd_unit heartbeat mail onboard"
+    [app]="own_user service_dirs manifest systemd_unit mail onboard heartbeat"
+    [daemon]="own_user service_dirs manifest systemd_unit mail onboard heartbeat"
+    [scheduled]="own_user service_dirs manifest systemd_timer mail onboard heartbeat"
+    [gcore-service]="code_group service_dirs gcore_bootstrap manifest systemd_unit mail onboard heartbeat"
     [custom]="manifest mail onboard"
 )
 
@@ -109,7 +119,7 @@ taxonomy_print_matrix() {
 # =============================================================================
 # Row implementations — thin wrappers over existing machinery
 # =============================================================================
-# All rows read the SVC_* globals resolved by cmd_service_new and honour
+# All rows read the SVC_* globals resolved by register_new / register_integrate and honour
 # SVC_DRY_RUN. A failed row aborts the run (fail-loud, no silent partials).
 
 # --- website-wp: delegate wholesale to the existing WordPress paved path ----
@@ -508,7 +518,7 @@ ensure_manifest() {
 profile: ${SVC_PROFILE}
 environment: ${SVC_ENV}
 
-$(CAP_LANGUAGE="${SVC_LANG:-php}" gnode_block_yaml "${SVC_PROFILE}" "${SVC_NAME}")
+$(CAP_LANGUAGE="${SVC_LANG:-php}" gnode_block_yaml "${SVC_PROFILE}" "${SVC_NAME}" "${SVC_CONSTELLATION}")
 
 services:
   - id: "${SVC_NAME}"
@@ -516,7 +526,7 @@ services:
       description: "${GEO_TYPE_LABEL[$SVC_TYPE]}"
       type: "${SVC_TYPE}"
       tier: "SERVICE"
-      created_by: "geodineum service new"
+      created_by: "geodineum register"
 
 # Own-namespace only (braces literal = hash-tag). Anything foreign is
 # refused at onboarding — request cross-service access via the grant loop.
@@ -528,42 +538,144 @@ MFEOF
     log_success "Manifest: ${manifest} (profile=${SVC_PROFILE}, env=${SVC_ENV})"
 }
 
-# --- systemd unit: one generic template + per-service env file --------------
-ensure_systemd_unit() {
-    local unit="/etc/systemd/system/geodineum-${SVC_NAME}.service"
+# --- runnable skeleton: src/main.<lang> + run, per kind --------------------
+# kind: daemon (long-running, stops on SIGTERM) | app (a tiny HTTP server on
+# SVC_PORT answering /health, so the heartbeat probe has something to probe) |
+# scheduled (does one run and exits). The operator replaces src/main.* with the
+# real code; run stays.
+_skeleton_main() {
+    local kind="$1" lang="$2" out="$3" port="${SVC_PORT:-8080}"
+    case "${lang}:${kind}" in
+        python:app) cat > "$out" << PYEOF
+"""${SVC_NAME}: replace with the app. /health is what the heartbeat probes."""
+import http.server, os
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        ok = self.path == "/health"
+        self.send_response(200 if ok else 404); self.end_headers()
+        self.wfile.write(b"ok\n" if ok else b"")
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", int(os.environ.get("PORT", "${port}"))), H).serve_forever()
+PYEOF
+            ;;
+        python:scheduled) cat > "$out" << PYEOF
+"""${SVC_NAME}: one run of the job; the timer starts it again."""
+import os
+print(f"{os.environ.get('GNODE_SITE_ID')}: run complete", flush=True)
+PYEOF
+            ;;
+        python:*) cat > "$out" << PYEOF
+"""${SVC_NAME}: replace with the service. Stops cleanly on SIGTERM."""
+import os, signal, time
+running = True
+def stop(*_):
+    global running; running = False
+signal.signal(signal.SIGTERM, stop)
+print(f"{os.environ.get('GNODE_SITE_ID')} started", flush=True)
+while running:
+    time.sleep(1)
+PYEOF
+            ;;
+        node:app) cat > "$out" << JSEOF
+// ${SVC_NAME}: replace with the app. /health is what the heartbeat probes.
+require("http").createServer((q, r) => { r.writeHead(q.url === "/health" ? 200 : 404); r.end(q.url === "/health" ? "ok\n" : ""); })
+  .listen(Number(process.env.PORT || ${port}), "127.0.0.1");
+JSEOF
+            ;;
+        node:scheduled) cat > "$out" << JSEOF
+// ${SVC_NAME}: one run of the job; the timer starts it again.
+console.log(\`\${process.env.GNODE_SITE_ID}: run complete\`);
+JSEOF
+            ;;
+        node:*) cat > "$out" << JSEOF
+// ${SVC_NAME}: replace with the service. Stops cleanly on SIGTERM.
+console.log(\`\${process.env.GNODE_SITE_ID} started\`);
+const t = setInterval(() => {}, 1000);
+process.on("SIGTERM", () => { clearInterval(t); process.exit(0); });
+JSEOF
+            ;;
+        php:scheduled) cat > "$out" << PHPEOF
+<?php
+// ${SVC_NAME}: one run of the job; the timer starts it again.
+echo getenv('GNODE_SITE_ID') . ": run complete\n";
+PHPEOF
+            ;;
+        php:*) cat > "$out" << PHPEOF
+<?php
+// ${SVC_NAME}: replace with the service.
+echo getenv('GNODE_SITE_ID') . " started\n";
+while (true) { sleep(1); }
+PHPEOF
+            ;;
+        *:scheduled) cat > "$out" << SHEOF
+#!/bin/bash
+# ${SVC_NAME}: one run of the job; the timer starts it again.
+echo "\${GNODE_SITE_ID}: run complete"
+SHEOF
+            ;;
+        *) cat > "$out" << SHEOF
+#!/bin/bash
+# ${SVC_NAME}: replace with the service. Stops cleanly on SIGTERM.
+trap 'exit 0' TERM
+echo "\${GNODE_SITE_ID} started"
+while :; do sleep 1; done
+SHEOF
+            ;;
+    esac
+}
+
+# Env file + src/main.<lang> + run: shared by the unit and the timer rows.
+_svc_env_and_run() {
+    local kind="$1"
     local envfile="/etc/geodineum/services/${SVC_NAME}.env"
-    local run_user="$SVC_NAME"
-    if [[ "$SVC_DRY_RUN" == "true" ]]; then
-        log_dry "Install ${unit} (User=${run_user}, ExecStart=${SVC_PATH}/run) + ${envfile}"
-        return 0
-    fi
     mkdir -p /etc/geodineum/services
     if [[ ! -f "$envfile" ]]; then
         ledger_file "$SVC_NAME" config "$envfile"
         cat > "$envfile" << ENVEOF
 GNODE_SITE_ID=${SVC_NAME}
 GNODE_ENVIRONMENT=${SVC_ENV}
+GNODE_TOPOLOGY_NAMESPACE=${SVC_CONSTELLATION}
 VALKEY_HOST=${VALKEY_HOST:-127.0.0.1}
 VALKEY_PORT=${VALKEY_PORT:-47445}
 VALKEY_USER=gnode_client_${SVC_NAME}
 VALKEY_PASSWORD_FILE=${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${SVC_NAME}.password
+${SVC_PORT:+PORT=${SVC_PORT}}
 ENVEOF
         chown "root:${SVC_GROUP}" "$envfile"
         chmod 640 "$envfile"
     fi
-    if [[ ! -x "${SVC_PATH}/run" ]]; then
+    local lang="${SVC_LANG:-bash}" ext interp
+    case "$lang" in
+        python) ext=py interp=python3 ;;
+        node)   ext=js interp=node ;;
+        php)    ext=php interp=php ;;
+        *)      lang=bash ext=sh interp=bash ;;
+    esac
+    local main="${SVC_PATH}/src/main.${ext}"
+    if [[ ! -f "$main" ]]; then
+        ledger_mkdir "$SVC_NAME" data "${SVC_PATH}/src"
+        ledger_file "$SVC_NAME" data "$main"
+        _skeleton_main "$kind" "$lang" "$main"
+        chown "root:${SVC_GROUP}" "$main"
+        chmod 640 "$main"
+    fi
+    if [[ ! -f "${SVC_PATH}/run" ]]; then
         ledger_file "$SVC_NAME" data "${SVC_PATH}/run"
-        cat > "${SVC_PATH}/run" << 'RUNEOF'
-#!/bin/bash
-# Service entrypoint — replace with the real process (long-running, foreground).
-set -euo pipefail
-echo "geodineum service '${GNODE_SITE_ID}' has no implementation yet" >&2
-echo "replace $(dirname "$0")/run with the real entrypoint" >&2
-sleep infinity
-RUNEOF
+        printf '#!/bin/bash\n# Entrypoint: replace src/main.%s with the real code; this stays.\nexec %s "$(dirname "$0")/src/main.%s"\n' "$ext" "$interp" "$ext" > "${SVC_PATH}/run"
         chown "root:${SVC_GROUP}" "${SVC_PATH}/run"
         chmod 750 "${SVC_PATH}/run"
     fi
+}
+
+# --- systemd unit: one generic template + per-service env file --------------
+ensure_systemd_unit() {
+    local unit="/etc/systemd/system/geodineum-${SVC_NAME}.service"
+    local kind=daemon; [[ "$SVC_TYPE" == app ]] && kind=app
+    if [[ "$SVC_DRY_RUN" == "true" ]]; then
+        log_dry "Install ${unit} (User=${SVC_NAME}, ExecStart=${SVC_PATH}/run, ${SVC_LANG:-bash} skeleton) + /etc/geodineum/services/${SVC_NAME}.env"
+        return 0
+    fi
+    _svc_env_and_run "$kind"
     if [[ -f "$unit" ]]; then
         log_warning "Unit already exists — left untouched: ${unit}"
     else
@@ -574,9 +686,9 @@ After=network.target valkey-gnode.service
 
 [Service]
 Type=simple
-User=${run_user}
+User=${SVC_NAME}
 Group=${SVC_GROUP}
-EnvironmentFile=${envfile}
+EnvironmentFile=/etc/geodineum/services/${SVC_NAME}.env
 WorkingDirectory=${SVC_PATH}
 ExecStart=${SVC_PATH}/run
 Restart=on-failure
@@ -598,68 +710,84 @@ UNITEOF
     fi
 }
 
-# --- heartbeat wiring: timer pair, honest by construction --------------------
-# SETEX only while the main unit is ACTIVE (ExecCondition gate) — a written
-# timer must never report a dead service green.
-ensure_heartbeat() {
-    local hb_service="/etc/systemd/system/geodineum-${SVC_NAME}-heartbeat.service"
-    local hb_timer="/etc/systemd/system/geodineum-${SVC_NAME}-heartbeat.timer"
+# --- systemd timer: a oneshot unit and its schedule (scheduled jobs) --------
+ensure_systemd_timer() {
+    local unit="/etc/systemd/system/geodineum-${SVC_NAME}.service"
+    local timer="/etc/systemd/system/geodineum-${SVC_NAME}.timer"
+    local when="${SVC_SCHEDULE:-hourly}"
     if [[ "$SVC_DRY_RUN" == "true" ]]; then
-        log_dry "Install heartbeat timer (60s SETEX, gated on geodineum-${SVC_NAME}.service active)"
+        log_dry "Install ${unit} (oneshot, User=${SVC_NAME}) + ${timer} (OnCalendar=${when})"
         return 0
     fi
-    local hb_script="${SVC_PATH}/heartbeat.sh"
-    if [[ ! -x "$hb_script" ]]; then
-        ledger_file "$SVC_NAME" config "$hb_script"
-        cat > "$hb_script" << 'HSEOF'
-#!/bin/bash
-# Heartbeat sender — env comes from the unit's EnvironmentFile.
-# Key contract: CONTRACTS/heartbeat.md (node segment = short hostname).
-set -euo pipefail
-node="$(hostname -s)"
-ns="${GNODE_TOPOLOGY_NAMESPACE:-geodineum}"
-REDISCLI_AUTH="$(cat "${VALKEY_PASSWORD_FILE}")" \
-    valkey-cli -h "${VALKEY_HOST}" -p "${VALKEY_PORT}" --user "${VALKEY_USER}" \
-    SETEX "{${ns}}:gnode:heartbeat:${GNODE_ENVIRONMENT}:${GNODE_SITE_ID}:${node}" \
-    120 "{\"ts\":$(date +%s),\"node\":\"${node}\"}" >/dev/null
-HSEOF
-        chown "root:${SVC_GROUP}" "$hb_script"
-        chmod 750 "$hb_script"
-    fi
-    if [[ ! -f "$hb_service" ]]; then
-        cat > "$hb_service" << HBEOF
+    systemd-analyze calendar "$when" >/dev/null 2>&1 || { log_error "--schedule '${when}' is not a systemd calendar expression (e.g. hourly, daily, *:0/15)"; return 1; }
+    _svc_env_and_run scheduled
+    if [[ ! -f "$unit" ]]; then
+        cat > "$unit" << UNITEOF
 [Unit]
-Description=Heartbeat for geodineum-${SVC_NAME} (green only while the service is active)
+Description=Geodineum scheduled job: ${SVC_NAME}
 
 [Service]
 Type=oneshot
 User=${SVC_NAME}
 Group=${SVC_GROUP}
 EnvironmentFile=/etc/geodineum/services/${SVC_NAME}.env
-ExecCondition=/bin/systemctl is-active --quiet geodineum-${SVC_NAME}.service
-ExecStart=${hb_script}
-HBEOF
-        chmod 644 "$hb_service"
-        ledger_add "$SVC_NAME" config unit "geodineum-${SVC_NAME}-heartbeat.service"
+WorkingDirectory=${SVC_PATH}
+ExecStart=${SVC_PATH}/run
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${SVC_PATH}
+PrivateTmp=true
+UNITEOF
+        chmod 644 "$unit"
+        ledger_add "$SVC_NAME" config unit "geodineum-${SVC_NAME}.service"
     fi
-    if [[ ! -f "$hb_timer" ]]; then
-        cat > "$hb_timer" << HTEOF
+    if [[ ! -f "$timer" ]]; then
+        cat > "$timer" << TIMEREOF
 [Unit]
-Description=Heartbeat schedule for geodineum-${SVC_NAME}
+Description=Schedule for geodineum-${SVC_NAME}
 
 [Timer]
-OnBootSec=60
-OnUnitActiveSec=60
+OnCalendar=${when}
+Persistent=true
 
 [Install]
 WantedBy=timers.target
-HTEOF
-        chmod 644 "$hb_timer"
-        ledger_add "$SVC_NAME" config unit "geodineum-${SVC_NAME}-heartbeat.timer"
+TIMEREOF
+        chmod 644 "$timer"
+        ledger_add "$SVC_NAME" config unit "geodineum-${SVC_NAME}.timer"
         systemctl daemon-reload
-        systemctl enable --now "geodineum-${SVC_NAME}-heartbeat.timer" >/dev/null 2>&1 || true
+        systemctl enable --now "geodineum-${SVC_NAME}.timer" >/dev/null 2>&1 || true
+        log_success "Timer installed + enabled (${when}): ${timer}"
     fi
-    log_success "Heartbeat wired: {${GNODE_TOPOLOGY_NAMESPACE:-geodineum}}:gnode:heartbeat:${SVC_ENV}:${SVC_NAME}:$(hostname -s)"
+}
+
+# --- heartbeat: the one probe-gated client (scripts/heartbeat) --------------
+# Runs after onboard: the heartbeat runs with the credential's group, which only
+# exists once onboarding has minted the credential.
+ensure_heartbeat() {
+    local probe="${SVC_PROBE:-}"
+    if [[ -z "$probe" ]]; then
+        case "$SVC_TYPE" in
+            scheduled) probe="unit:geodineum-${SVC_NAME}.timer" ;;
+            app) probe="${SVC_PORT:+http:http://127.0.0.1:${SVC_PORT}/health}"; probe="${probe:-unit:geodineum-${SVC_NAME}.service}" ;;
+            *) probe="unit:${SVC_UNIT:-geodineum-${SVC_NAME}.service}" ;;
+        esac
+    fi
+    if [[ "$SVC_DRY_RUN" == "true" ]]; then
+        log_dry "Heartbeat {${SVC_CONSTELLATION}}:gnode:heartbeat:${SVC_ENV}:${SVC_NAME}:<node> while ${probe} passes"
+        return 0
+    fi
+    local script="${GEODINEUM_CLI_ROOT}/scripts/heartbeat/install-heartbeat.sh"
+    [[ -x "$script" ]] || { log_error "Heartbeat installer not found: ${script}"; return 1; }
+    local spec="${GEODINEUM_CONFIG_ROOT}/heartbeat/${SVC_NAME}.env"
+    local dropin="/etc/systemd/system/geodineum-heartbeat@${SVC_NAME}.service.d"
+    ledger_file "$SVC_NAME" config "$spec"
+    [[ -d "$dropin" ]] || ledger_add "$SVC_NAME" config dir "$dropin"
+    "$script" "$SVC_NAME" --probe "$probe" --constellation "$SVC_CONSTELLATION" --environment "$SVC_ENV" --apply >/dev/null \
+        || { log_error "Heartbeat install failed: ${script} ${SVC_NAME} --probe ${probe}"; return 1; }
+    ledger_add "$SVC_NAME" config unit "geodineum-heartbeat@${SVC_NAME}.timer"
+    log_success "Heartbeat: {${SVC_CONSTELLATION}}:gnode:heartbeat:${SVC_ENV}:${SVC_NAME}:<node> while ${probe} passes"
 }
 
 # --- mail: DKIM + authorized sender domain (setup-mail-stack.sh) -------------
@@ -684,19 +812,24 @@ ensure_mail() {
 
 # --- the paved road: onboard (identity + streams + register + mail probe) ---
 ensure_onboard() {
+    if [[ "$SVC_DRY_RUN" == "true" ]]; then
+        log_dry "Onboard: identity gnode_client_${SVC_NAME} (own-namespace grants from the manifest), streams, topology entity ($(profile_to_shape "${SVC_PROFILE:-web}") in {${SVC_CONSTELLATION:-?}}) and its intent"
+        return 0
+    fi
     local onboard="${GNODE_SCRIPTS}/onboard-service.sh"
     [[ -x "$onboard" ]] || onboard="${GEODINEUM_ROOT}/gNode/scripts/onboard-service.sh"
     if [[ ! -x "$onboard" ]]; then
         log_error "onboard-service.sh not found — is gNode installed?"
         return 1
     fi
-    local cred_group="${GEO_TYPE_CRED_GROUP[$SVC_TYPE]}"
+    local cred_group="${SVC_CRED_GROUP:-${GEO_TYPE_CRED_GROUP[$SVC_TYPE]}}"
     [[ "$cred_group" == "OWN" ]] && cred_group="$SVC_NAME"
     local -a args=("$SVC_NAME" --environment "$SVC_ENV" --cred-group "$cred_group")
     [[ -n "$SVC_MANIFEST_DIR" ]] && args+=(--yaml "$SVC_MANIFEST_DIR")
     [[ -n "$SVC_OWNER" ]] && args+=(--owner "$SVC_OWNER")
     [[ -n "$SVC_NOTIFY_EMAIL" ]] && args+=(--notify-email "$SVC_NOTIFY_EMAIL")
     [[ "$SVC_DRY_RUN" == "true" ]] && args+=(--dry-run)
+    [[ "${SVC_REGRANT:-false}" == "true" ]] && args+=(--regrant)
     log_detail "Running: ${onboard} ${args[*]}"
     "$onboard" "${args[@]}" || {
         log_error "Onboarding failed — service is NOT registered"
@@ -715,31 +848,21 @@ ensure_onboard() {
 _print_delegation_bundle() {
     local cred_file="${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${SVC_NAME}.password"
     [[ -r "$cred_file" ]] || { log_error "Credential missing after onboarding: ${cred_file}"; return 1; }
-    local password reader_group
-    password="$(cat "$cred_file")"
-    reader_group="${GEO_TYPE_CRED_GROUP[$SVC_TYPE]}"
+    local reader_group="${GEO_TYPE_CRED_GROUP[$SVC_TYPE]}"
     case "$reader_group" in
         geodineum-web) reader_group="www-data" ;;   # web reader on the worker
         OWN)           reader_group="$SVC_NAME" ;;
     esac
+    local owner="${SUDO_USER:-root}" home out
+    home="$(getent passwd "$owner" | cut -d: -f6)"
+    out="${home:-/root}/${SVC_NAME}.credential"
+    ( umask 077; cat "$cred_file" > "$out" )
+    chown "$owner" "$out" 2>/dev/null || true
     echo ""
-    echo "  ┌─ Delegated provisioning: '${SVC_NAME}' minted for node '${SVC_NODE}' ─────"
-    echo "  │  ACL user : gnode_client_${SVC_NAME}"
-    echo "  │  auth     : ${password}"
-    echo "  └───────────────────────────────────────────────────────────────────────"
-    echo ""
-    echo "  On '${SVC_NODE}', install the credential:"
-    echo "    sudo geodineum credential add --service ${SVC_NAME} --auth '${password}' --group ${reader_group}"
-    echo "    (equivalent: sudo ./scripts/add-service-credential.sh, same flags)"
-    echo ""
-    echo "  Then complete the worker-side rows for type '${SVC_TYPE}':"
-    local row
-    for row in ${GEO_TYPE_ROWS[$SVC_TYPE]}; do
-        case "$row" in manifest|mail|onboard) continue ;; esac
-        echo "    - ${row}"
-    done
-    echo "  (run 'geodineum service new ${SVC_NAME} --type ${SVC_TYPE} --env ${SVC_ENV}' there,"
-    echo "   or apply the rows by hand; the identity above is already live)"
+    echo "  '${SVC_NAME}' is registered here for node '${SVC_NODE}'; its credential is in ${out} (0600)."
+    echo "  on $(hostname -s):  scp ${out} <user>@${SVC_NODE}:"
+    echo "  on ${SVC_NODE}:  sudo geodineum credential add --service ${SVC_NAME} --auth-file ~/${SVC_NAME}.credential --group ${reader_group}"
+    echo "  on ${SVC_NODE}:  sudo geodineum register ${SVC_NAME} --new ${SVC_TYPE} --env ${SVC_ENV} --worker   # its files and units"
     echo ""
 }
 
@@ -776,6 +899,12 @@ ensure_web_perms() {
 taxonomy_apply() {
     local rows="${GEO_TYPE_ROWS[$SVC_TYPE]}"
     [[ -n "$SVC_NODE" ]] && rows="$GEO_DELEGATED_ROWS"
+    # On the worker of a delegated service: the host rows only (the master onboarded it).
+    if [[ "$SVC_WORKER" == "true" ]]; then
+        local r kept=""
+        for r in $rows; do [[ " $GEO_DELEGATED_ROWS " == *" $r "* ]] || kept+="$r "; done
+        rows="${kept% }"
+    fi
     local row n=0 total
     total=$(wc -w <<< "$rows")
     for row in $rows; do
@@ -812,7 +941,7 @@ _interview_type() {
     echo ""
     echo -e "${BOLD}What are you setting up?${NC}"
     echo "  1) Public   — serves visitors over HTTP (website, app)"
-    echo "  2) Internal — infrastructure (daemon, headless service)"
+    echo "  2) Internal — an app behind a proxy, a daemon, a scheduled job, a headless service"
     echo "  3) Custom   — mesh identity only (bring your own runtime)"
     local scope
     scope="$(_ask "  Choice [1-3]: " "")"
@@ -835,13 +964,17 @@ _interview_type() {
         2)
             echo ""
             echo -e "${BOLD}Which internal type?${NC}"
-            echo "  1) ${GEO_TYPE_LABEL[daemon]}"
-            echo "  2) ${GEO_TYPE_LABEL[gcore-service]}"
-            echo "  3) ${GEO_TYPE_LABEL[custom]}"
-            case "$(_ask "  Choice [1-3]: " "")" in
-                1) SVC_TYPE=daemon ;;
-                2) SVC_TYPE=gcore-service ;;
-                3) SVC_TYPE=custom ;;
+            echo "  1) ${GEO_TYPE_LABEL[app]}"
+            echo "  2) ${GEO_TYPE_LABEL[daemon]}"
+            echo "  3) ${GEO_TYPE_LABEL[scheduled]}"
+            echo "  4) ${GEO_TYPE_LABEL[gcore-service]}"
+            echo "  5) ${GEO_TYPE_LABEL[custom]}"
+            case "$(_ask "  Choice [1-5]: " "")" in
+                1) SVC_TYPE=app ;;
+                2) SVC_TYPE=daemon ;;
+                3) SVC_TYPE=scheduled ;;
+                4) SVC_TYPE=gcore-service ;;
+                5) SVC_TYPE=custom ;;
                 *) log_error "No type chosen"; exit 1 ;;
             esac
             ;;
@@ -850,7 +983,7 @@ _interview_type() {
     esac
 }
 
-cmd_service_new() {
+register_new() {
     SVC_TYPE=""
     SVC_NAME=""
     SVC_DOMAIN=""
@@ -867,6 +1000,7 @@ cmd_service_new() {
     SVC_DRY_RUN=false
     SVC_YES=false
     SVC_MANIFEST_DIR=""
+    SVC_LANG="" SVC_SCHEDULE="" SVC_PORT="" SVC_PROBE="" SVC_UNIT="" SVC_WORKER=false SVC_CRED_GROUP="" SVC_REGRANT=false
 
     local positional=""
     while [[ $# -gt 0 ]]; do
@@ -883,12 +1017,17 @@ cmd_service_new() {
             --form)         SVC_FORM=true; shift ;;
             --no-form)      SVC_FORM=false; shift ;;
             --node)         SVC_NODE="$2"; shift 2 ;;
+            --worker)       SVC_WORKER=true; shift ;;
+            --lang)         SVC_LANG="$2"; shift 2 ;;
+            --schedule)     SVC_SCHEDULE="$2"; shift 2 ;;
+            --port)         SVC_PORT="$2"; shift 2 ;;
+            --probe)        SVC_PROBE="$2"; shift 2 ;;
             --no-ssl)       SVC_NO_SSL=true; shift ;;
             --dry-run)      SVC_DRY_RUN=true; shift ;;
             --yes|-y)       SVC_YES=true; shift ;;
             --matrix)       taxonomy_print_matrix; exit 0 ;;
-            --help|-h)      usage_service_new; exit 0 ;;
-            -*)             log_error "Unknown option: $1"; usage_service_new; exit 1 ;;
+            --help|-h)      usage_register; exit 0 ;;
+            -*)             log_error "Unknown option: $1"; usage_register; exit 1 ;;
             *)
                 if [[ -z "$positional" ]]; then
                     positional="$1"
@@ -965,11 +1104,29 @@ cmd_service_new() {
         esac
     fi
 
+    # A runnable skeleton needs a language; an app also needs its port.
+    case "$SVC_TYPE" in
+        app|daemon|scheduled)
+            [[ -n "$SVC_LANG" ]] || SVC_LANG="$(_ask "Language [bash|python|node|php] [$([[ $SVC_TYPE == app ]] && echo python || echo bash)]: " "$([[ $SVC_TYPE == app ]] && echo python || echo bash)")"
+            [[ "$SVC_LANG" =~ ^(bash|python|node|php)$ ]] || { log_error "--lang must be bash, python, node or php"; exit 1; } ;;
+        gcore-service) SVC_LANG=php ;;
+    esac
+    if [[ "$SVC_TYPE" == app && -z "$SVC_PORT" ]]; then
+        SVC_PORT="$(_ask "Port it listens on, on 127.0.0.1 [8080]: " "8080")"
+    fi
+    [[ -z "$SVC_PORT" || "$SVC_PORT" =~ ^[0-9]{2,5}$ ]] || { log_error "--port must be a number"; exit 1; }
+    if [[ "$SVC_TYPE" == scheduled && -z "$SVC_SCHEDULE" ]]; then
+        SVC_SCHEDULE="$(_ask "Schedule (systemd calendar: hourly, daily, *:0/15) [hourly]: " "hourly")"
+    fi
+    # shellcheck source=/dev/null
+    source "${GNODE_SCRIPTS}/cli/constellation.sh" 2>/dev/null || true
+    SVC_CONSTELLATION="$(gnode_cli_constellation 2>/dev/null || echo "${GNODE_TOPOLOGY_NAMESPACE:-geodineum}")"
+
     # Resolve paths + derived values.
     SVC_PROFILE="${GEO_TYPE_PROFILE[$SVC_TYPE]}"
     SVC_GROUP="geodineum"
     case "$SVC_TYPE" in
-        daemon|gcore-service) SVC_GROUP="$SVC_NAME" ;;
+        app|daemon|scheduled|gcore-service) SVC_GROUP="$SVC_NAME" ;;
     esac
     if [[ -z "$SVC_PATH" ]]; then
         if [[ "${GEO_TYPE_VISIBILITY[$SVC_TYPE]}" == "public" ]]; then
@@ -992,7 +1149,11 @@ cmd_service_new() {
     print_kv "Service" "$SVC_NAME"
     [[ -n "$SVC_DOMAIN" ]] && print_kv "Domain" "$SVC_DOMAIN"
     print_kv "Environment" "$SVC_ENV"
+    print_kv "Constellation" "$SVC_CONSTELLATION"
     print_kv "Profile" "$SVC_PROFILE"
+    [[ -n "$SVC_LANG" ]] && print_kv "Language" "$SVC_LANG"
+    [[ -n "$SVC_PORT" ]] && print_kv "Port" "127.0.0.1:${SVC_PORT}"
+    [[ -n "$SVC_SCHEDULE" ]] && print_kv "Schedule" "$SVC_SCHEDULE"
     print_kv "Cred group" "$([ "${GEO_TYPE_CRED_GROUP[$SVC_TYPE]}" == OWN ] && echo "$SVC_NAME" || echo "${GEO_TYPE_CRED_GROUP[$SVC_TYPE]}")"
     print_kv "Mail" "${SVC_MAIL_DOMAIN:-skip}"
     [[ "$SVC_FORM" == "true" ]] && print_kv "Form endpoint" "form/submit.php → COMMS"
@@ -1000,6 +1161,7 @@ cmd_service_new() {
     [[ -n "$SVC_OWNER" ]] && print_kv "Owner/Tenant" "$SVC_OWNER"
     local rows_plan="${GEO_TYPE_ROWS[$SVC_TYPE]}"
     [[ -n "$SVC_NODE" ]] && rows_plan="$GEO_DELEGATED_ROWS"
+    [[ "$SVC_WORKER" == "true" ]] && rows_plan="(host rows only) ${rows_plan}"
     print_kv "Rows" "$rows_plan"
     echo ""
 
@@ -1033,9 +1195,13 @@ cmd_service_new() {
     echo "    geodineum status ${SVC_NAME}"
     echo "    sudo geodineum grants show ${SVC_NAME}"
     case "$SVC_TYPE" in
-        daemon|gcore-service)
-            echo "    # deploy your code, then:"
+        app|daemon|gcore-service)
+            echo "    # replace ${SVC_PATH}/src/main.* with your code, then:"
             echo "    sudo systemctl start geodineum-${SVC_NAME}"
+            ;;
+        scheduled)
+            echo "    # replace ${SVC_PATH}/src/main.* with the job; it runs ${SVC_SCHEDULE:-hourly}:"
+            echo "    systemctl list-timers geodineum-${SVC_NAME}.timer"
             ;;
         webapp-gcore)
             echo "    # app code: ${SVC_PATH}/src (outside the docroot)"
@@ -1049,49 +1215,3 @@ cmd_service_new() {
     echo ""
 }
 
-# =============================================================================
-# Usage
-# =============================================================================
-
-usage_service_new() {
-    cat << EOF
-Usage: geodineum service new [<domain-or-name>] [options]
-
-Taxonomy-driven service onboarding. The interview asks what the service IS;
-a per-type requirement matrix decides what runs; every type ends on the same
-paved road (provision → register → heartbeat → mail-verify → verify).
-
-Types (--type):
-  public:   website-wp | website-static | app-pwa | webapp-gcore
-  internal: daemon | gcore-service | custom
-
-Options:
-  --type <type>            Service type (interactive interview if omitted)
-  --domain <domain>        Domain (public types; a dotted positional works too)
-  --env <tier>             DTAP environment — REQUIRED, never assumed
-                           (testing|staging|acceptance|production)
-  --path <dir>             Service root (default: /var/www/<domain> or
-                           /opt/geodineum/services/<name>)
-  --owner <tenant>         Tenant/owner for cross-site discovery
-  --theme <name>           Child theme (website-wp only)
-  --notify-email <addr>    Wire a COMMS email channel + dispatch-verify it
-  --mail-domain <domain>   Provision DKIM sender identity for this domain
-  --no-mail                Skip the mail row
-  --form / --no-form       Include the COMMS form endpoint (static default: on)
-  --node <name>            Delegated provisioning: mint identity + credential
-                           on this master for a worker node to install
-  --no-ssl                 Skip certbot
-  --matrix                 Print the requirement matrix and exit
-  --dry-run                Preview all rows without changing anything
-  --yes, -y                Non-interactive (requires --type and --env)
-  --help, -h               Show this help
-
-Examples:
-  sudo geodineum service new                                  # interview
-  sudo geodineum service new example.com --type website-static --env production
-  sudo geodineum service new app.example.com --type webapp-gcore --env production
-  sudo geodineum service new worker1 --type daemon --env production --yes
-  sudo geodineum service new ml_api --type daemon --env production --node gpu-node-1
-  geodineum service new --matrix
-EOF
-}

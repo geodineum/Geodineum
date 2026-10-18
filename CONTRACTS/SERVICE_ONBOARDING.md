@@ -31,7 +31,7 @@ audit. The paved road below is five commands.
 - Each type carries a **requirement matrix** — the interview asks what the
   service IS; the matrix decides what runs (vhost/certbot, docroot, systemd
   unit + own user, cred model, mail, heartbeat); every type ends on the SAME
-  paved road. `geodineum service new --matrix` prints it; the single source
+  paved road. `geodineum register --matrix` prints it; the single source
   is `lib/service-taxonomy.sh`.
 - Every service gets its own **ValKey identity**: ACL user
   `gnode_client_<service>`, credential at
@@ -50,7 +50,7 @@ audit. The paved road below is five commands.
 ## 2. Declare — the manifest (ONE schema)
 
 Create `.geodineum/gnode_services.yaml` (or pass `--yaml <dir>`). Every
-generator in the estate (`service new`, `new site`, `register`, the
+generator in the estate (`register` and its type rows, the
 scaffolder templates) emits this same shape:
 
 ```yaml
@@ -106,7 +106,7 @@ old fallback (a broad legacy-uniform grant set) is retired: it silently
 handed `{testing..production}:gnode:*`, `gnode:*`, `topology:*`,
 `template:*`, `membership:*` to services that asked for nothing, and looked
 correct on every own-namespace check. Regenerate an undeclared manifest with
-`sudo geodineum register <service> --force`, then `--regrant`.
+`sudo geodineum register <its path>` (it recomposes the grants when the manifest changed).
 
 > **`services[].capabilities` is gone.** It was read by nothing —
 > `manifest-policy.sh` consumes only `consumes`/`produces`. The declaration is
@@ -143,37 +143,38 @@ namespace classes** (own namespace, per-site gnode/gcore bus, ecosystem bus,
 shared defaults, env-tagged streams, shared topology, legacy aliases —
 `access-grants.scn.md ::PATTERNS`).
 
-## 3. Onboard + register — five commands
+## 3. Onboard + register — one command
 
-**Preferred entry: `sudo geodineum service new`** — the taxonomy interview
-(or `--type <type> --env <tier> --yes` non-interactive) runs the type's
-matrix rows and ends on exactly the steps below, including the mail
-dispatch-verification probe. Delegated provisioning for a worker node:
-`--node <name>` mints identity + credential on the master and prints the
-`add-service-credential.sh` one-liner for the worker. The manual road:
+**`sudo geodineum register`** is the only entry. It asks NEW or INTEGRATE.
+- **NEW** (`--new <type> --env <tier>`, `--yes` for no questions) runs the type's
+  rows and ends on the steps below, including the mail dispatch-verification
+  probe.
+- **INTEGRATE** (a path) scans an existing codebase and applies only what it
+  lacks, through the same rows.
+- **A worker node:** `--node <name>` on the master mints the identity and writes
+  its credential to a 0600 file. On the node, `credential add --auth-file`
+  installs it and `register … --worker` sets up the files and units.
+
+What it does, in order (the parts register composes; each is idempotent):
 
 ```bash
-# 1. Mint identity + streams + discovery (CONSTELLATION MASTER — the ACL
-#    admin credential exists only there):
-sudo geodineum provision-service myservice   # wraps onboard-service.sh --yaml ...
+# 1. Identity + streams + discovery + topology entity + intent (on the master):
+#    gNode/scripts/onboard-service.sh <service> --yaml <dir> --environment <tier>
+#    The manifest's gnode: block is the declaration (shape, constellation, axes);
+#    a site is placed on the node that registers it.
 
-# 2. Register the topology entity (on the master; recipes per shape: REGISTRATION.md):
-sudo geodineum topology register service myservice service
-#    profiles: web | headless | service | system | component
-#    The manifest's gnode: block, when present, is the declaration instead.
-
-# 3. Wire the heartbeat (in your service, every ~60s):
+# 2. The heartbeat, after onboarding (it runs with the credential's group):
+#    a probe-gated timer, scripts/heartbeat/install-heartbeat.sh, whose key is
+#    written ONLY while the probe passes — or your service writes its own:
 #    SETEX {geodineum}:gnode:heartbeat:production:myservice:$(hostname -s) 120 '{"ts":<unix>,"node":"<short-hostname>"}'   # node segment: CONTRACTS/heartbeat.md — add yourself to its census
 #    → your tile on the wp-admin dashboard goes green; missing/stale = red.
-#    A service that writes no heartbeat of its own integrates with geodineum-heartbeat;
-#    the probe is the proof (the key is written ONLY when the probe passes):
-#    on <host>: scripts/heartbeat/install-heartbeat.sh myservice --probe unit:myservice [--apply]
-#    probes: unit:<unit> | tcp:<host>:<port> | http:<url> | pid:<pidfile> | cmd:</abs/path>
+#    register's probe: --probe unit:<unit> | tcp:<host>:<port> | http:<url> | pid:<pidfile> | cmd:</abs/path>
+#    (default: the unit; an app's /health on NEW, its port on INTEGRATE)
 
-# 4. Prove the round-trip (any registered site stream):
+# 3. Prove the round-trip (any registered site stream):
 #    XADD your own stream, poll the reply key, find your receipt (§5).
 
-# 5. Check what you can touch:
+# 4. Check what you can touch:
 sudo geodineum grants show myservice
 ```
 

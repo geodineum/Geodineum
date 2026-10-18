@@ -42,6 +42,6 @@ cli:
       category: Mail
     - name: credential add
       handler: scripts/add-service-credential.sh
-      description: Install a service's ValKey credential on this node (auth printed by provision-service / service new --node on the master)
+      description: Install a service's ValKey credential on this node (the file register --node wrote on the master: --auth-file)
       requires_sudo: true
       category: Constellation

@@ -45,7 +45,7 @@ is a standby that serves only when the ring is empty.
 ### The manifest block
 
 The declaration lives in the service's `.geodineum/gnode_services.yaml`. Every
-generator (`service new`, `new site`, `register`) writes it.
+generator (`register`, `new site`, `register`) writes it.
 
 ```yaml
 profile: service            # fallback when there is no gnode: block
@@ -125,28 +125,19 @@ A site is a website or web app: WordPress, static, PWA or a gCore web app.
 
 ```bash
 # on master: new site, everything included (vhost, TLS, ACL, manifest, topology)
-sudo geodineum new site example.com --env production
+sudo geodineum register example.com --new website-wp --env production
 
 # or the type-driven interview for any public type
-sudo geodineum service new example.com --type website-static --env production
+sudo geodineum register example.com --new website-static --env production
 
-# or an existing directory
-sudo geodineum register example_com --express --path /var/www/example.com --env production
-
-# only the topology entity, from the profile
-sudo geodineum topology register service example_com web --env production
+# or an existing directory: scan, report, add what it lacks
+sudo geodineum register /var/www/example.com --env production
 ```
 
-A web site is placed on the node that runs the command, so its health is that
-node's daemon heartbeat. `--on <node>` places it on another node; `--on ''` skips
-the placement. `--manifest <path>` registers from the site's manifest instead of
-the profile:
-
-```bash
-# on master
-sudo geodineum topology register service example_com web --env production --on <node>
-sudo geodineum topology register service example_com --manifest /var/www/example.com/.geodineum/gnode_services.yaml
-```
+A web site is placed on the node that registers it, so its health is that node's
+daemon heartbeat. The topology primitive underneath (`geodineum topology register
+service <id> [profile] [--manifest <path>] [--on <node>]`) is for repairing one
+entity by hand, never the way to register.
 
 Check and deregister:
 
@@ -166,18 +157,17 @@ A daemon (shape 3.3) has its own system user and process. A headless app
 (shape 3.2) is an application with no public site.
 
 ```bash
-# on master: the interview asks what it is, then runs that type's rows
-sudo geodineum service new myservice --type daemon --env production --yes
-sudo geodineum service new myservice --type gcore-service --env production --yes
+# on master: the type's rows, identity to heartbeat
+sudo geodineum register myservice --new daemon --env production --yes
+sudo geodineum register myapp --new app --port 8090 --env production --yes      # shape app
+sudo geodineum register nightly --new scheduled --schedule daily --env production --yes
 
-# the manual road, same result
-sudo geodineum provision-service myservice
-sudo geodineum topology register service myservice service     # daemon
-sudo geodineum topology register service myservice headless    # app
+# an existing service: scan, report, add what it lacks
+sudo geodineum register /srv/myservice --env production
 ```
 
 A worker machine gets its identity from the master with
-`--node <name>` (`SERVICE_ONBOARDING.md` section 3), then installs the credential
+`register … --node <name>` (`SERVICE_ONBOARDING.md` section 3), then installs the credential
 with `sudo geodineum credential add`.
 
 Liveness: have the service write its own heartbeat (`heartbeat.md`), or put the
@@ -216,7 +206,7 @@ and a probe.
 
 ```bash
 # on master: identity + manifest + topology entity (no runtime is installed)
-sudo geodineum service new billing --type custom --env production --yes
+sudo geodineum register billing --new custom --env production --yes
 
 # on the node that runs it, from the Geodineum checkout: a heartbeat written only when the probe passes
 sudo scripts/heartbeat/install-heartbeat.sh billing --probe unit:billing            # plan

@@ -43,8 +43,10 @@ _dr_vk() {
 _dr_safe_path() {
     local p="$1" root
     [[ "$p" == /* && "$p" != *..* ]] || return 1
+    # A codebase's .geodineum/ can be anywhere; only what registration created in it is listed.
+    [[ "$p" == */.geodineum || "$p" == */.geodineum/* ]] && return 0
     for root in "$GEODINEUM_WEB_ROOT" "${GEODINEUM_ROOT}/services" \
-        "${GEODINEUM_CONFIG_ROOT}/manifests" "${GEODINEUM_CONFIG_ROOT}/services" /etc/systemd/system; do
+        "${GEODINEUM_CONFIG_ROOT}/manifests" "${GEODINEUM_CONFIG_ROOT}/services" "${GEODINEUM_CONFIG_ROOT}/heartbeat" /etc/systemd/system; do
         [[ "$p" == "$root"/?* ]] && return 0
     done
     return 1

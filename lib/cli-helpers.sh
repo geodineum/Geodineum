@@ -136,7 +136,7 @@ registry_has() {
 # Site-id resolution
 # =============================================================================
 
-# Convert a domain (innovagent.net) to its site_id form (example_site).
+# Convert a domain (example.site) to its site_id form (example_site).
 resolve_site_id_from_domain() {
     local domain="$1"
     [[ -n "$domain" ]] || return 1

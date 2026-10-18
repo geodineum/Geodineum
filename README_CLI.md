@@ -22,149 +22,50 @@ sudo ln -sf /opt/geodineum/Geodineum/geodineum /usr/local/bin/gcli
 
 ## Commands
 
-### `register` — Register an existing service
+### `register` — bring a service on
 
-The **single registration authority** for the entire ecosystem. Creates the `.geodineum/` directory in the service root, provisions ACL credentials and streams, and writes the `gnode:` declaration its topology entity is registered from ([CONTRACTS/REGISTRATION.md](CONTRACTS/REGISTRATION.md)).
-
-```bash
-sudo geodineum register <site_id> [options]
-```
-
-**Capability sources** (pick one):
-
-| Flag | Description |
-|------|-------------|
-| `--express` | Auto-detect capabilities by scanning the service root (language, framework, protocol, scope) |
-| `--yaml <path>` | Read from YAML file. Auto-detects flat (`wp-config-geodineum.yaml`) or daemon (`gnode_services.yaml`) format |
-| `--template <preset>` | Use a capability preset: `wordpress`, `http-api`, `worker`, `inference` |
-
-**Options:**
-
-| Flag | Description |
-|------|-------------|
-| `--path <dir>` | Service root directory. Auto-detected for WordPress sites (`/var/www/{domain}`) |
-| `--env <environment>` | DTAP environment: `testing` (default), `staging`, `acceptance`, `production` |
-| `--owner <tenant_id>` | Tenant/owner for cross-site discovery |
-| `--force` | Regenerate ACL password and overwrite existing config |
-| `--dry-run` | Preview without making changes |
-
-**What it creates:**
-
-```
-<service_root>/.geodineum/
-  ├── .htaccess              Deny from all (web access protection)
-  ├── credentials/
-  │   └── valkey_client_{site_id}.password  → /etc/geodineum/credentials/...
-  ├── config.yaml            Unified config (identity, environment, ValKey, capabilities)
-  ├── gnode_services.yaml    manifest; its `gnode:` block is the topology declaration
-  ├── config-schema.yaml     Config option schema (generated on import)
-  └── .registered            Timestamp + hash marker
-```
-
-**Express mode** scans the service root and infers:
-- Language (PHP, Python, Node, Rust, Go, Ruby, Java)
-- Framework (WordPress, Laravel, Django, FastAPI, Express, Axum, etc.)
-- Protocol (REST, GraphQL, gRPC, gNode stream)
-- Scope (client-facing, daemon, worker)
-- Log and documentation locations
-
-Shows detected values for interactive confirmation before proceeding.
-
-**Examples:**
+The one route for registering. With no mode it asks: set up a **NEW** service, or
+**INTEGRATE** an existing one. A path to an existing directory means INTEGRATE.
 
 ```bash
-# Express mode — scan and infer capabilities
-sudo geodineum register your_site --express --env production
-
-# From existing YAML config
-sudo geodineum register your_site --yaml /var/www/your-site/wp-config-geodineum.yaml --env production
-
-# With capability preset and tenant grouping
-sudo geodineum register client_app --template http-api --path /opt/apps/client --owner acme --env production
-
-# Preview only
-geodineum register new_service --template worker --path /opt/svc --dry-run
+sudo geodineum register                                         # asks
+sudo geodineum register --matrix                                # the types and what each sets up
+sudo geodineum register example.com --new website-static --env production
+sudo geodineum register blog.example.com --new website-wp --theme gcube --env testing
+sudo geodineum register api_worker --new app --lang python --port 8090 --env testing
+sudo geodineum register nightly_sync --new scheduled --schedule daily --env production
+sudo geodineum register /srv/existing-app --env production      # integrate
 ```
 
----
+**NEW** prepares a skeleton of the chosen type with its integration points
+already wired: a manifest with a `gnode:` block, its own identity and credential,
+the topology entity and intent, the probe-gated heartbeat, the COMMS
+notification channel, and the visitor beacon or form endpoint where there is a
+front end.
+- Public types: `website-wp`, `website-static`, `app-pwa`, `webapp-gcore`.
+- Internal types: `app` (an HTTP service on its own port, `/health` probed),
+  `daemon`, `scheduled` (a systemd timer), `gcore-service`, `custom`.
+- `app`, `daemon` and `scheduled` get a runnable `src/main.<lang>` in bash,
+  python, node or php.
 
-### `new site` — Deploy a WordPress site
+**INTEGRATE** scans the codebase and reports:
+- its language and framework
+- any manifest it already has
+- its systemd unit or timer, its port and its vhost
+- whether it speaks gNode, and whether it already has a heartbeat, an identity
+  or a topology entity
+- the other namespaces its code names. These become grant requests, never grants.
 
-Full WordPress deployment with gNode integration, theme activation, and security hardening in one command.
+It then lists what it lacks and what it will do about each, and after a
+confirmation applies only those parts, through the same rows as NEW. An app's
+heartbeat probes its port unless `--probe` names a URL.
 
-```bash
-sudo geodineum new site <domain> [options]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--theme <name>` | Child theme: `gcube` |
-| `--theme-path <path>` | Custom theme source path (auto-detected if omitted) |
-| `--env <environment>` | DTAP environment (default: `testing`) |
-| `--owner <tenant_id>` | Tenant/owner for cross-site discovery |
-| `--no-ssl` | Skip SSL certificate setup |
-| `--dry-run` | Preview without making changes |
-
-**Steps performed:**
-1. WordPress deployment via gTemplate installer
-2. `.geodineum/` creation + gNode onboarding (ACL, streams, capabilities)
-3. Web hardening (.htaccess deny rules on infrastructure directories)
-
-```bash
-sudo geodineum new site example.com --theme gcube --env production
-sudo geodineum new site test.example.com --theme gcube --env testing --no-ssl
-```
-
----
-
-### `new service` — Scaffold a standalone service
-
-Creates a service directory with bootstrap code, capability config, and full gNode onboarding.
-
-```bash
-sudo geodineum new service <name> [options]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--lang <language>` | Bootstrap language: `php`, `python`, `node` (default: `php`) |
-| `--template <preset>` | Capability preset: `http-api` (default), `worker`, `inference` |
-| `--path <dir>` | Install path (default: `/opt/geodineum/services/<name>`) |
-| `--env <environment>` | DTAP environment (default: `testing`) |
-| `--owner <tenant_id>` | Tenant/owner for cross-site discovery |
-| `--dry-run` | Preview without making changes |
-
-**Creates:**
-- `src/bootstrap.{php,py,js}` — ready-to-run service code with ValKey connection
-- `.geodineum/` — config, credentials, capability registration
-- `.env` — service environment variables
-
-```bash
-sudo geodineum new service my_api --lang php --template http-api
-sudo geodineum new service ml_worker --lang python --template inference --owner acme
-```
-
----
-
-### `new pipeline` — Create a data pipeline
-
-Service variant with a cron schedule and ingest bootstrap code.
-
-```bash
-sudo geodineum new pipeline <name> --source <url> [options]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--source <url>` | Data source URL (required) |
-| `--schedule <cron>` | Cron schedule (default: `*/5 * * * *`) |
-| `--lang <language>` | Bootstrap language: `php`, `python` (default: `python`) |
-| `--env <environment>` | DTAP environment (default: `testing`) |
-
-```bash
-sudo geodineum new pipeline stock_feed --source https://api.example.com/feed --lang python
-sudo geodineum new pipeline log_ingest --source https://logs.internal/stream --schedule "*/15 * * * *"
-```
+Registering again is the same command: a changed manifest recomposes its grants.
+Everything registration creates on the host is recorded in
+`/etc/geodineum/registrations/<id>.tsv`, which is what `geodineum deregister`
+undoes. A service that runs on another node: `--node <name>` on the master writes
+its credential to a 0600 file, then `--worker` on that node sets up its files and
+units.
 
 ---
 
@@ -303,73 +204,6 @@ Show or generate the ViewKey for non-production sites.
 
 ---
 
-### `info` — Ecosystem and site information
-
-```bash
-geodineum status [<site_id>]
-```
-
-Without a site_id, shows ecosystem overview: ValKey status, credentials, services, components.
-
-With a site_id, shows:
-- Credentials and ACL user
-- ValKey connection test
-- Stream status (per-environment message counts)
-- `.geodineum/` directory status (config, credentials symlink, registration marker)
-- File paths (site config, web root, service directory)
-- COMMS notification config
-
----
-
-### `list` — List registered services
-
-```bash
-geodineum status [--json]
-```
-
-Queries the ValKey site registry. Shows site ID, active environment, and status.
-
----
-
-### `update-service` — Update an existing registration
-
-Re-detects or re-applies capabilities, regenerates `.geodineum/` config files, and pushes changes to ValKey. The service must already be registered.
-
-```bash
-sudo geodineum update-service <site_id> [options]
-```
-
-**Capability sources** (pick one):
-
-| Flag | Description |
-|------|-------------|
-| `--express` | Re-scan service root and infer capabilities |
-| `--yaml <path>` | Re-read capabilities from YAML file |
-| `--template <preset>` | Re-apply capability preset |
-
-**Options:**
-
-| Flag | Description |
-|------|-------------|
-| `--reimport` | Also re-import app config from service files |
-| `--dry-run` | Preview without making changes |
-
-**What gets updated:**
-- `.geodineum/config.yaml` — unified config with new capabilities
-- `.geodineum/gnode_services.yaml` — daemon capability config
-- ValKey `{site_id}:config:capabilities` hash
-- `PUBLISH` notification for running services
-- Daemon re-discovers within 120s (mtime-based detection)
-
-```bash
-sudo geodineum update-service your_site --express
-sudo geodineum update-service my_api --template inference
-sudo geodineum update-service my_app --yaml /opt/app/config.yaml --reimport
-geodineum update-service my_api --express --dry-run
-```
-
----
-
 ### `deregister` — remove a service
 
 The one route that removes a service: the inverse of registering it.
@@ -471,23 +305,6 @@ sudo geodineum topology deregister --shape <site|app|daemon|component|node> --co
 ```
 
 One recipe per entity type, with checks and refusals: [CONTRACTS/REGISTRATION.md](CONTRACTS/REGISTRATION.md).
-
----
-
-### `check` — Ecosystem config health check
-
-```bash
-geodineum status --config [options]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--site <id>` | Check specific site only |
-| `--verbose` | Show all checks (not just failures) |
-| `--json` | Machine-readable JSON output |
-| `--fix` | Attempt to fix issues (requires root) |
-
-Wraps `validate-geodineum-config.sh` (7-layer config health check).
 
 ---
 
@@ -668,10 +485,10 @@ The environment (`testing`, `staging`, `acceptance`, `production`) is the manife
 sudo geodineum install --profile standard
 
 # 2. Deploy a WordPress site
-sudo geodineum new site myapp.com --theme gcube --env testing
+sudo geodineum register myapp.com --new website-wp --theme gcube --env testing
 
 # 3. Register an existing service
-sudo geodineum register my_api --express --path /opt/my-api --env production
+sudo geodineum register /opt/my-api --env production
 
 # 4. Import and manage config
 sudo geodineum config import my_api

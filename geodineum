@@ -5,9 +5,8 @@
 # Unified entry point for the Geodineum ecosystem.
 #
 # Usage:
-#   geodineum new site <domain> [--theme gcube] [--env production] [--owner tenant_id]
-#   geodineum new service <name> [--lang php|python|node] [--template http-api|worker|inference] [--gcore]
-#   geodineum new pipeline <name> --source <url> [--schedule "*/5 * * * *"] [--lang python]
+#   geodineum register [<path>|<domain>|<name>] [--new <type> | --integrate]
+#   geodineum deregister <id>
 #   geodineum status [<id> | <component> | --config | --visitors] [--json]
 #   geodineum config <set|get|list> <site_id> [...]
 #   geodineum install [--profile minimal|standard|full] [...]
@@ -289,10 +288,7 @@ Commands:
   status <component>        A component's own status (comms, gflow, gschedule, bak, geodeploy, ...)
   status --config           This host's configuration health (--fix, --verbose, --site <id>)
   status --visitors [<id>]  Visitor counts today/7d/30d from the cookieless beacon
-  new site <domain>         Deploy a WordPress site with Geodineum integration
-  new service <name>        Scaffold a standalone gNode service (--gcore for full framework)
-  new pipeline <name>       Create a data pipeline (service variant)
-  register <site_id>        Register existing service (ACL + streams + .geodineum/)
+  register [<path|domain>]  Bring a service on: asks NEW (a wired skeleton) or INTEGRATE (scan existing code)
   env set <id> <dtap>        Change DTAP environment (testing/staging/production)
   env show <id>              Show current environment, viewkey, gate status
   env viewkey <id>           Show or generate viewkey for non-production sites
@@ -300,12 +296,10 @@ Commands:
   config get <id> [key]      Get config value(s) for a site
   config list <id>           List all config for a site (ValKey + .geodineum/)
   config import <id>         Scan service root, import config files into ValKey
-  update-service <id>       Update capabilities and config for an existing service
   deregister <id>           Remove a service: the inverse of registering it (--help)
   constellation new <name>  Start a new constellation on a fresh machine (also: status, close, join-replica)
   node add|remove <name>    Add a machine to the constellation, or remove one (on the master)
   node expose|show          The work classes this node processes
-  provision-service <svc>   Mint a service's ValKey auth on the master for a node to use
   service <action>          Per-service install/uninstall/health for manifest services
   harden                    Deploy web-deny rules to all ecosystem directories
   update                    Pull latest for all installed components
@@ -319,38 +313,12 @@ Commands:
   manifest sync             Resolve all manifests and publish their values to the ValKey registry
   describe <service>        Pretty-print a service's resolved manifest (from registry or file)
 
-Site options:
-  --theme <name>            Child theme: gcube
-  --theme-path <path>       Custom theme source path
-  --env <environment>       DTAP environment (default: testing)
-  --owner <tenant_id>       Tenant/owner for cross-site discovery
-  --no-ssl                  Skip SSL certificate setup
-
-Service options:
-  --lang <language>         Bootstrap language: php, python, node (default: php)
-  --template <preset>       Capability preset: http-api, worker, inference (default: http-api)
-  --path <dir>              Custom install path (default: /opt/geodineum/services/<name>)
-  --env <environment>       DTAP environment (default: testing)
-  --owner <tenant_id>       Tenant/owner for cross-site discovery
-
-Pipeline options:
-  --source <url>            Data source URL (required)
-  --schedule <cron>         Cron schedule (default: "*/5 * * * *")
-  --lang <language>         Bootstrap language: php, python (default: python)
-  --env <environment>       DTAP environment (default: testing)
-
 Deregister options:
   --purge-data              Also remove the data registration created
   --keep-acl                Keep the ValKey identity
   --keep-cache              Keep cache/rate-limit keys
   --dry-run                 Show the plan only
   --force                   Skip confirmation prompt
-
-Update-service options:
-  --express                 Re-scan and infer capabilities
-  --yaml <path>             Re-read capabilities from YAML file
-  --template <preset>       Re-apply capability preset
-  --reimport                Also re-import app config from service files
 
 Update options:
   --component <name>        Update only a specific component
@@ -367,31 +335,17 @@ General:
   --version, -v             Show version
 
 Examples:
-  # Onboard any service type via the taxonomy interview (or --type flags)
-  sudo geodineum service new
-  sudo geodineum service new example.com --type website-static --env production
-  sudo geodineum service new app.example.com --type webapp-gcore --env production
-
-  # Deploy a WordPress site with gCube theme
-  sudo geodineum new site test.example.com --theme gcube --env testing
-
-  # Scaffold a PHP API service
-  sudo geodineum new service my_api --lang php --template http-api
-
-  # Scaffold a standalone gCore framework app (no WordPress)
-  sudo geodineum new service my_app --gcore --env production
-
-  # Create a Python data pipeline
-  sudo geodineum new pipeline stock_feed --source https://api.example.com/feed --lang python
+  # Bring a service on (asks NEW or INTEGRATE); the types: geodineum register --matrix
+  sudo geodineum register
+  sudo geodineum register example.com --new website-static --env production
+  sudo geodineum register api_worker --new app --lang python --port 8090 --env testing
+  sudo geodineum register /srv/existing-app --env production          # integrate: scan, report, add what is missing
 
   # The constellation, one entity, one component, this host's configuration
   sudo geodineum status
-  sudo geodineum status nierto_com
+  sudo geodineum status example_site
   geodineum status comms
   geodineum status --config --verbose
-
-  # Update a service's capabilities after changes
-  sudo geodineum update-service my_api --express
 
   # Deregister a service (plan first)
   sudo geodineum deregister my_old_service --dry-run
@@ -469,34 +423,12 @@ main() {
 
     case "$command" in
         new)
-            if [[ $# -eq 0 ]]; then
-                echo "Usage: geodineum new <site|service|pipeline> [options]"
-                exit 1
-            fi
-            local subcommand="$1"
-            shift
-            case "$subcommand" in
-                site)
-                    source "${LIB_DIR}/common.sh"
-                    source "${LIB_DIR}/site.sh"
-                    cmd_new_site "$@"
-                    ;;
-                service)
-                    source "${LIB_DIR}/common.sh"
-                    source "${LIB_DIR}/service.sh"
-                    cmd_new_service "$@"
-                    ;;
-                pipeline)
-                    source "${LIB_DIR}/common.sh"
-                    source "${LIB_DIR}/pipeline.sh"
-                    cmd_new_pipeline "$@"
-                    ;;
-                *)
-                    echo "Unknown type: ${subcommand}"
-                    echo "Usage: geodineum new <site|service|pipeline> [options]"
-                    exit 1
-                    ;;
+            case "${1:-}" in
+                site)     echo "geodineum new site is now  sudo geodineum register <domain> --new website-wp --env <tier>" >&2 ;;
+                pipeline) echo "geodineum new pipeline is now  sudo geodineum register <name> --new scheduled --schedule <when> --env <tier>" >&2 ;;
+                *)        echo "geodineum new ${1:-} is now  sudo geodineum register  (it asks NEW or INTEGRATE; --new <type> skips the question)" >&2 ;;
             esac
+            exit 2
             ;;
         register)
             source "${LIB_DIR}/common.sh"
@@ -554,8 +486,8 @@ main() {
             exit 2
             ;;
         update-service)
-            source "${LIB_DIR}/common.sh"
-            cmd_update_service "$@"
+            echo "geodineum update-service is now  sudo geodineum register <path|id>  (registering again updates it)" >&2
+            exit 2
             ;;
         constellation)
             source "${LIB_DIR}/common.sh"
@@ -568,8 +500,8 @@ main() {
             cmd_node "$@"
             ;;
         provision-service)
-            source "${LIB_DIR}/common.sh"
-            cmd_provision_service "$@"
+            echo "geodineum provision-service is now  sudo geodineum register <name> --new <type> --env <tier> --node <node>  (or a path to integrate)" >&2
+            exit 2
             ;;
         harden)
             source "${LIB_DIR}/common.sh"
@@ -636,9 +568,6 @@ main() {
 Usage: geodineum service <subcommand> [args]
 
 Subcommands:
-  new [<domain|name>] Taxonomy-driven onboarding interview: asks what the
-                     service IS (public website/app vs internal daemon/service),
-                     then runs that type's requirement matrix. --help for flags.
   install <name>     Run install.steps for a service (prerequisites check,
                      then install.steps, then install.health_check)
   uninstall <name>   Run uninstall.steps (use --keep-data to preserve
@@ -663,10 +592,8 @@ USAGE
             fi
             local _svc_sub="$1"; shift
             if [[ "$_svc_sub" == "new" ]]; then
-                source "${LIB_DIR}/common.sh"
-                source "${LIB_DIR}/service-taxonomy.sh"
-                cmd_service_new "$@"
-                exit $?
+                echo "geodineum service new is now  sudo geodineum register" >&2
+                exit 2
             fi
             source "${LIB_DIR}/common.sh" 2>/dev/null || true
             source "${LIB_DIR}/manifest-registry.sh" 2>/dev/null || true
@@ -1284,301 +1211,6 @@ print(f"{v1} {p1} {v7} {p7} {v30} {p30}")' <<< "$raw") || { parse_err=$((parse_e
 }
 
 # =============================================================================
-# Update-service command — update an existing registration
-# =============================================================================
-
-cmd_update_service() {
-    local site_id=""
-    local yaml_file=""
-    local template=""
-    local express=false
-    local reimport=false
-    local dry_run=false
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --yaml)      yaml_file="$2"; shift 2 ;;
-            --template)  template="$2"; shift 2 ;;
-            --express)   express=true; shift ;;
-            --reimport)  reimport=true; shift ;;
-            --dry-run)   dry_run=true; shift ;;
-            --help|-h)
-                cat << 'EOF'
-Usage: geodineum update-service <site_id> [options]
-
-Update an existing service's registration. Re-detects or re-applies
-capabilities, regenerates .geodineum/ config files, and pushes changes
-to ValKey. The service must already be registered (.geodineum/ must exist).
-
-Capability sources (pick one):
-  --express             Re-scan service root and infer capabilities
-  --yaml <path>         Re-read capabilities from YAML file
-  --template <preset>   Re-apply capability preset
-
-Options:
-  --reimport            Also re-import app config from service files
-  --dry-run             Preview without making changes
-
-What gets updated:
-  - .geodineum/config.yaml (unified config with new capabilities)
-  - .geodineum/gnode_services.yaml (daemon capability config)
-  - ValKey {site_id}:config:capabilities hash
-  - PUBLISH notification for running services
-  - Daemon re-discovers within 120s (mtime-based detection)
-
-Examples:
-  sudo geodineum update-service your_site --express
-  sudo geodineum update-service my_api --template inference
-  sudo geodineum update-service my_app --yaml /opt/app/new-config.yaml --reimport
-  geodineum update-service my_api --express --dry-run
-EOF
-                exit 0
-                ;;
-            -*)
-                log_error "Unknown option: $1"
-                exit 1
-                ;;
-            *)
-                if [[ -z "$site_id" ]]; then
-                    site_id="$1"
-                else
-                    log_error "Unexpected argument: $1"
-                    exit 1
-                fi
-                shift
-                ;;
-        esac
-    done
-
-    if [[ -z "$site_id" ]]; then
-        log_error "Site/service ID is required"
-        echo "Usage: geodineum update-service <site_id> [--express|--yaml|--template] [--reimport]"
-        exit 1
-    fi
-
-    validate_site_id "$site_id" || exit 1
-
-    # Must already be registered
-    local gdir
-    gdir=$(find_geodineum_dir "$site_id" 2>/dev/null) || gdir=""
-    if [[ -z "$gdir" ]] || [[ ! -d "$gdir" ]]; then
-        log_error "Service '${site_id}' is not registered (no .geodineum/ found)"
-        log_error "Register first: sudo geodineum register ${site_id} --express"
-        exit 1
-    fi
-
-    local service_path
-    service_path=$(dirname "$gdir")
-
-    # Need at least one capability source
-    if [[ "$express" != "true" ]] && [[ -z "$yaml_file" ]] && [[ -z "$template" ]]; then
-        log_error "Specify a capability source: --express, --yaml <path>, or --template <preset>"
-        exit 1
-    fi
-
-    # =================================================================
-    # Resolve capabilities
-    # =================================================================
-
-    source "${LIB_DIR}/register.sh"
-
-    local description="Geodineum service"
-    local tier="SERVICE"
-    local service_type="service"
-    local detected_lang=""
-    local cap_source=""
-
-    if [[ "$express" == "true" ]]; then
-        cap_source="express"
-        express_detect_all "$service_path"
-        detected_lang="$EXPRESS_LANG"
-        case "$EXPRESS_FRAMEWORK" in
-            wordpress)
-                description="WordPress site (${EXPRESS_FRAMEWORK})"
-                service_type="wordpress-site"
-                ;;
-            *)
-                description="${EXPRESS_FRAMEWORK} service (${EXPRESS_LANG})"
-                service_type="standalone-service"
-                ;;
-        esac
-
-    elif [[ -n "$yaml_file" ]]; then
-        if [[ ! -f "$yaml_file" ]]; then
-            log_error "YAML file not found: ${yaml_file}"
-            exit 1
-        fi
-        cap_source="yaml"
-        local format
-        format=$(detect_yaml_format "$yaml_file")
-        if [[ "$format" == "flat" ]]; then
-            while IFS='=' read -r key val; do
-                local cap_var
-                cap_var=$(map_flat_key_to_cap "$key")
-                [[ -n "$cap_var" ]] && export "$cap_var=$val"
-            done < <(extract_flat_capabilities "$yaml_file")
-        elif [[ "$format" == "daemon" ]]; then
-            cap_source="daemon-yaml"
-        fi
-
-    elif [[ -n "$template" ]]; then
-        cap_source="template"
-        source "${LIB_DIR}/service.sh" 2>/dev/null || true
-        apply_preset "$template"
-    fi
-
-    # Read environment from existing config
-    local environment="production"
-    if [[ -f "${gdir}/config.yaml" ]]; then
-        local env_line
-        env_line=$(grep "^\s*active:" "${gdir}/config.yaml" 2>/dev/null | head -1)
-        if [[ -n "$env_line" ]]; then
-            environment=$(echo "$env_line" | sed 's/.*active:\s*//' | tr -d '"' | tr -d "'" | tr -d ' ')
-        fi
-    fi
-
-    # =================================================================
-    # Banner
-    # =================================================================
-
-    echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}           ${BOLD}Geodineum Service Update${NC}                                ${CYAN}║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-
-    print_kv "Site ID" "$site_id"
-    print_kv "Service path" "$service_path"
-    print_kv "Environment" "$environment"
-    print_kv "Source" "$cap_source"
-    print_kv ".geodineum" "$gdir"
-    echo ""
-
-    # Express confirmation
-    if [[ "$express" == "true" ]] && [[ "$dry_run" != "true" ]]; then
-        express_confirm
-    fi
-
-    # =================================================================
-    # Dry-run
-    # =================================================================
-
-    if [[ "$dry_run" == "true" ]]; then
-        log_step "Dry-Run Summary"
-        log_dry "Update ${gdir}/config.yaml (unified config)"
-        log_dry "Update ${gdir}/gnode_services.yaml (daemon capabilities)"
-        log_dry "Push capabilities to ValKey ({${site_id}}:config:capabilities)"
-        log_dry "PUBLISH {${site_id}}:config:changed capabilities:update"
-        [[ "$reimport" == "true" ]] && log_dry "Re-import app config from service files"
-        echo ""
-        log_info "No changes made (dry-run mode)"
-        return 0
-    fi
-
-    require_sudo "Service update"
-
-    # =================================================================
-    # Step 1/3: Update .geodineum/ config files
-    # =================================================================
-
-    log_step "Step 1/3: Updating Config Files"
-
-    # Regenerate unified config.yaml
-    CAP_ENVIRONMENT="$environment"
-    generate_geodineum_config "$service_path" "$site_id" "$environment" \
-        "$description" "$service_type" "$tier" "$detected_lang"
-
-    # Regenerate gnode_services.yaml
-    local services_yaml="${gdir}/gnode_services.yaml"
-    if [[ "$cap_source" == "daemon-yaml" ]]; then
-        cp "$yaml_file" "$services_yaml"
-        log_success "Copied daemon-format YAML"
-    else
-        generate_services_yaml "$site_id" "$services_yaml" \
-            "$description" "$tier" "$service_type" "$detected_lang"
-        log_success "Updated gnode_services.yaml (${cap_source})"
-    fi
-
-    # Update .registered marker
-    local config_hash
-    config_hash=$(sha256sum "$services_yaml" 2>/dev/null | cut -d' ' -f1 || echo "none")
-    cat > "${gdir}/.registered" << REGEOF
-# Geodineum Registration Marker
-registered_at: $(date -Iseconds)
-site_id: ${site_id}
-environment: ${environment}
-config_hash: ${config_hash}
-REGEOF
-    log_success "Updated .registered marker"
-
-    # =================================================================
-    # Step 2/3: Push to ValKey
-    # =================================================================
-
-    log_step "Step 2/3: Pushing to ValKey"
-
-    local cli=""
-    for candidate in \
-        "${GNODE_SCRIPTS}/valkey-cli-secure.sh" \
-        "${GEODINEUM_ROOT}/gNode/scripts/valkey-cli-secure.sh"; do
-        [[ -x "$candidate" ]] && { cli="$candidate"; break; }
-    done
-
-    if [[ -n "$cli" ]]; then
-        local cap_key="{${site_id}}:config:capabilities"
-        # Push each capability to ValKey hash
-        local cap_count=0
-        while IFS= read -r line; do
-            if [[ "$line" =~ name:.*\"([^\"]+)\" ]]; then
-                local dim_name="${BASH_REMATCH[1]}"
-                read -r next_line
-                if [[ "$next_line" =~ value:.*\"([^\"]+)\" ]]; then
-                    local dim_val="${BASH_REMATCH[1]}"
-                    "$cli" HSET "$cap_key" "$dim_name" "$dim_val" >/dev/null 2>&1
-                    cap_count=$((cap_count + 1))
-                fi
-            fi
-        done < "$services_yaml"
-
-        "$cli" PUBLISH "{${site_id}}:config:changed" "capabilities:update" >/dev/null 2>&1 || true
-        log_success "Pushed ${cap_count} capabilities to ValKey"
-    else
-        log_warning "valkey-cli-secure.sh not found — ValKey not updated"
-        log_info "Daemon will pick up changes from gnode_services.yaml within 120s"
-    fi
-
-    # =================================================================
-    # Step 3/3: Optional app config reimport
-    # =================================================================
-
-    if [[ "$reimport" == "true" ]]; then
-        log_step "Step 3/3: Re-importing App Config"
-        source "${LIB_DIR}/config.sh" 2>/dev/null || true
-        cmd_config_import "$site_id" --path "$service_path" --force
-    else
-        log_step "Step 3/3: App Config (skipped — use --reimport to re-scan)"
-    fi
-
-    # =================================================================
-    # Summary
-    # =================================================================
-
-    print_summary_header "Service Updated"
-
-    print_kv "Site ID" "$site_id"
-    print_kv "Config" "${gdir}/config.yaml"
-    print_kv "Capabilities" "${gdir}/gnode_services.yaml"
-    print_kv "Source" "$cap_source"
-    echo ""
-
-    echo -e "  ${BOLD}What happens next:${NC}"
-    echo "    1. Daemon detects gnode_services.yaml change within 120s (mtime-based)"
-    echo "    2. Running services pick up ValKey changes via ConfigWatcher"
-    echo "    3. Verify: geodineum config list ${site_id}"
-    echo ""
-}
-
-# =============================================================================
 # Harden command — deploy web-deny rules to all ecosystem directories
 # =============================================================================
 
@@ -1646,97 +1278,6 @@ EOF
     echo "    location ~ /\\.geodineum { deny all; return 404; }"
     echo ""
     echo -e "  ${DIM}Safe to re-run after updates or new component installs.${NC}"
-    echo ""
-}
-
-# =============================================================================
-# provision-service — mint a service's ValKey identity on the master, then
-# hand back the auth so a constellation NODE can connect.
-# =============================================================================
-# The master owns ValKey, so it is the only place an ACL user can be created.
-# This onboards the service here (ACL user + streams + registry) and prints the
-# generated password for you to install on the node that will run the service,
-# with: scripts/add-service-credential.sh
-#
-# Usage: sudo geodineum provision-service <service> [--environment <env>]
-cmd_provision_service() {
-    require_sudo "Service provisioning"
-
-    local service="" environment="" environments="" yaml_path=""
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --environment)  environment="$2"; shift 2 ;;
-            --environments) environments="$2"; shift 2 ;;
-            --yaml)         yaml_path="$2"; shift 2 ;;
-            -h|--help)
-                echo "Usage: sudo geodineum provision-service <service> [--environment <env>] [--yaml <dir>]"
-                echo ""
-                echo "Creates the service's ValKey ACL user + streams on this (master) node"
-                echo "and prints the auth to install on the node that will run the service."
-                echo "Grants compose from a manifest; without --yaml, a minimal declaring"
-                echo "manifest is minted at /etc/geodineum/manifests/<service>/."
-                return 0 ;;
-            -*) log_error "Unknown option: $1"; return 1 ;;
-            *)  if [[ -z "$service" ]]; then service="$1"; shift
-                else log_error "Unexpected argument: $1"; return 1; fi ;;
-        esac
-    done
-    [[ -n "$service" ]] || { log_error "Usage: sudo geodineum provision-service <service> [--environment <env>]"; return 1; }
-
-    local onboard="${GNODE_SCRIPTS}/onboard-service.sh"
-    [[ -x "$onboard" ]] || { log_error "onboard-service.sh not found under ${GNODE_SCRIPTS} — is gNode installed?"; return 1; }
-
-    # Grants compose from declarations — there is no uniform fallback. A
-    # delegated service keeps its manifest on the master (the policy source);
-    # mint a minimal own-namespace one when none exists yet.
-    if [[ -z "$yaml_path" ]]; then
-        yaml_path="/etc/geodineum/manifests/${service}"
-        if [[ ! -f "${yaml_path}/gnode_services.yaml" ]]; then
-            mkdir -p "$yaml_path"
-            cat > "${yaml_path}/gnode_services.yaml" << PSEOF
-# Geodineum onboarding manifest (minted by provision-service — minimal).
-# Contract: CONTRACTS/SERVICE_ONBOARDING.md
-profile: service
-${environment:+environment: ${environment}
-}
-services:
-  - id: "${service}"
-    metadata:
-      description: "Delegated service (provisioned on the master)"
-      type: "service"
-      tier: "SERVICE"
-      created_by: "geodineum-provision-service"
-
-consumes: []
-produces:
-  - "{${service}}:gnode:comms:*"
-PSEOF
-            chmod 640 "${yaml_path}/gnode_services.yaml"
-            log_info "Minted minimal manifest: ${yaml_path}/gnode_services.yaml (edit + --regrant to refine)"
-        fi
-    fi
-
-    local -a oargs=("$service" --yaml "$yaml_path")
-    [[ -n "$environment" ]]  && oargs+=(--environment "$environment")
-    [[ -n "$environments" ]] && oargs+=(--environments "$environments")
-    "$onboard" "${oargs[@]}" || { log_error "Service onboarding failed for '${service}'"; return 1; }
-
-    local cred_file="${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${service}.password"
-    [[ -r "$cred_file" ]] || { log_error "Credential not found at ${cred_file} after onboarding"; return 1; }
-    local password acl_user
-    password="$(cat "$cred_file")"
-    acl_user="gnode_client_${service}"
-
-    echo ""
-    echo "  ┌─ Service provisioned on the master ──────────────────────────────────"
-    echo "  │  service : ${service}"
-    echo "  │  ACL user: ${acl_user}"
-    echo "  │  auth    : ${password}"
-    echo "  └──────────────────────────────────────────────────────────────────────"
-    echo ""
-    echo "  On the constellation NODE that will run this service, run:"
-    echo "    sudo geodineum credential add --service ${service} --auth '${password}'"
-    echo "  (or: sudo ./scripts/add-service-credential.sh — no arguments prompts for both)"
     echo ""
 }
 

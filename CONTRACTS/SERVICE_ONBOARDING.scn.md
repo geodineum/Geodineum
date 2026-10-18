@@ -14,7 +14,7 @@
 Onboarding := Interview (what IS it) → Matrix (what RUNS) → Paved road
   (provision → register → heartbeat → mail-verify → verify) — SAME road, every type.
 TAXONOMY: public website-wp|website-static|app-pwa|webapp-gcore · internal daemon|gcore-service|custom
-  matrix-as-data in lib/service-taxonomy.sh; `geodineum service new --matrix` prints it.
+  matrix-as-data in lib/service-taxonomy.sh; `geodineum register --matrix` prints it.
 NEVER raw-XADD unregistered: registration buys delivery guarantees (consumer groups +
   orphan reclaim), a least-privilege identity, receipts/heartbeat observability, and
   a capability-topology position.
@@ -30,7 +30,7 @@ UNDECLARED ⇒ REFUSED: the legacy uniform grant set is RETIRED (fail-loud, neve
 ## ::ANCHOR
 
 ```
-ENTRY: `geodineum service new [<domain|name>] [--type T --env E --yes]` — interview
+ENTRY: `geodineum register [<path|domain|name>] [--new T | --integrate] --env E [--yes]` — asks NEW or INTEGRATE; NEW = the type interview
   or flags; `--node <worker>` = delegated (master mints, prints
   add-service-credential.sh one-liner); `new site` unchanged (≡ website-wp lane)
 IDENTITY: gnode_client_<svc> · cred /etc/geodineum/credentials/valkey_client_<svc>.password
@@ -51,10 +51,10 @@ DISCOVERY PLACEMENT: a discovered service registers into ITS OWN site only —
 POLICY: 8 well-known namespace classes; foreign pattern → POLICY DENY, onboard ABORTS
   (fail-loud, never silent-narrow, never silent-broaden); declared ⇒ composed grants +
   safe base (own ns + own heartbeat key + READ-ONLY {geodineum}:gnode:* via %R~ — daemon tier writes the topology; clients read with FCALL_RO/HGETALL); UNDECLARED ⇒ REFUSED (legacy uniform set gone;
-  regenerate: `geodineum register <svc> --force` then `--regrant`)
-COMMANDS: geodineum service new (taxonomy) · geodineum provision-service <svc>
+  regenerate: `geodineum register <its path>` recomposes grants when the manifest changed)
+COMMANDS: geodineum register (taxonomy) · geodineum register <svc> --node <node>
   [--yaml <dir>] (master; no manifest → mints minimal at /etc/geodineum/manifests/<svc>/)
-  · geodineum topology register service <svc> <profile> (master) · geodineum grants
+  · geodineum grants
   request|pending|approve|deny|show|sweep
 HEARTBEAT: SETEX {geodineum}:gnode:heartbeat:{env}:<svc>:<node> 120 '{"ts":<unix>,"node":...}' every ~60s (node = short hostname; census in CONTRACTS/heartbeat.md, update SAME commit)
   — dashboard tile green ≤75s, lagging ≤120s, red after · daemon/gcore types get a
@@ -96,10 +96,10 @@ onboard is ALWAYS the last row — one paved road, many matrices.
 ## ::SEQUENCE (the paved road — execute in order)
 
 ```
-0 INTERVIEW sudo geodineum service new [--type --env --yes]  → runs 1-5 for you
+0 REGISTER  sudo geodineum register [--new T | <path>] --env E [--yes]  → runs 1-5 for you (INTEGRATE: only the missing ones)
 1 DECLARE   gnode_services.yaml (ONE schema); consumes/produces = OWN namespace only
-2 PROVISION sudo geodineum provision-service <svc>          [master]
-3 REGISTER  sudo geodineum topology register service <svc> <profile> [master; recipes: REGISTRATION.md]
+2 PROVISION sudo geodineum register <svc> --node <node>          [master]
+3 TOPOLOGY  done by 1 (onboard registers the entity and its intent); topology register service = repair primitive
 4 HEARTBEAT wire the SETEX loop into the service runtime (or the gated timer pair)
 5 VERIFY    ACL GETUSER exact · topology shows entity · heartbeat fresh ·
             ping round-trip (reply + verified receipt) · grants show = expected ledger ·
@@ -115,7 +115,7 @@ FOREIGN-GRANT-ASK: adding {other}:* to your manifest → POLICY DENY aborts onbo
 UNDECLARED-MANIFEST: refused at grant time (uniform fallback retired). Fix = declare
   consumes/produces or `geodineum register <svc> --force`, then --regrant.
 WORKER-PROVISION: provision-service on a worker fails (admin cred absent) — by design;
-  delegated flow = `service new --node <worker>` on the master.
+  delegated flow = `register <name> --new <type> --node <worker>` on the master (credential → 0600 file), then on the worker `credential add --auth-file` + `register … --worker`.
 GRANT-WITHOUT-LEDGER: any SETUSER outside the loop breaks the audit invariant;
   effective-vs-ledger drift is checkable (ACL GETUSER diff).
 SILENT-EXPIRY: replies are EX 10 — poll immediately; the receipt is the durable record.

@@ -13,7 +13,7 @@ set -euo pipefail
 #
 
 # =============================================================================
-# geodineum new site
+# The website-wp row of geodineum register (via ensure_wp_stack)
 # =============================================================================
 
 cmd_new_site() {
@@ -226,48 +226,16 @@ cmd_new_site() {
             log_warning "Could not create .geodineum/ — continuing with onboarding"
         }
 
-        # Generate gnode_services.yaml with WordPress defaults
-        local services_yaml="${geodineum_dir}/gnode_services.yaml"
-        if [[ ! -f "$services_yaml" ]] && [[ -d "$geodineum_dir" ]]; then
-            # Try to find existing wp-config-geodineum.yaml for capabilities
-            local wp_yaml=""
-            for yp_candidate in \
-                "${wp_root}/wp-config-geodineum.yaml" \
-                "${GCORE_PATH}/config/geometric_topology.yaml"; do
-                if [[ -f "$yp_candidate" ]]; then
-                    wp_yaml="$yp_candidate"
-                    break
-                fi
-            done
-
-            if [[ -n "$wp_yaml" ]]; then
-                local format
-                format=$(detect_yaml_format "$wp_yaml" 2>/dev/null || echo "unknown")
-                if [[ "$format" == "flat" ]]; then
-                    # Source register.sh functions for YAML conversion
-                    source "${GEODINEUM_CLI_ROOT}/lib/register.sh" 2>/dev/null || true
-                    while IFS='=' read -r key val; do
-                        local cap_var
-                        cap_var=$(map_flat_key_to_cap "$key" 2>/dev/null || echo "")
-                        [[ -n "$cap_var" ]] && export "$cap_var=$val"
-                    done < <(extract_flat_capabilities "$wp_yaml")
-                    CAP_ENVIRONMENT="$environment"
-                    generate_services_yaml "$site_id" "$services_yaml" \
-                        "WordPress site" "SERVICE" "wordpress-site" "php"
-                    log_success "Generated .geodineum/gnode_services.yaml from ${wp_yaml}"
-                elif [[ "$format" == "daemon" ]]; then
-                    cp "$wp_yaml" "$services_yaml"
-                    log_success "Copied existing capabilities to .geodineum/"
-                fi
-            else
-                # Use WordPress preset defaults
-                source "${GEODINEUM_CLI_ROOT}/lib/service.sh" 2>/dev/null || true
-                apply_preset "wordpress" 2>/dev/null || true
-                CAP_ENVIRONMENT="$environment"
-                generate_services_yaml "$site_id" "$services_yaml" \
-                    "WordPress site" "SERVICE" "wordpress-site" "php"
-                log_success "Generated .geodineum/gnode_services.yaml (wordpress preset)"
-            fi
+        # The manifest, from the one writer (lib/service-taxonomy.sh ensure_manifest).
+        if [[ ! -f "${geodineum_dir}/gnode_services.yaml" ]] && [[ -d "$geodineum_dir" ]]; then
+            # shellcheck source=/dev/null
+            declare -F ensure_manifest >/dev/null || source "${GEODINEUM_CLI_ROOT}/lib/service-taxonomy.sh"
+            # shellcheck source=/dev/null
+            source "${GNODE_SCRIPTS}/cli/constellation.sh" 2>/dev/null || true
+            SVC_TYPE=website-wp SVC_NAME="$site_id" SVC_PATH="$wp_root" SVC_ENV="$environment" SVC_PROFILE=web \
+                SVC_LANG=php SVC_FORM=false SVC_NODE="" SVC_DRY_RUN="$dry_run" \
+                SVC_CONSTELLATION="${SVC_CONSTELLATION:-$(gnode_cli_constellation 2>/dev/null || echo geodineum)}"
+            ensure_manifest
         fi
 
         # Onboard with .geodineum/ as discovery path
@@ -351,7 +319,7 @@ cmd_new_site() {
 
 usage_new_site() {
     cat << 'EOF'
-Usage: geodineum new site <domain> [options]
+Usage: geodineum register <domain> --new website-wp [options]
 
 Deploys a complete WordPress site with gNode integration:
   - WordPress + database + Apache vhost + SSL
@@ -371,8 +339,8 @@ Options:
   --help, -h                Show this help message
 
 Examples:
-  sudo geodineum new site geodineum.com --theme gcube --env production
-  sudo geodineum new site test.example.com --theme gcube --env testing --no-ssl
-  sudo geodineum new site myapp.com --owner acme_corp --dry-run
+  sudo geodineum register geodineum.com --new website-wp --theme gcube --env production
+  sudo geodineum register test.example.com --new website-wp --theme gcube --env testing --no-ssl
+  sudo geodineum register myapp.com --new website-wp --owner acme_corp --dry-run
 EOF
 }

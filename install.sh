@@ -1867,8 +1867,8 @@ phase_prerequisites() {
     unset _need_jsonschema_v4
 
     # python3-redis — the Python ValKey client. Two consumers today: the
-    # pipeline worker template (lib/pipeline.sh generates a worker that
-    # `import redis`) and the receipt-stream verification script.
+    # receipt-stream verification script and Python services that talk to
+    # ValKey directly.
     #
     # The floor is 4.3, and it is not cosmetic: gNode publishes its
     # capabilities as ValKey FUNCTIONS, and `Redis.fcall()` did not exist
@@ -5565,8 +5565,7 @@ print_summary() {
         else
             echo "    - Start daemon: sudo systemctl start gnode-daemon"
         fi
-        echo "    - Register a site: geodineum new site example.com --theme gcube"
-        echo "    - Or scaffold a service: geodineum new service my_api (--gcore for full framework)"
+        echo "    - Bring a service on: sudo geodineum register   (a new one, or an existing codebase)"
     else
         echo "    - Upgrade to standard for real-time: sudo ./install.sh --profile standard"
     fi
@@ -5727,7 +5726,7 @@ deploy_site_if_requested() {
     local install_script="${INSTALL_ROOT}/gTemplate/scripts/install-geodineum.sh"
     if [[ ! -x "$install_script" ]]; then
         log_warning "Site installer not found at ${install_script} — deploy manually:"
-        log_info "  geodineum new site ${SITE_DOMAIN} --theme ${SITE_THEME:-gtemplate-wp} --env ${SITE_ENV}"
+        log_info "  sudo geodineum register ${SITE_DOMAIN} --new website-wp --theme ${SITE_THEME:-gtemplate-wp} --env ${SITE_ENV}"
         return 1
     fi
 
@@ -5748,59 +5747,10 @@ deploy_site_if_requested() {
     fi
 }
 
-# Post-install prompt handler: WordPress site (reads domain, drives the
-# WP site installer via deploy_site_if_requested).
-prompt_deploy_wordpress() {
-    local new_domain
-    read -p "  Domain name: " new_domain
-    [[ -n "$new_domain" ]] || return 0
-    SITE_DOMAIN="$new_domain"
-    SITE_THEME="${SITE_THEME:-gcube}"
-    deploy_site_if_requested || \
-        log_warning "Post-install site deploy failed — see errors above"
-}
-
-# Post-install prompt handler: standalone gCore app (no WordPress) —
-# scaffold via the geodineum CLI (app dir + gCore bootstrap + ValKey
-# identity + gNode onboarding).
-prompt_scaffold_gcore_app() {
-    local app_id
-    read -p "  App ID (lowercase, [a-z0-9_]): " app_id
-    [[ -n "$app_id" ]] || return 0
-    if [[ ! "$app_id" =~ ^[a-z][a-z0-9_]*$ ]]; then
-        log_error "Invalid app ID '${app_id}' — must start with a lowercase letter, only [a-z0-9_]"
-        return 1
-    fi
-
-    local cli="${INSTALL_ROOT}/Geodineum/geodineum"
-    if [[ ! -x "$cli" ]]; then
-        cli="$(command -v geodineum 2>/dev/null || true)"
-    fi
-    if [[ -z "$cli" ]]; then
-        log_warning "geodineum CLI not found — scaffold manually:"
-        log_info "  sudo geodineum new service ${app_id} --gcore --env ${SITE_ENV:-testing}"
-        return 1
-    fi
-
-    if "$cli" new service "$app_id" --gcore --env "${SITE_ENV:-testing}"; then
-        log_success "Standalone gCore app scaffolded: ${app_id}"
-    else
-        log_warning "App scaffold failed — retry: sudo geodineum new service ${app_id} --gcore --env ${SITE_ENV:-testing}"
-        return 1
-    fi
-}
-
 # =============================================================================
-# Post-install service-setup decision tree (New/Existing-first).
-# Geodineum is the ECOSYSTEM you onboard onto — web AND non-web; gNode is its
-# per-node orchestrator. A "site" is just a service with a web profile.
-# Unbuilt branches are shown greyed with "coming soon" rather than offered then
-# failing. The resolved geodineum CLI carries each verb (new site|service|
-# pipeline | register).
+# Post-install: hand over to `geodineum register`, the one route that brings a
+# service on (it asks NEW or INTEGRATE, then the type).
 # =============================================================================
-
-# Render a non-selectable, greyed "coming soon" menu line.
-_soon() { echo -e "    ${DIM}${1}  — coming soon${NC}"; }
 
 # Resolve the geodineum CLI path into _CLI (empty if not found).
 _resolve_cli() {
@@ -5808,143 +5758,18 @@ _resolve_cli() {
     [[ -x "$_CLI" ]] || _CLI="$(command -v geodineum 2>/dev/null || true)"
 }
 
-# Read + validate a lowercase service id into SVC_ID. Returns 1 if empty/invalid.
-_read_service_id() {
-    SVC_ID=""
-    read -p "  Service id (lowercase, [a-z0-9_]): " SVC_ID
-    [[ -n "$SVC_ID" ]] || return 1
-    if [[ ! "$SVC_ID" =~ ^[a-z][a-z0-9_]*$ ]]; then
-        log_error "Invalid id '${SVC_ID}' — start with a lowercase letter, only [a-z0-9_]"
-        return 1
-    fi
-}
-
-# Scaffold a NEW service via the CLI. $1 = extra flags (word-split intentionally).
-_new_service() {
-    local extra="$1" env="${SITE_ENV:-testing}"
-    _read_service_id || { log_info "No id given — skipping"; return 0; }
-    if [[ -z "$_CLI" ]]; then
-        log_warning "geodineum CLI not found — run: sudo geodineum new service ${SVC_ID} ${extra} --env ${env}"
-        return 0
-    fi
-    if "$_CLI" new service "$SVC_ID" $extra --env "$env"; then
-        log_success "Service scaffolded: ${SVC_ID}"
-    else
-        log_warning "Scaffold failed — retry: sudo geodineum new service ${SVC_ID} ${extra} --env ${env}"
-    fi
-}
-
-_new_pipeline() {
-    _read_service_id || { log_info "No id given — skipping"; return 0; }
-    local src; read -p "  Source URL (pipeline input): " src
-    if [[ -z "$src" ]]; then
-        log_info "Pipelines need a --source — run later: sudo geodineum new pipeline ${SVC_ID} --source <url>"
-        return 0
-    fi
-    if [[ -z "$_CLI" ]]; then
-        log_warning "geodineum CLI not found — run: sudo geodineum new pipeline ${SVC_ID} --source ${src}"
-        return 0
-    fi
-    if "$_CLI" new pipeline "$SVC_ID" --source "$src"; then
-        log_success "Pipeline scaffolded: ${SVC_ID}"
-    else
-        log_warning "Pipeline scaffold failed — retry: sudo geodineum new pipeline ${SVC_ID} --source ${src}"
-    fi
-}
-
-# 1) Onboard an EXISTING project — register code you already have.
-_setup_existing() {
-    echo ""
-    echo -e "  ${BOLD}Onboard an existing project${NC} — registers ACL + streams + .geodineum/."
-    echo -e "  ${DIM}Web-endpoint attach for an existing non-WordPress project: coming soon.${NC}"
-    echo ""
-    _read_service_id || { log_info "No id given — skipping"; return 0; }
-    if [[ -z "$_CLI" ]]; then
-        log_warning "geodineum CLI not found — run: sudo geodineum register ${SVC_ID}"
-        return 0
-    fi
-    if "$_CLI" register "$SVC_ID"; then
-        log_success "Existing project onboarded: ${SVC_ID}"
-    else
-        log_warning "Onboard failed — retry: sudo geodineum register ${SVC_ID}"
-    fi
-}
-
-# 2a) New WEB service.
-_setup_new_web() {
-    local can_wp="$1" can_app="$2"
-    echo ""
-    echo -e "  ${BOLD}New web service${NC}"
-    if [[ "$can_wp" == "true" ]]; then
-        echo -e "    ${BOLD}1) WordPress site${NC}                  theme + gCore mu-plugin + Apache vhost/SSL"
-    else
-        _soon "1) WordPress site                  (WordPress support not installed)"
-    fi
-    if [[ "$can_app" == "true" ]]; then
-        echo -e "    ${BOLD}2) Web app (gCore framework)${NC}       PHP app + HTTP endpoint"
-    else
-        _soon "2) Web app (gCore framework)       (gCore not installed)"
-    fi
-    echo -e "    ${BOLD}3) Web API (bring-your-own server)${NC} register + you serve it (http-api profile)"
-    echo ""
-    local w; read -p "  Select [1-3, default: 3]: " -n 1 w; echo ""
-    case "${w:-3}" in
-        1) [[ "$can_wp" == "true" ]] && prompt_deploy_wordpress || log_info "WordPress not available — skipping" ;;
-        2) [[ "$can_app" == "true" ]] && _new_service "--gcore --template http-api" || log_info "gCore not available — skipping" ;;
-        *) _new_service "--template http-api" ;;
-    esac
-}
-
-# 2b) New NON-WEB service.
-_setup_new_nonweb() {
-    echo ""
-    echo -e "  ${BOLD}New non-web service${NC} ${DIM}(language: php — python / node / rust coming soon)${NC}"
-    echo -e "    ${BOLD}1) Worker / background processor${NC}"
-    echo -e "    ${BOLD}2) Inference / AI service${NC}"
-    echo -e "    ${BOLD}3) Data pipeline${NC}                  (needs a source URL)"
-    _soon "   Daemon / system service"
-    echo ""
-    local n; read -p "  Select [1-3, default: 1]: " -n 1 n; echo ""
-    case "${n:-1}" in
-        2) _new_service "--template inference" ;;
-        3) _new_pipeline ;;
-        *) _new_service "--template worker" ;;
-    esac
-}
-
-# 2) Create a NEW service — web vs non-web.
-_setup_new() {
-    local can_wp="$1" can_app="$2"
-    echo ""
-    echo -e "  ${BOLD}New service — web-facing?${NC}"
-    echo -e "    ${BOLD}1) Web${NC}        serves HTTP — sites, apps, APIs"
-    echo -e "    ${BOLD}2) Non-web${NC}    workers, daemons, pipelines, inference"
-    echo ""
-    local face; read -p "  Select [1-2, default: 1]: " -n 1 face; echo ""
-    case "${face:-1}" in
-        2) _setup_new_nonweb ;;
-        *) _setup_new_web "$can_wp" "$can_app" ;;
-    esac
-}
-
-# Top of the tree: New vs Existing vs Skip.
+# One question; `geodineum register` asks the rest (NEW or INTEGRATE, then the type).
 prompt_setup_service() {
-    local can_wp="$1" can_app="$2"
     _resolve_cli
     echo ""
-    echo -e "  ${BOLD}Set up a service on Geodineum?${NC}"
-    echo -e "  ${DIM}Geodineum is the ecosystem you onboard onto — web or non-web. gNode is its per-node orchestrator.${NC}"
-    echo ""
-    echo -e "    ${BOLD}1) Onboard an existing project${NC}  register code you already have"
-    echo -e "    ${BOLD}2) Create a new service${NC}         scaffold a fresh project on Geodineum"
-    echo -e "    ${BOLD}3) Skip${NC}                         later:  geodineum new … | geodineum register …"
-    echo ""
-    local top; read -p "  Select [1-3, default: 3]: " -n 1 top; echo ""
-    case "${top:-3}" in
-        1) _setup_existing ;;
-        2) _setup_new "$can_wp" "$can_app" ;;
-        *) ;;
-    esac
+    echo -e "  ${BOLD}Register a service on Geodineum now?${NC} ${DIM}(later: sudo geodineum register)${NC}"
+    local go; read -p "  [y/N]: " -n 1 go; echo ""
+    [[ "$go" =~ ^[Yy]$ ]] || return 0
+    if [[ -z "$_CLI" ]]; then
+        log_warning "geodineum CLI not found — run later: sudo geodineum register"
+        return 0
+    fi
+    "$_CLI" register || log_warning "Registration did not finish — re-run: sudo geodineum register"
 }
 
 # =============================================================================
@@ -6362,14 +6187,7 @@ main() {
     # only one). Skipped in --yes mode: non-interactive installs use
     # --site or the geodineum CLI afterwards.
     if [[ -z "$SITE_DOMAIN" ]] && [[ "$DRY_RUN" != "true" ]] && [[ "$YES_MODE" != "true" ]]; then
-        local can_wp=false can_app=false
-        if needs_wordpress "${resolved[@]}"; then can_wp=true; fi
-        if has_gcore "${resolved[@]}"; then can_app=true; fi
-
-        # New/Existing-first decision tree. Even when neither WP nor gCore is
-        # present, the node can still onboard an existing project or scaffold a
-        # non-web service — so the tree always runs; unavailable web leaves grey out.
-        prompt_setup_service "$can_wp" "$can_app"
+        prompt_setup_service
     fi
 
     # Installation succeeded — clear the interrupt trap so a post-install

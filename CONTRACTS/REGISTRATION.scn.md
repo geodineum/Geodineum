@@ -30,14 +30,14 @@ NODE      register  sudo geodineum topology register node <id> --role observer|h
                     [--specialization general|inference|storage|compute|content] [--constellation <c>]
           (a daemon-running node registers itself at start — NODE_ONBOARDING)
 COMPONENTS register sudo geodineum topology register components     (from config/ecosystem_tools.yaml; append entry + re-run to add)
-SITE      register  sudo geodineum new site <domain> --env <e>  |  service new <d> --type website-wp|website-static|app-pwa|webapp-gcore --env <e>
-                    |  register <id> --express|--yaml|--template … |  topology register service <id> web [--env <e>]
-          bind host: sudo geodineum topology register service <id> web --on <node>   (web defaults to THIS node; --on '' = no placement; --manifest <path>)
-DAEMON    register  sudo geodineum service new <n> --type daemon|gcore-service --env <e> --yes  |  provision-service <n> + topology register service <n> service
-APP       register  sudo geodineum topology register service <n> headless   (or manifest shape: app)
-NON-GEO   register  sudo geodineum service new <n> --type custom --env <e> --yes ; on the node: scripts/heartbeat/install-heartbeat.sh <n>
-                    --probe unit:<u>|tcp:<h>:<p>|http:<url>|pid:<file>|cmd:</abs> [--apply]  (plan by default; the probe is the proof;
-                    component name == manifest heartbeat:)
+SITE      register  sudo geodineum register <domain> --new website-wp|website-static|app-pwa|webapp-gcore --env <e>
+          placed on THIS node (its health = this node's daemon heartbeat)
+DAEMON    register  sudo geodineum register <n> --new daemon|gcore-service|scheduled --env <e> --yes
+APP       register  sudo geodineum register <n> --new app --port <p> --env <e>   (shape app; placed by its heartbeat)
+EXISTING  register  sudo geodineum register <path> --env <e>   (INTEGRATE: scan → report → only the missing rows)
+REPAIR    primitive sudo geodineum topology register service <id> [profile] [--manifest <path>] [--on <node>]  (one entity by hand; never the route)
+NON-GEO   register  sudo geodineum register <path> --probe unit:<u>|tcp:<h>:<p>|http:<url>|pid:<file>|cmd:</abs> --env <e>
+                    (INTEGRATE: identity + topology + the probe-gated heartbeat; the probe is the proof)
 CHECK     sudo geodineum topology [all|show <id>|load [id]|verify|stats] · sudo geodineum status [--json] · geodineum status <id> · geodineum status
 DEREG     sudo geodineum deregister <id> [--purge-data] [--keep-acl] [--dry-run]   (THE route: intent, entity+placements in its own
           constellation, keys, identity, then the host ledger newest-first; data only with --purge-data; residue check last)

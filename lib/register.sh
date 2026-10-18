@@ -1,185 +1,65 @@
 #!/bin/bash
 #
-# Geodineum CLI — Register Command
-# ==================================
-# Single registration authority for the entire ecosystem.
-# Creates .geodineum/ in the service root, wraps onboard-service.sh
-# (ACL + streams + registry), and generates gnode_services.yaml for
-# daemon capability discovery.
-#
-# This is the ONLY registration path. Theme-side registration is removed.
-# See the registration-flow architecture documentation for rationale.
+# Geodineum CLI — Register
+# ========================
+# The one route that brings a service onto the constellation.
+#   NEW        a skeleton of the kind asked for, every integration point wired
+#              (lib/service-taxonomy.sh: the type matrix and its rows)
+#   INTEGRATE  scan an existing codebase, say what it has and what it lacks,
+#              then apply only the missing parts, through the same rows
+# Registering again (a changed manifest, another environment) is the same
+# command; there is no separate update verb.
 #
 # Requires: common.sh sourced first
 #
 
-# =============================================================================
-# YAML Format Detection & Conversion
-# =============================================================================
+usage_register() {
+    cat <<'USAGE'
+Usage: sudo geodineum register [<path>|<domain>|<name>] [--new <type> | --integrate] [options]
 
-# Detect if a YAML file is in flat format (wp-config) or daemon format (gnode_services)
-detect_yaml_format() {
-    local file="$1"
-    if grep -q "^services:" "$file" 2>/dev/null; then
-        echo "daemon"
-    elif grep -q "^capabilities:" "$file" 2>/dev/null; then
-        echo "flat"
-    else
-        echo "unknown"
-    fi
-}
+With no mode, register asks: set up a NEW service, or INTEGRATE an existing one.
+A path to an existing directory means INTEGRATE.
 
-# Extract flat capabilities from wp-config-geodineum.yaml → shell variables
-extract_flat_capabilities() {
-    local file="$1"
+NEW — a skeleton with its integration points wired (manifest, identity, topology,
+heartbeat, COMMS, the beacon or form endpoint where there is a front end):
+  public:   website-wp | website-static | app-pwa | webapp-gcore   (need a domain)
+  internal: app | daemon | scheduled | gcore-service | custom
+  --new <type>             the type (asked if omitted)
+  --env <tier>             testing|staging|acceptance|production — REQUIRED, never assumed
+  --lang <l>               bash|python|node|php (app, daemon, scheduled)
+  --port <n>               app: the 127.0.0.1 port it serves (its /health is probed)
+  --schedule <when>        scheduled: a systemd calendar expression (hourly, daily, *:0/15)
+  --probe <p>              heartbeat probe: unit:<u> | tcp:<h>:<p> | http:<url> | pid:<f> | cmd:</abs>
+  --theme <name>           website-wp child theme
+  --mail-domain <d> | --no-mail   DKIM sender identity (public types default to their domain)
+  --form | --no-form       COMMS form endpoint (website-static)
+  --node <name>            register on this master for a service that runs on <name>
+  --worker                 on that node: its files and units only
+  --path <dir> --owner <tenant> --notify-email <addr> --no-ssl
+  --matrix                 print the type matrix
 
-    # Parse YAML capabilities section into key=value pairs
-    # Only read lines under capabilities: until next top-level key
-    local in_caps=false
-    while IFS= read -r line; do
-        # Start capturing at capabilities:
-        if [[ "$line" =~ ^capabilities: ]]; then
-            in_caps=true
-            continue
-        fi
-        # Stop at next top-level key (no leading whitespace)
-        if [[ "$in_caps" == "true" ]] && [[ "$line" =~ ^[a-z] ]]; then
-            break
-        fi
-        # Skip comments and empty lines
-        if [[ "$in_caps" == "true" ]]; then
-            local trimmed
-            trimmed=$(echo "$line" | sed 's/^\s*//' | sed 's/#.*//' | tr -d '"' | tr -d "'")
-            [[ -z "$trimmed" ]] && continue
-            # Parse key: value
-            local key val
-            key=$(echo "$trimmed" | cut -d: -f1 | tr -d ' ')
-            val=$(echo "$trimmed" | cut -d: -f2- | sed 's/^\s*//')
-            [[ -z "$key" || -z "$val" ]] && continue
-            echo "${key}=${val}"
-        fi
-    done < "$file"
-}
+INTEGRATE — scan, report, then apply only what is missing:
+  --integrate [<path>]     the codebase (default: the positional path)
+  --name <id>              its id (default: the manifest's, else the directory name)
+  --env <tier>             as above (default: the manifest's environment)
+  --type <type>            override the inferred type
+  --probe <p>, --port <n>  override the heartbeat probe
 
-# Extract metadata fields (site_id, description, type, tier)
-extract_metadata() {
-    local file="$1"
-    local in_meta=false
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^metadata: ]]; then
-            in_meta=true
-            continue
-        fi
-        if [[ "$in_meta" == "true" ]] && [[ "$line" =~ ^[a-z] ]]; then
-            break
-        fi
-        if [[ "$in_meta" == "true" ]]; then
-            local trimmed
-            trimmed=$(echo "$line" | sed 's/^\s*//' | sed 's/#.*//' | tr -d '"' | tr -d "'")
-            [[ -z "$trimmed" ]] && continue
-            local key val
-            key=$(echo "$trimmed" | cut -d: -f1 | tr -d ' ')
-            val=$(echo "$trimmed" | cut -d: -f2- | sed 's/^\s*//')
-            [[ -z "$key" || -z "$val" ]] && continue
-            echo "${key}=${val}"
-        fi
-    done < "$file"
-}
+Both: --dry-run (plan only) · --yes (no questions; --env and the type required)
 
-# Generate gnode_services.yaml — the UNIFIED onboarding manifest schema.
-# One schema everywhere: the gnode: block is the declaration the daemon
-# registers by name (shape, axes, heartbeat, labels), profile: is its source
-# and the fallback, environment: is the DTAP tier, consumes:/produces: compose
-# the ValKey ACL (manifest-policy.sh).
-generate_services_yaml() {
-    local site_id="$1"
-    local output_file="$2"
-    local description="${3:-Geodineum service}"
-    local tier="${4:-SERVICE}"
-    local service_type="${5:-service}"
-    local lang="${6:-}"
-
-    # Profile: explicit GEO_PROFILE wins; otherwise derived from scope —
-    # client-facing registers as web, everything else as service.
-    local profile="${GEO_PROFILE:-}"
-    if [[ -z "$profile" ]]; then
-        case "${CAP_SCOPE:-client_facing}" in
-            client_facing) profile="web" ;;
-            *)             profile="service" ;;
-        esac
-    fi
-
-    cat > "$output_file" << YAMLEOF
-# Geodineum onboarding manifest — ONE schema (profile + environment +
-# consumes/produces drive registration and the composed ValKey ACL).
-# Generated by: geodineum register ${site_id}
-# Contract: CONTRACTS/SERVICE_ONBOARDING.md
-
-profile: ${profile}
-environment: ${CAP_ENVIRONMENT:-production}
-
-$(CAP_LANGUAGE="${lang:-php}" gnode_block_yaml "${profile}" "${site_id}")
-
-services:
-  - id: "${site_id}"
-    metadata:
-      description: "${description}"
-      type: "${service_type}"
-      tier: "${tier}"${lang:+
-      language: "${lang}"}
-      created_by: "geodineum-register"
-
-# Declared grants, composed + policy-validated at onboarding. This default
-# set matches what the retired uniform grant block used to hand out —
-# explicitly, so it is visible and auditable. Narrow it for your service.
-consumes:
-  - "gnode:*"
-  - "topology:*"
-  - "template:*"
-  - "membership:*"
-  - "{default}:gnode:*"
-  - "{default}:gcore:*"
-  - "{testing}:gnode:*"
-  - "{staging}:gnode:*"
-  - "{acceptance}:gnode:*"
-  - "{production}:gnode:*"
-produces:
-  - "{${site_id}}:gnode:comms:*"
-  - "error:{site_id}:*"
-  - "cache:{site_id}:*"
-  - "session:{site_id}:*"
-YAMLEOF
-}
-
-# Map flat YAML key names to CAP_* variable names
-map_flat_key_to_cap() {
-    local key="$1"
-    case "$key" in
-        protocol)           echo "CAP_PROTOCOL" ;;
-        native_format)      echo "CAP_FORMAT" ;;
-        contract_version)   echo "CAP_CONTRACT_VERSION" ;;
-        api_version)        echo "CAP_CONTRACT_VERSION" ;;
-        contract_stability) echo "CAP_STABILITY" ;;
-        clearance_required) echo "CAP_CLEARANCE" ;;
-        auth_method)        echo "CAP_AUTH" ;;
-        data_sensitivity)   echo "CAP_SENSITIVITY" ;;
-        service_scope)      echo "CAP_SCOPE" ;;
-        domain)             echo "CAP_DOMAIN" ;;
-        domain_primary)     echo "CAP_DOMAIN" ;;
-        domain_secondary)   echo "CAP_DOMAIN_SECONDARY" ;;
-        throughput_tier)    echo "CAP_THROUGHPUT" ;;
-        latency_class)      echo "CAP_LATENCY" ;;
-        reliability_tier)   echo "CAP_RELIABILITY" ;;
-        execution_priority) echo "CAP_PRIORITY" ;;
-        *)                  echo "" ;;
-    esac
+Examples:
+  sudo geodineum register                                        # asks
+  sudo geodineum register example.com --new website-static --env production
+  sudo geodineum register api_worker --new app --lang python --port 8090 --env testing
+  sudo geodineum register nightly_sync --new scheduled --schedule daily --env production
+  sudo geodineum register ~/gh/RINO/CourseMatch --env production   # integrate
+  sudo geodineum deregister <id>                                 # the inverse
+USAGE
 }
 
 # =============================================================================
-# Express Mode — Capability Inference from Service Root
+# Detection — language and framework of an existing codebase
 # =============================================================================
-
-# Detect dominant programming language from project files
 express_detect_language() {
     local path="$1"
 
@@ -198,11 +78,11 @@ express_detect_language() {
     # Fall back to file extension counting (depth-limited)
     local counts=()
     local php_n py_n js_n rs_n go_n
-    php_n=$(find "$path" -maxdepth 3 -name "*.php" 2>/dev/null | head -100 | wc -l)
-    py_n=$(find "$path" -maxdepth 3 -name "*.py" 2>/dev/null | head -100 | wc -l)
-    js_n=$(find "$path" -maxdepth 3 \( -name "*.js" -o -name "*.ts" \) -not -path "*/node_modules/*" 2>/dev/null | head -100 | wc -l)
-    rs_n=$(find "$path" -maxdepth 3 -name "*.rs" 2>/dev/null | head -100 | wc -l)
-    go_n=$(find "$path" -maxdepth 3 -name "*.go" 2>/dev/null | head -100 | wc -l)
+    php_n=$(find "$path" -maxdepth 3 -name "*.php" 2>/dev/null | wc -l)
+    py_n=$(find "$path" -maxdepth 3 -name "*.py" 2>/dev/null | wc -l)
+    js_n=$(find "$path" -maxdepth 3 \( -name "*.js" -o -name "*.ts" \) -not -path "*/node_modules/*" 2>/dev/null | wc -l)
+    rs_n=$(find "$path" -maxdepth 3 -name "*.rs" 2>/dev/null | wc -l)
+    go_n=$(find "$path" -maxdepth 3 -name "*.go" 2>/dev/null | wc -l)
 
     local max=0 lang="unknown"
     for pair in "php:${php_n}" "python:${py_n}" "node:${js_n}" "rust:${rs_n}" "go:${go_n}"; do
@@ -216,7 +96,6 @@ express_detect_language() {
     echo "$lang"
 }
 
-# Detect framework from project files
 express_detect_framework() {
     local path="$1"
     local lang="$2"
@@ -261,774 +140,262 @@ express_detect_framework() {
     esac
 }
 
-# Detect API protocol from project structure
-express_detect_protocol() {
-    local path="$1"
-    local framework="$2"
+# =============================================================================
+# INTEGRATE — what an existing codebase already has, and what it lacks
+# =============================================================================
+# Sets SCAN_* for the report and the plan. Reads only: files under the path,
+# unit files in /etc/systemd/system, the apache vhosts, this host's credential
+# and ledger, and (as root) the constellation in ValKey.
 
-    # Framework-specific defaults
-    case "$framework" in
-        wordpress|laravel|symfony|slim|django|flask|express|fastify|nextjs|nestjs|gin|echo|chi|axum|actix|rocket)
-            echo "http_rest"
-            return 0
-            ;;
-    esac
+integrate_scan() {
+    local path="$1" f
+    SCAN_PATH="$path" SCAN_MANIFEST="" SCAN_SHAPE="" SCAN_CONSTELLATION="" SCAN_ID="" SCAN_ENV=""
+    SCAN_LANG="" SCAN_FRAMEWORK="" SCAN_GNODE="" SCAN_WP=false SCAN_UNIT="" SCAN_TIMER="" SCAN_USER=""
+    SCAN_PORT="" SCAN_HEARTBEAT="" SCAN_VHOST="" SCAN_DOMAIN="" SCAN_CRED=false SCAN_ENTITY="" SCAN_REGISTERED=false
+    SCAN_DRIFT=false SCAN_FOREIGN=()
 
-    # Check for GraphQL
-    if find "$path" -maxdepth 3 \( -name "*.graphql" -o -name "schema.graphqls" \) 2>/dev/null | head -1 | grep -q .; then
-        echo "graphql"
-        return 0
+    for f in "$path/.geodineum/gnode_services.yaml" "$path/gnode_services.yaml" "$path/config/gnode_services.yaml"; do
+        [[ -f "$f" ]] && { SCAN_MANIFEST="$f"; break; }
+    done
+    if [[ -n "$SCAN_MANIFEST" ]] && command -v yq >/dev/null 2>&1; then
+        SCAN_SHAPE="$(yq eval '.gnode.shape // ""' "$SCAN_MANIFEST" 2>/dev/null)"
+        SCAN_CONSTELLATION="$(yq eval '.gnode.constellation // ""' "$SCAN_MANIFEST" 2>/dev/null)"
+        SCAN_ID="$(yq eval '.services[0].id // .gnode.heartbeat // ""' "$SCAN_MANIFEST" 2>/dev/null)"
+        SCAN_ENV="$(yq eval '.environment // ""' "$SCAN_MANIFEST" 2>/dev/null)"
+        SCAN_SHAPE="${SCAN_SHAPE/#null/}" SCAN_CONSTELLATION="${SCAN_CONSTELLATION/#null/}"
+        SCAN_ID="${SCAN_ID/#null/}" SCAN_ENV="${SCAN_ENV/#null/}"
+    fi
+    [[ -n "$SCAN_ID" ]] || { SCAN_ID="$(basename "$path" | tr '[:upper:].-' '[:lower:]__')"; }
+
+    SCAN_LANG="$(express_detect_language "$path")"
+    SCAN_FRAMEWORK="$(express_detect_framework "$path" "$SCAN_LANG")"
+    [[ -f "$path/wp-config.php" || -f "$path/wp-load.php" || -f "$path/public_html/wp-config.php" ]] && SCAN_WP=true
+    if [[ -f "$path/composer.json" ]] && grep -q '"gcore/gnode-client"' "$path/composer.json" 2>/dev/null; then SCAN_GNODE="gNode-Client (composer)"
+    elif grep -rqlE 'gcore-(standalone|loader)\.php' "$path" --include=*.php 2>/dev/null; then SCAN_GNODE="gCore"
     fi
 
-    # Check for gRPC / protobuf
-    if find "$path" -maxdepth 3 -name "*.proto" 2>/dev/null | head -1 | grep -q .; then
-        echo "grpc"
-        return 0
+    # How it runs: an operator unit that names this path.
+    local u sd="${GEODINEUM_SYSTEMD_DIR:-/etc/systemd/system}"
+    for u in "$sd"/*.service "$sd"/*.timer; do
+        [[ -f "$u" ]] || continue
+        grep -qE "^(WorkingDirectory|ExecStart)=.*${path%/}(/|\$| )" "$u" 2>/dev/null || continue
+        case "$u" in
+            *.timer) SCAN_TIMER="$(basename "$u")" ;;
+            *) [[ -z "$SCAN_UNIT" && "$(basename "$u")" != geodineum-heartbeat@* ]] && SCAN_UNIT="$(basename "$u")" ;;
+        esac
+    done
+    if [[ -n "$SCAN_UNIT" ]]; then
+        local base="${SCAN_UNIT%.service}"
+        [[ -f "$sd/${base}.timer" ]] && SCAN_TIMER="${base}.timer"
+        SCAN_USER="$(sed -n 's/^User=//p' "$sd/$SCAN_UNIT" | head -n1)"
+        SCAN_PORT="$(sed -nE 's/^Environment=.*\bPORT=([0-9]+).*/\1/p; s/^ExecStart=.*--port[ =]([0-9]+).*/\1/p' "$sd/$SCAN_UNIT" | head -n1)"
+    fi
+    [[ -z "$SCAN_PORT" && -f "$path/.env" ]] && SCAN_PORT="$(sed -nE 's/^PORT=([0-9]+).*/\1/p' "$path/.env" | head -n1)"
+
+    if [[ -n "$(systemctl list-unit-files --no-legend "geodineum-heartbeat@${SCAN_ID}.timer" 2>/dev/null)" ]]; then SCAN_HEARTBEAT="geodineum-heartbeat@${SCAN_ID}.timer"
+    elif grep -rqE ':gnode:heartbeat:' "$path" --include=*.{py,js,ts,php,rs,go,sh} 2>/dev/null; then SCAN_HEARTBEAT="in its own code"
     fi
 
-    # Check for stream-based (gNode integration)
-    if grep -rq "xadd\|XADD\|xreadgroup\|XREADGROUP\|gnode_stream" "$path" --include="*.php" --include="*.py" --include="*.rs" --include="*.go" --include="*.js" -l 2>/dev/null | head -1 | grep -q .; then
-        echo "gnode_stream"
-        return 0
-    fi
-
-    echo "http_rest"
-}
-
-# Detect service scope from project structure
-express_detect_scope() {
-    local path="$1"
-    local framework="$2"
-
-    # WordPress and web frameworks are client-facing
-    case "$framework" in
-        wordpress|laravel|django|nextjs|symfony)
-            echo "client_facing"
-            return 0
-            ;;
-    esac
-
-    # Check for systemd service (daemon)
-    if find /etc/systemd/system/ -name "*.service" -exec grep -l "$path" {} \; 2>/dev/null | head -1 | grep -q .; then
-        echo "daemon"
-        return 0
-    fi
-
-    # Check for queue/worker patterns
-    if grep -rq "consumer\|worker\|queue\|celery\|supervisor" "$path" --include="*.py" --include="*.php" --include="*.yaml" --include="*.conf" -l 2>/dev/null | head -1 | grep -q .; then
-        echo "worker"
-        return 0
-    fi
-
-    # Check for CLI tool
-    if [[ -f "${path}/bin/console" ]] || [[ -d "${path}/cli" ]]; then
-        echo "worker"
-        return 0
-    fi
-
-    # Default for web-accessible paths
-    if [[ "$path" == /var/www/* ]]; then
-        echo "client_facing"
-        return 0
-    fi
-
-    echo "daemon"
-}
-
-# Detect log file location
-express_detect_logs() {
-    local path="$1"
-
-    for candidate in \
-        "${path}/storage/logs" \
-        "${path}/var/log" \
-        "${path}/logs" \
-        "${path}/log" \
-        "/var/log/$(basename "$path")"; do
-        if [[ -d "$candidate" ]]; then
-            echo "$candidate"
-            return 0
-        fi
+    local v
+    for v in "${GEODINEUM_APACHE_SITES:-/etc/apache2/sites-enabled}"/*.conf; do
+        [[ -f "$v" ]] || continue
+        grep -qE "^\s*DocumentRoot\s+${path%/}(/|\$)" "$v" 2>/dev/null || continue
+        SCAN_VHOST="$v"; SCAN_DOMAIN="$(sed -nE 's/^\s*ServerName\s+(\S+).*/\1/p' "$v" | head -n1)"; break
     done
 
-    echo ""
+    [[ -e "${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${SCAN_ID}.password" ]] && SCAN_CRED=true
+    if [[ -f "$path/.geodineum/.registered" ]]; then
+        SCAN_REGISTERED=true
+        local was now
+        was="$(sed -n 's/^config_hash: //p' "$path/.geodineum/.registered")"
+        now="$( [[ -n "$SCAN_MANIFEST" ]] && sha256sum "$SCAN_MANIFEST" | cut -d' ' -f1 )"
+        if [[ -n "$was" && -n "$now" && "$was" != "$now" ]]; then SCAN_DRIFT=true; fi
+    fi
+    if [[ $EUID -eq 0 && -r "${GEODINEUM_CREDENTIALS_DIR}/valkey.password" ]]; then
+        # shellcheck source=/dev/null
+        source "${GNODE_SCRIPTS}/cli/constellation.sh" 2>/dev/null || true
+        local c
+        while IFS= read -r c; do
+            [[ "$(REDISCLI_AUTH="$(<"${GEODINEUM_CREDENTIALS_DIR}/valkey.password")" valkey-cli --no-auth-warning --raw -h "$VALKEY_HOST" -p "$VALKEY_PORT" HEXISTS "{$c}:gnode:constellation:entities" "$SCAN_ID" 2>/dev/null)" == 1 ]] && { SCAN_ENTITY="$c"; break; }
+        done < <(gnode_cli_constellations 2>/dev/null)
+    fi
+
+    # Streams it names that are not its own: grant requests, never grants.
+    local k
+    while IFS= read -r k; do
+        if [[ -n "$k" && "$k" != "{${SCAN_ID}}"* ]]; then SCAN_FOREIGN+=("$k"); fi
+    done < <(grep -rhoE '"\{[a-z0-9_]+\}:[A-Za-z0-9:_*.-]+"' "$path" --include=*.{py,js,ts,php,rs,go,sh} 2>/dev/null | tr -d '"' | sort -u | head -n 20)
+    return 0
 }
 
-# Detect documentation location
-express_detect_docs() {
-    local path="$1"
+# The type an existing service is closest to.
+integrate_type() {
+    if [[ "$SCAN_WP" == true ]]; then echo website-wp
+    elif [[ -n "$SCAN_TIMER" ]]; then echo scheduled
+    elif [[ "$SCAN_SHAPE" == site || ( -n "$SCAN_VHOST" && -z "$SCAN_UNIT" ) ]]; then echo website-static
+    elif [[ "$SCAN_SHAPE" == app || ( -n "$SCAN_UNIT" && -n "$SCAN_PORT" ) ]]; then echo app
+    elif [[ -n "$SCAN_UNIT" || "$SCAN_SHAPE" == daemon ]]; then echo daemon
+    else echo custom
+    fi
+}
 
-    for candidate in \
-        "${path}/docs" \
-        "${path}/doc" \
-        "${path}/documentation" \
-        "${path}/wiki"; do
-        if [[ -d "$candidate" ]]; then
-            echo "$candidate"
-            return 0
-        fi
+register_integrate() {
+    local path="" id="" env="" type="" yes=false dry=false probe="" port=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)    id="$2"; shift 2 ;;
+            --env)     env="$2"; shift 2 ;;
+            --type|--new) type="$2"; shift 2 ;;
+            --probe)   probe="$2"; shift 2 ;;
+            --port)    port="$2"; shift 2 ;;
+            --yes|-y)  yes=true; shift ;;
+            --dry-run) dry=true; shift ;;
+            -*) log_error "Unknown option for --integrate: $1"; exit 2 ;;
+            *) [[ -z "$path" ]] || { log_error "Unexpected argument: $1"; exit 2; }; path="$1"; shift ;;
+        esac
     done
+    [[ -n "$path" ]] || { log_error "--integrate needs the path of the codebase"; exit 2; }
+    [[ -d "$path" ]] || { log_error "Not a directory: $path"; exit 2; }
+    path="$(cd "$path" && pwd -P)"
 
-    # Check for README
-    if [[ -f "${path}/README.md" ]] || [[ -f "${path}/README.rst" ]]; then
-        echo "${path}"
-        return 0
+    integrate_scan "$path"
+    [[ -n "$id" ]] && SCAN_ID="$id"
+    [[ -n "$port" ]] && SCAN_PORT="$port"
+    validate_site_id "$SCAN_ID" || exit 1
+    [[ -n "$type" ]] || type="$(integrate_type)"
+    taxonomy_is_type "$type" || { log_error "Unknown type '$type' (types: ${GEO_SERVICE_TYPES[*]})"; exit 2; }
+    env="${env:-$SCAN_ENV}"
+
+    # What it has, what it lacks, and what register will do about each.
+    local -a has=() missing=() plan=() rows=()
+    [[ -n "$SCAN_MANIFEST" ]] && has+=("manifest (${SCAN_SHAPE:-no gnode: block}${SCAN_CONSTELLATION:+, constellation ${SCAN_CONSTELLATION}})") \
+        || { missing+=("manifest"); plan+=("write .geodineum/gnode_services.yaml (shape from the type, own namespace only)"); rows+=(manifest); }
+    [[ -n "$SCAN_UNIT" ]] && has+=("systemd unit ${SCAN_UNIT}${SCAN_USER:+ (User=${SCAN_USER})}")
+    [[ -n "$SCAN_TIMER" ]] && has+=("timer ${SCAN_TIMER}")
+    [[ -n "$SCAN_VHOST" ]] && has+=("vhost ${SCAN_DOMAIN:-$(basename "$SCAN_VHOST")}")
+    [[ -n "$SCAN_GNODE" ]] && has+=("speaks gNode via ${SCAN_GNODE}")
+    if [[ "$SCAN_CRED" == true || -n "$SCAN_ENTITY" ]]; then
+        local ent=""; if [[ -n "$SCAN_ENTITY" ]]; then ent=" + topology entity in {${SCAN_ENTITY}}"; fi
+        has+=("identity${ent}")
+        local why=""; if [[ "$SCAN_DRIFT" == true ]]; then why=", grants recomposed (the manifest changed)"; fi
+        plan+=("re-register: identity kept, topology and intent refreshed${why}")
+    else
+        missing+=("ValKey identity" "topology registration")
+        plan+=("onboard: identity (own namespace grants), streams, topology entity and intent")
     fi
-
-    echo ""
-}
-
-# Detect native data format
-express_detect_format() {
-    local path="$1"
-    local framework="$2"
-
-    case "$framework" in
-        wordpress|laravel|django|flask|express|fastify|nextjs|nestjs)
-            echo "json"
-            return 0
-            ;;
-    esac
-
-    # Check for XML-heavy codebases
-    local xml_n json_n
-    xml_n=$(find "$path" -maxdepth 2 -name "*.xml" -not -path "*/.git/*" 2>/dev/null | head -20 | wc -l)
-    json_n=$(find "$path" -maxdepth 2 -name "*.json" -not -path "*/.git/*" -not -path "*/node_modules/*" 2>/dev/null | head -20 | wc -l)
-    if [[ $xml_n -gt $json_n ]] && [[ $xml_n -gt 5 ]]; then
-        echo "xml"
-        return 0
-    fi
-
-    echo "json"
-}
-
-# Map framework to sensible capability defaults
-express_map_framework_capabilities() {
-    local framework="$1"
-    local lang="$2"
-
-    # These set reasonable defaults; the user can override in confirmation
-    case "$framework" in
-        wordpress)
-            CAP_DOMAIN="content"
-            CAP_DOMAIN_SECONDARY="template"
-            CAP_LATENCY="responsive"
-            CAP_THROUGHPUT="professional"
-            CAP_RELIABILITY="high"
-            CAP_STABILITY="stable"
-            CAP_CLEARANCE="public"
-            CAP_AUTH="session_cookie"
-            CAP_SPECIALIZATION="generalist"
-            CAP_PIPELINE_STAGE="deliver"
-            ;;
-        laravel|symfony|django)
-            CAP_DOMAIN="content"
-            CAP_DOMAIN_SECONDARY="platform"
-            CAP_LATENCY="interactive"
-            CAP_THROUGHPUT="professional"
-            CAP_RELIABILITY="high"
-            CAP_STABILITY="stable"
-            CAP_CLEARANCE="authenticated"
-            CAP_AUTH="bearer_token"
-            CAP_SPECIALIZATION="focused"
-            CAP_PIPELINE_STAGE="process"
-            ;;
-        flask|express|fastify|slim|gin|echo|chi|axum|actix|rocket)
-            CAP_DOMAIN="compute"
-            CAP_DOMAIN_SECONDARY="platform"
-            CAP_LATENCY="interactive"
-            CAP_THROUGHPUT="standard"
-            CAP_RELIABILITY="standard"
-            CAP_STABILITY="beta"
-            CAP_CLEARANCE="authenticated"
-            CAP_AUTH="bearer_token"
-            CAP_SPECIALIZATION="focused"
-            CAP_PIPELINE_STAGE="process"
-            ;;
-        fastapi)
-            CAP_DOMAIN="compute"
-            CAP_DOMAIN_SECONDARY="platform"
-            CAP_LATENCY="responsive"
-            CAP_THROUGHPUT="professional"
-            CAP_RELIABILITY="high"
-            CAP_STABILITY="stable"
-            CAP_CLEARANCE="authenticated"
-            CAP_AUTH="bearer_token"
-            CAP_SPECIALIZATION="specialist"
-            CAP_PIPELINE_STAGE="process"
-            ;;
-        nextjs|nestjs)
-            CAP_DOMAIN="content"
-            CAP_DOMAIN_SECONDARY="template"
-            CAP_LATENCY="responsive"
-            CAP_THROUGHPUT="professional"
-            CAP_RELIABILITY="high"
-            CAP_STABILITY="stable"
-            CAP_CLEARANCE="public"
-            CAP_AUTH="bearer_token"
-            CAP_SPECIALIZATION="generalist"
-            CAP_PIPELINE_STAGE="deliver"
-            ;;
-        *)
-            CAP_DOMAIN="compute"
-            CAP_DOMAIN_SECONDARY="platform"
-            CAP_LATENCY="responsive"
-            CAP_THROUGHPUT="standard"
-            CAP_RELIABILITY="standard"
-            CAP_STABILITY="beta"
-            CAP_CLEARANCE="authenticated"
-            CAP_AUTH="bearer_token"
-            CAP_SPECIALIZATION="generalist"
-            CAP_PIPELINE_STAGE="process"
-            ;;
-    esac
-
-    CAP_SENSITIVITY="internal"
-    CAP_PRIORITY="normal"
-}
-
-# Run full express detection and set CAP_* variables
-express_detect_all() {
-    local path="$1"
-
-    log_step "Express Mode: Scanning ${path}"
-
-    # Language
-    EXPRESS_LANG=$(express_detect_language "$path")
-    log_detail "Language:  ${EXPRESS_LANG}"
-
-    # Framework
-    EXPRESS_FRAMEWORK=$(express_detect_framework "$path" "$EXPRESS_LANG")
-    log_detail "Framework: ${EXPRESS_FRAMEWORK}"
-
-    # Protocol
-    CAP_PROTOCOL=$(express_detect_protocol "$path" "$EXPRESS_FRAMEWORK")
-    log_detail "Protocol:  ${CAP_PROTOCOL}"
-
-    # Format
-    CAP_FORMAT=$(express_detect_format "$path" "$EXPRESS_FRAMEWORK")
-    log_detail "Format:    ${CAP_FORMAT}"
-
-    # Scope
-    CAP_SCOPE=$(express_detect_scope "$path" "$EXPRESS_FRAMEWORK")
-    log_detail "Scope:     ${CAP_SCOPE}"
-
-    # Framework-based defaults
-    express_map_framework_capabilities "$EXPRESS_FRAMEWORK" "$EXPRESS_LANG"
-
-    # Logs and docs (metadata, not topology dimensions)
-    EXPRESS_LOGS=$(express_detect_logs "$path")
-    EXPRESS_DOCS=$(express_detect_docs "$path")
-    [[ -n "$EXPRESS_LOGS" ]] && log_detail "Logs:      ${EXPRESS_LOGS}"
-    [[ -n "$EXPRESS_DOCS" ]] && log_detail "Docs:      ${EXPRESS_DOCS}"
-
-    echo ""
-}
-
-# Interactive confirmation of detected capabilities
-express_confirm() {
-    echo -e "  ${BOLD}Detected Capabilities${NC}"
-    echo -e "  ${DIM}─────────────────────────────────────────────${NC}"
-    printf "  ${DIM}%-24s${NC} %s\n" "protocol:" "$CAP_PROTOCOL"
-    printf "  ${DIM}%-24s${NC} %s\n" "native_format:" "$CAP_FORMAT"
-    printf "  ${DIM}%-24s${NC} %s\n" "service_scope:" "$CAP_SCOPE"
-    printf "  ${DIM}%-24s${NC} %s\n" "domain_primary:" "$CAP_DOMAIN"
-    printf "  ${DIM}%-24s${NC} %s\n" "domain_secondary:" "$CAP_DOMAIN_SECONDARY"
-    printf "  ${DIM}%-24s${NC} %s\n" "throughput_tier:" "$CAP_THROUGHPUT"
-    printf "  ${DIM}%-24s${NC} %s\n" "latency_class:" "$CAP_LATENCY"
-    printf "  ${DIM}%-24s${NC} %s\n" "reliability_tier:" "$CAP_RELIABILITY"
-    printf "  ${DIM}%-24s${NC} %s\n" "contract_stability:" "$CAP_STABILITY"
-    printf "  ${DIM}%-24s${NC} %s\n" "clearance_required:" "$CAP_CLEARANCE"
-    printf "  ${DIM}%-24s${NC} %s\n" "auth_method:" "$CAP_AUTH"
-    printf "  ${DIM}%-24s${NC} %s\n" "data_sensitivity:" "$CAP_SENSITIVITY"
-    printf "  ${DIM}%-24s${NC} %s\n" "execution_priority:" "$CAP_PRIORITY"
-    echo ""
-
-    # Auto-accept if not interactive (piped input or --force)
-    if [[ ! -t 0 ]]; then
-        log_info "Non-interactive — accepting detected capabilities"
-        return
-    fi
-
-    echo -en "  Proceed with these capabilities? [${BOLD}Y${NC}/n/e(dit)] "
-    local answer
-    read -r answer < /dev/tty
-
-    case "${answer,,}" in
-        n|no)
-            log_info "Registration cancelled"
-            exit 0
-            ;;
-        e|edit)
-            express_edit_capabilities
-            ;;
-        *)
-            # Accept
-            ;;
-    esac
-}
-
-# Interactive editing of individual capabilities
-express_edit_capabilities() {
-    local -a dims=(
-        "CAP_PROTOCOL:protocol"
-        "CAP_FORMAT:native_format"
-        "CAP_SCOPE:service_scope"
-        "CAP_DOMAIN:domain_primary"
-        "CAP_DOMAIN_SECONDARY:domain_secondary"
-        "CAP_THROUGHPUT:throughput_tier"
-        "CAP_LATENCY:latency_class"
-        "CAP_RELIABILITY:reliability_tier"
-        "CAP_STABILITY:contract_stability"
-        "CAP_CLEARANCE:clearance_required"
-        "CAP_AUTH:auth_method"
-        "CAP_SENSITIVITY:data_sensitivity"
-        "CAP_PRIORITY:execution_priority"
-    )
-
-    echo ""
-    echo -e "  ${BOLD}Edit capabilities${NC} (press Enter to keep current value)"
-    echo ""
-
-    for entry in "${dims[@]}"; do
-        local var="${entry%%:*}"
-        local name="${entry##*:}"
-        local current="${!var}"
-
-        echo -en "  ${name} [${DIM}${current}${NC}]: "
-        local new_val
-        read -r new_val < /dev/tty
-
-        if [[ -n "$new_val" ]]; then
-            export "$var=$new_val"
+    rows+=(onboard)
+    if [[ -n "$SCAN_HEARTBEAT" ]]; then
+        has+=("heartbeat (${SCAN_HEARTBEAT})")
+    elif [[ "$type" != website-* && "$type" != custom ]]; then
+        local hp="${probe}"
+        # An existing app serves what it serves: probe its port, unless --probe names a URL.
+        [[ -z "$hp" && -n "$SCAN_PORT" ]] && hp="tcp:127.0.0.1:${SCAN_PORT}"
+        [[ -z "$hp" && -n "$SCAN_TIMER" ]] && hp="unit:${SCAN_TIMER}"
+        [[ -z "$hp" && -n "$SCAN_UNIT" ]] && hp="unit:${SCAN_UNIT}"
+        if [[ -n "$hp" ]]; then
+            missing+=("heartbeat"); plan+=("heartbeat while ${hp} passes (the probe is the proof)"); rows+=(heartbeat); probe="$hp"
+        else
+            missing+=("heartbeat (nothing to probe: give --probe)")
         fi
-    done
+    fi
+    [[ "$SCAN_WP" == true ]] && plan+=("wire WordPress: gCore mu-plugin + gTemplate parent theme")
 
     echo ""
-    log_info "Capabilities updated"
+    echo -e "${BOLD}${SCAN_ID}${NC} at ${path}"
+    echo "  what it is    ${SCAN_LANG}${SCAN_FRAMEWORK:+ (${SCAN_FRAMEWORK})} · closest type: ${type}${SCAN_PORT:+ · port ${SCAN_PORT}}"
+    echo "  has           $( IFS=';'; echo "${has[*]:-nothing Geodineum-specific}" | sed 's/;/ · /g')"
+    echo "  missing       $( IFS=';'; echo "${missing[*]:-nothing}" | sed 's/;/ · /g')"
+    local i=1 p
+    for p in "${plan[@]}"; do echo "  will ${i}.     ${p}"; i=$((i + 1)); done
+    if [[ ${#SCAN_FOREIGN[@]} -gt 0 ]]; then
+        echo "  other namespaces its code names (never granted here; request them:  sudo geodineum grants request ${SCAN_ID} <pattern>):"
+        printf '                %s\n' "${SCAN_FOREIGN[@]}"
+    fi
+    if [[ -z "$env" && "$dry" == true ]]; then
+        echo "  environment   — (pass --env; the manifest names none)"
+        echo ""; log_info "Dry run — nothing changed"; return 0
+    fi
+    if [[ -z "$env" ]]; then
+        [[ "$yes" == true || ! -t 0 ]] && { log_error "No environment: pass --env (nothing is assumed)"; exit 2; }
+        read -r -p "  DTAP environment (testing|staging|acceptance|production): " env
+    fi
+    validate_environment "$env" || exit 1
+    [[ "$dry" == true ]] && { echo ""; log_info "Dry run — nothing changed"; return 0; }
+    require_sudo "Registration"
+    if [[ "$yes" != true ]]; then
+        local go; read -r -p "  Proceed? [Y/n] " go < /dev/tty
+        [[ -z "$go" || "$go" =~ ^[Yy] ]] || { log_info "Cancelled — nothing changed"; return 0; }
+    fi
+
+    # Through the same rows as NEW, so the ledger records what this created.
+    SVC_TYPE="$type" SVC_NAME="$SCAN_ID" SVC_PATH="$path" SVC_ENV="$env" SVC_DOMAIN="${SCAN_DOMAIN}"
+    SVC_PROFILE="${GEO_TYPE_PROFILE[$type]}" SVC_LANG="$SCAN_LANG" SVC_PORT="$SCAN_PORT" SVC_PROBE="$probe"
+    SVC_UNIT="$SCAN_UNIT" SVC_NODE="" SVC_WORKER=false SVC_DRY_RUN=false SVC_YES=true SVC_FORM=false
+    SVC_OWNER="" SVC_NOTIFY_EMAIL="" SVC_MAIL_DOMAIN="" SVC_THEME="" SVC_NO_SSL=true
+    SVC_MANIFEST_DIR="$(dirname "${SCAN_MANIFEST:-$path/.geodineum/gnode_services.yaml}")"
+    # shellcheck source=/dev/null
+    source "${GNODE_SCRIPTS}/cli/constellation.sh" 2>/dev/null || true
+    SVC_CONSTELLATION="${SCAN_CONSTELLATION:-$(gnode_cli_constellation 2>/dev/null || echo geodineum)}"
+    # The credential is read by the user the service already runs as.
+    SVC_GROUP="geodineum"
+    if [[ -n "$SCAN_USER" ]] && id "$SCAN_USER" >/dev/null 2>&1; then SVC_GROUP="$(id -gn "$SCAN_USER")"; fi
+    case "$type" in website-*|app-pwa|webapp-gcore) SVC_CRED_GROUP="geodineum-web" ;; *) SVC_CRED_GROUP="$SVC_GROUP" ;; esac
+    [[ "$SCAN_DRIFT" == true ]] && SVC_REGRANT=true
+
+    local r
+    for r in "${rows[@]}"; do log_step "${r}"; "ensure_${r}"; done
+    [[ "$SCAN_WP" == true ]] && { log_step "WordPress integration"; setup_wordpress_integration "$path"; }
+
+    print_summary_header "Registered: ${SCAN_ID}"
+    echo "    sudo geodineum status ${SCAN_ID}"
+    echo "    sudo geodineum deregister ${SCAN_ID}     # the inverse"
+    echo ""
 }
 
 # =============================================================================
-# geodineum register
+# geodineum register — the router
 # =============================================================================
 
 cmd_register() {
-    local site_id=""
-    local yaml_file=""
-    local template=""
-    local environment="testing"
-    local owner=""
-    local service_path=""
-    local notify_email=""
-    local express=false
-    local dry_run=false
-    local force=false
-
+    local mode="" type="" target="" ; local -a rest=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --yaml)         yaml_file="$2"; shift 2 ;;
-            --template)     template="$2"; shift 2 ;;
-            --env)          environment="$2"; shift 2 ;;
-            --owner)        owner="$2"; shift 2 ;;
-            --path)         service_path="$2"; shift 2 ;;
-            --notify-email) notify_email="$2"; shift 2 ;;
-            --express)      express=true; shift ;;
-            --dry-run)      dry_run=true; shift ;;
-            --force)        force=true; shift ;;
-            --help|-h)  usage_register; exit 0 ;;
-            -*)         log_error "Unknown option: $1"; exit 1 ;;
-            *)
-                if [[ -z "$site_id" ]]; then
-                    site_id="$1"
-                else
-                    log_error "Unexpected argument: $1"
-                    exit 1
-                fi
-                shift
-                ;;
+            --new)       mode=new; if [[ $# -gt 1 && "$2" != -* ]]; then type="$2"; shift; fi; shift ;;
+            --integrate) mode=integrate; shift ;;
+            --matrix)    source "${LIB_DIR:-${GEODINEUM_CLI_ROOT}/lib}/service-taxonomy.sh"; taxonomy_print_matrix; return 0 ;;
+            -h|--help)   usage_register; return 0 ;;
+            --*)         rest+=("$1"); if [[ $# -gt 1 && "$2" != -* && "$1" =~ ^--(env|lang|port|schedule|probe|theme|mail-domain|node|path|owner|notify-email|name|type|domain)$ ]]; then rest+=("$2"); shift; fi; shift ;;
+            *)           [[ -z "$target" ]] || { log_error "Unexpected argument: $1"; return 2; }; target="$1"; shift ;;
         esac
     done
+    # shellcheck source=/dev/null
+    source "${GEODINEUM_CLI_ROOT}/lib/service-taxonomy.sh"
 
-    if [[ -z "$site_id" ]]; then
-        log_error "Site/service ID is required"
-        usage_register
-        exit 1
-    fi
-
-    validate_site_id "$site_id" || exit 1
-    validate_environment "$environment" || exit 1
-
-    # =================================================================
-    # Resolve service path (required for .geodineum/)
-    # =================================================================
-
-    if [[ -z "$service_path" ]]; then
-        service_path=$(resolve_service_path "$site_id") || true
-    fi
-
-    if [[ -z "$service_path" ]]; then
-        log_error "Cannot determine service path for '${site_id}'"
-        log_error "Specify --path <service_root_directory>"
-        exit 1
-    fi
-
-    if [[ ! -d "$service_path" ]]; then
-        log_error "Service path does not exist: ${service_path}"
-        exit 1
-    fi
-
-    local geodineum_dir="${service_path}/.geodineum"
-
-    # =================================================================
-    # Resolve capabilities source
-    # =================================================================
-
-    local cap_source="default"
-    local description="Geodineum service"
-    local tier="SERVICE"
-    local service_type="service"
-    local detected_lang=""
-
-    if [[ "$express" == "true" ]]; then
-        cap_source="express"
-        express_detect_all "$service_path"
-        detected_lang="$EXPRESS_LANG"
-
-        # Infer description and tier from framework
-        case "$EXPRESS_FRAMEWORK" in
-            wordpress)
-                description="WordPress site (${EXPRESS_FRAMEWORK})"
-                service_type="wordpress-site"
-                ;;
-            *)
-                description="${EXPRESS_FRAMEWORK} service (${EXPRESS_LANG})"
-                service_type="standalone-service"
-                ;;
-        esac
-
-    elif [[ -n "$yaml_file" ]]; then
-        if [[ ! -f "$yaml_file" ]]; then
-            log_error "YAML file not found: ${yaml_file}"
-            exit 1
-        fi
-
-        local format
-        format=$(detect_yaml_format "$yaml_file")
-
-        case "$format" in
-            flat)
-                cap_source="flat-yaml"
-                while IFS='=' read -r key val; do
-                    local cap_var
-                    cap_var=$(map_flat_key_to_cap "$key")
-                    if [[ -n "$cap_var" ]]; then
-                        export "$cap_var=$val"
-                    fi
-                done < <(extract_flat_capabilities "$yaml_file")
-
-                while IFS='=' read -r key val; do
-                    case "$key" in
-                        type)        service_type="$val" ;;
-                        description) description="$val" ;;
-                        theme)       description="WordPress site (${val} theme)" ;;
-                    esac
-                done < <(extract_metadata "$yaml_file")
-
-                case "$service_type" in
-                    wordpress-site) tier="SERVICE" ;;
-                    pipeline) tier="PIPELINE" ;;
-                    *) tier="SERVICE" ;;
-                esac
-                ;;
-
-            daemon)
-                cap_source="daemon-yaml"
-                ;;
-
-            *)
-                log_warning "Unknown YAML format in ${yaml_file} — using defaults"
-                ;;
-        esac
-
-    elif [[ -n "$template" ]]; then
-        cap_source="template"
-        source "${GEODINEUM_CLI_ROOT}/lib/service.sh" 2>/dev/null || true
-        apply_preset "$template"
-    fi
-
-    # =================================================================
-    # Banner
-    # =================================================================
-
-    echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}           ${BOLD}Geodineum Service Registration${NC}                          ${CYAN}║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-
-    print_kv "Site ID" "$site_id"
-    print_kv "Service path" "$service_path"
-    print_kv "Environment" "$environment"
-    print_kv "Capabilities" "$cap_source"
-    [[ -n "$yaml_file" ]] && print_kv "Source YAML" "$yaml_file"
-    [[ -n "$template" ]] && print_kv "Template" "$template"
-    [[ -n "$detected_lang" ]] && print_kv "Language" "$detected_lang"
-    [[ -n "$owner" ]] && print_kv "Owner" "$owner"
-    [[ -n "$notify_email" ]] && print_kv "Notify Email" "$notify_email"
-    print_kv ".geodineum" "$geodineum_dir"
-    echo ""
-
-    # Express confirmation (interactive)
-    if [[ "$express" == "true" ]] && [[ "$dry_run" != "true" ]]; then
-        express_confirm
-    fi
-
-    # =================================================================
-    # Notification email prompt (interactive)
-    # =================================================================
-
-    if [[ -z "$notify_email" ]] && [[ "$dry_run" != "true" ]] && [[ -t 0 ]]; then
-        local domain="${site_id//_/.}"
-        local default_email="admin@${domain}"
-        echo ""
-        read -rp "$(echo -e "${BLUE}[?]${NC} Notification email? [${default_email}]: ")" notify_email
-        notify_email="${notify_email:-$default_email}"
-        echo ""
-    fi
-
-    # =================================================================
-    # Dry-run
-    # =================================================================
-
-    if [[ "$dry_run" == "true" ]]; then
-        log_step "Dry-Run Summary"
-        log_dry "Create ${geodineum_dir}/ (credentials/, config.yaml)"
-        log_dry "Generate gnode_services.yaml in .geodineum/"
-        log_dry "Run onboard-service.sh for ACL + streams + registry"
-        log_dry "Finalize .geodineum/ (credential symlink, .registered marker)"
-        if [[ -f "${service_path}/wp-config.php" ]] || [[ -f "${service_path}/wp-load.php" ]]; then
-            log_dry "Wire WordPress integration (gCore mu-plugin + gTemplate parent theme)"
-        fi
-        log_dry "Register .geodineum in discovery-paths.conf"
-        [[ -n "$owner" ]] && log_dry "Set tenant owner: ${owner}"
-        [[ -n "$notify_email" ]] && log_dry "Configure COMMS email → ${notify_email}"
-        echo ""
-        log_info "No changes made (dry-run mode)"
-        return 0
-    fi
-
-    require_sudo "Service registration"
-
-    # =================================================================
-    # Step 1/4: Create .geodineum/ directory
-    # =================================================================
-
-    log_step "Step 1/4: Creating .geodineum/"
-
-    if [[ -d "$geodineum_dir" ]] && [[ "$force" != "true" ]]; then
-        log_info ".geodineum/ already exists (use --force to recreate)"
-    else
-        create_geodineum_dir "$service_path" "$site_id" "$environment" || {
-            log_error "Failed to create .geodineum/"
-            exit 1
-        }
-    fi
-
-    # Generate unified config.yaml (identity + environment + valkey + capabilities)
-    if [[ ! -f "${geodineum_dir}/config.yaml" ]] || [[ "$force" == "true" ]]; then
-        CAP_ENVIRONMENT="$environment"
-        generate_geodineum_config "$service_path" "$site_id" "$environment" \
-            "$description" "$service_type" "$tier" "$detected_lang"
-    else
-        log_info "config.yaml already exists (use --force to regenerate)"
-    fi
-
-    # Generate gnode_services.yaml inside .geodineum/
-    local services_yaml="${geodineum_dir}/gnode_services.yaml"
-
-    if [[ -f "$services_yaml" ]] && [[ "$force" != "true" ]]; then
-        log_success "gnode_services.yaml already exists (use --force to regenerate)"
-    else
-        case "$cap_source" in
-            daemon-yaml)
-                cp "$yaml_file" "$services_yaml"
-                log_success "Copied daemon-format YAML to .geodineum/"
-                ;;
-            flat-yaml|template|default|express)
-                CAP_ENVIRONMENT="$environment"
-                generate_services_yaml "$site_id" "$services_yaml" \
-                    "$description" "$tier" "$service_type" "$detected_lang"
-                log_success "Generated gnode_services.yaml (${cap_source})"
-                ;;
-        esac
-    fi
-
-    # Show the declared identity + grants
-    log_detail "Manifest declarations:"
-    grep -E '^(profile|environment):|^  - "' "$services_yaml" 2>/dev/null | while IFS= read -r line; do
-        log_detail "  $(echo "$line" | sed 's/^ *//')"
-    done
-
-    # =================================================================
-    # Step 2/4: Onboard (ACL + streams + registry + broadcast)
-    # =================================================================
-
-    log_step "Step 2/4: Onboarding (ACL + Streams + Registry)"
-
-    require_gnode
-
-    local onboard_script="${GNODE_SCRIPTS}/onboard-service.sh"
-    local onboard_args=("$site_id" --environment "$environment")
-
-    [[ -n "$owner" ]] && onboard_args+=(--owner "$owner")
-    [[ -n "$notify_email" ]] && onboard_args+=(--notify-email "$notify_email")
-    [[ "$force" == "true" ]] && onboard_args+=(--force)
-
-    # Point onboard at .geodineum/ for discovery-paths.conf
-    onboard_args+=(--yaml "$geodineum_dir")
-
-    log_detail "Running: ${onboard_script} ${onboard_args[*]}"
-    "$onboard_script" "${onboard_args[@]}" || {
-        log_error "Onboarding failed — see output above"
-        exit 1
-    }
-
-    # =================================================================
-    # Step 3/4: Finalize .geodineum/ (credentials + marker)
-    # =================================================================
-
-    log_step "Step 3/4: Finalizing .geodineum/"
-
-    finalize_geodineum_dir "$service_path" "$site_id" "$environment" || {
-        log_warning "Could not finalize .geodineum/ — credentials may not be symlinked"
-    }
-
-    # =================================================================
-    # WordPress integration (mu-plugin + parent theme)
-    # =================================================================
-
-    # Detect WordPress and wire up gCore + gTemplate if present
-    if [[ -f "${service_path}/wp-config.php" ]] || [[ -f "${service_path}/wp-load.php" ]]; then
-        log_step "WordPress Integration (mu-plugin + parent theme)"
-        setup_wordpress_integration "$service_path"
-    fi
-
-    # =================================================================
-    # Step 4/4: Verify daemon will discover this
-    # =================================================================
-
-    log_step "Step 4/4: Discovery Verification"
-
-    local disc_conf="$GEODINEUM_DISCOVERY_CONF"
-    if [[ -f "$disc_conf" ]] && grep -q "$geodineum_dir" "$disc_conf" 2>/dev/null; then
-        log_success "Config dir registered in discovery-paths.conf"
-    else
-        log_warning "Config dir NOT in discovery-paths.conf — daemon may not discover capabilities"
-        log_info "The onboard script should have added it. Check: cat ${disc_conf}"
-    fi
-
-    if systemctl is-active --quiet gnode-daemon 2>/dev/null; then
-        log_success "Daemon is running — will discover capabilities within 120s"
-        log_info "For immediate discovery: sudo systemctl restart gnode-daemon"
-    else
-        log_warning "Daemon not running — capabilities will be discovered on next start"
-    fi
-
-    # =================================================================
-    # Express: offer app config import
-    # =================================================================
-
-    if [[ "$express" == "true" ]]; then
-        local config_files
-        config_files=$(scan_config_files "$service_path" 2>/dev/null) || config_files=""
-        if [[ -n "$config_files" ]]; then
-            local cf_count
-            cf_count=$(echo "$config_files" | wc -l)
+    if [[ -z "$mode" ]]; then
+        if [[ -n "$target" && -d "$target" ]]; then
+            mode=integrate
+        elif [[ -t 0 ]]; then
             echo ""
-            echo -en "  Found ${cf_count} config file(s). Import app config to ValKey? [y/${BOLD}N${NC}] "
-            local answer
-            read -r answer < /dev/tty 2>/dev/null || answer="n"
-            if [[ "${answer,,}" == "y" || "${answer,,}" == "yes" ]]; then
-                source "${GEODINEUM_CLI_ROOT}/lib/config.sh" 2>/dev/null || true
-                cmd_config_import "$site_id" --path "$service_path" --force
+            echo -e "${BOLD}Register a service${NC}"
+            echo "  1) Set up a NEW service       a skeleton of the kind you choose, wired to Geodineum"
+            echo "  2) INTEGRATE an existing one  scan its code, show what it lacks, add only that"
+            local m; read -r -p "  Choice [1-2]: " m < /dev/tty
+            case "$m" in 1) mode=new ;; 2) mode=integrate ;; *) log_error "Nothing chosen"; return 2 ;; esac
+            if [[ "$mode" == integrate && -z "$target" ]]; then
+                read -r -p "  Path of the codebase: " target < /dev/tty
             fi
+        else
+            log_error "Non-interactive: pass --new <type> or a path to integrate"
+            return 2
         fi
     fi
 
-    # =================================================================
-    # Summary
-    # =================================================================
-
-    print_summary_header "Service Registered Successfully"
-
-    print_kv "Site ID" "$site_id"
-    print_kv "Environment" "$environment"
-    print_kv ".geodineum" "$geodineum_dir"
-    print_kv "Credentials" "${geodineum_dir}/credentials/valkey_client_${site_id}.password"
-    print_kv "Config" "${services_yaml}"
-    print_kv "Capabilities" "$(grep -c "name:" "$services_yaml" 2>/dev/null || echo 0) dimensions"
-    [[ -n "${EXPRESS_LOGS:-}" ]] && print_kv "Log location" "$EXPRESS_LOGS"
-    [[ -n "${EXPRESS_DOCS:-}" ]] && print_kv "Docs location" "$EXPRESS_DOCS"
-    echo ""
-
-    echo -e "  ${BOLD}What happens next:${NC}"
-    echo "    1. Daemon discovers capabilities within 120s (or restart for immediate)"
-    echo "    2. Service appears in the service topology (geodineum status ${site_id})"
-    echo "    3. Other services can discover it via geometric_discover"
-    echo ""
-}
-
-# =============================================================================
-# Usage
-# =============================================================================
-
-usage_register() {
-    cat << 'EOF'
-Usage: geodineum register <site_id> [options]
-
-Register an existing service into the Geodineum ecosystem.
-Creates .geodineum/ directory, ACL user, streams, site registry entry,
-and capability configuration for topology discovery.
-
-This is the ONLY registration path. Theme-side registration is removed.
-
-Arguments:
-  <site_id>                 Service identifier (lowercase, a-z0-9_)
-
-Capability sources (pick one):
-  --express                 Auto-detect capabilities by scanning the service root
-                            Infers: language, framework, protocol, scope, and more
-  --yaml <path>             Read capabilities from YAML file (auto-detects format)
-                            Supports: wp-config-geodineum.yaml (flat) or gnode_services.yaml (daemon)
-  --template <preset>       Use capability preset: wordpress, http-api, worker, inference
-
-Options:
-  --path <service_dir>      Service root directory (auto-detected for WordPress sites)
-  --env <environment>       DTAP environment (default: testing)
-  --owner <tenant_id>       Tenant/owner for cross-site discovery
-  --notify-email <email>    Notification recipient (configures COMMS email channel)
-                            If omitted, prompts interactively (default: admin@{domain})
-  --force                   Regenerate ACL password and overwrite existing config
-  --dry-run                 Preview without making changes
-  --help, -h                Show this help message
-
-Examples:
-  # Register existing WordPress site (reads capabilities from config)
-  sudo geodineum register your_site --yaml /var/www/your-site/wp-config-geodineum.yaml --env production
-
-  # Register with COMMS email notification
-  sudo geodineum register your_site --express --path /var/www/your-site --notify-email admin@example.com
-
-  # Express mode: scan and infer capabilities automatically
-  sudo geodineum register my_api --express --path /opt/apps/my-api --env production
-
-  # Register standalone service with preset
-  sudo geodineum register my_api --template http-api --path /opt/services/my_api --env testing
-
-  # Register with tenant grouping
-  sudo geodineum register client_app --express --path /opt/apps/client --owner acme --env production
-
-  # Preview what would happen
-  geodineum register new_service --template worker --path /opt/svc --dry-run
-EOF
+    if [[ "$mode" == new ]]; then
+        local -a a=()
+        [[ -n "$type" ]] && a+=(--type "$type")
+        [[ -n "$target" ]] && a+=("$target")
+        register_new "${a[@]}" "${rest[@]}"
+    else
+        register_integrate "$target" "${rest[@]}"
+    fi
 }

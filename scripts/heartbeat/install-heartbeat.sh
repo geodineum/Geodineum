@@ -43,6 +43,12 @@ else
     echo "on ${host}: plan only (add --apply to act)"
 fi
 
+step "system user $user (created if absent) in group $group, so it reads $pwfile"
+if (( apply )); then
+    id "$user" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$user"
+    [[ " $(id -nG "$user") " == *" $group "* ]] || usermod -aG "$group" "$user"
+fi
+
 step "install $src/geodineum-heartbeat.sh -> $lib/ (0750 root:$group)"
 run install -d -m 0755 "$lib"
 run install -m 0750 -o root -g "$group" "$src/geodineum-heartbeat.sh" "$lib/geodineum-heartbeat.sh"
@@ -78,5 +84,5 @@ step "systemctl daemon-reload; enable --now geodineum-heartbeat@$component.timer
 run systemctl daemon-reload
 run systemctl enable --now "geodineum-heartbeat@$component.timer"
 
-step "declare the node once (on the constellation master): geodineum topology register node $host --role observer --constellation $constellation"
+step "the node this beats from must be in {$constellation}: a node with a gNode daemon declares itself; one without is declared by  geodineum node add <name> <ip:port> --tier web  on the master"
 step "verify: journalctl -u geodineum-heartbeat@$component.service -n 5"

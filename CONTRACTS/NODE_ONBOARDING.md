@@ -270,18 +270,16 @@ It refuses while the node's daemon heartbeat is fresh.
   that libraries and the admin credential stay on the master.
 - **Service ACL identities.** Minting a *service's* ValKey auth is master-only.
   The paved road for a worker-resident service: on the master,
-  `sudo geodineum service new <name> --type <type> --env <tier> --node <worker>`
-  (mints identity + streams + composed grants, prints the hand-off), then on
-  the worker, `sudo geodineum credential add --service <name> --auth <printed>
-  --group <printed>` installs the credential with the type's reader group.
-  Lower-level: `sudo geodineum provision-service <svc>` (see
-  `SERVICE_ONBOARDING.md`).
+  `sudo geodineum register <name> --new <type> --env <tier> --node <worker>`
+  (mints identity + streams + composed grants, writes the credential to a 0600
+  file, prints the hand-off). On the worker: `sudo geodineum credential add --service <svc> --auth-file ~/<svc>.credential`,
+  then `sudo geodineum register <svc> --new <type> --env <tier> --worker` (see `SERVICE_ONBOARDING.md`).
 
 ## 9. Service taxonomy
 
-Service-type-aware onboarding is live: `geodineum service new` branches on the
+Service-type-aware onboarding is live: `geodineum register` branches on the
 taxonomy — public (`website-wp` / `website-static` / `app-pwa`) vs internal
 (`daemon` / `gcore-service` / `custom`) — and each type's requirement matrix
 decides what runs, so a granular non-web node (ValKey + gNode only) is a
 first-class member, not a stripped-down site. Join a tier (§4), then onboard
-services with `service new` (delegated via `--node` from the master).
+services with `register` (delegated via `--node` from the master).

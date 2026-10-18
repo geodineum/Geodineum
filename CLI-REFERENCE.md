@@ -7,21 +7,22 @@ One CLI for everything. Installed at `/usr/local/bin/geodineum` (alias: `gcli`).
 ## Service Onboarding (taxonomy)
 
 ```bash
-sudo geodineum service new                     # interview: public website/app vs internal daemon/service
-sudo geodineum service new example.com --type website-static --env production
-sudo geodineum service new app.example.com --type webapp-gcore --env production  # public PHP app on gCore, no WordPress
-sudo geodineum service new worker1 --type daemon --env production --yes
-sudo geodineum service new ml_api --type daemon --env production --node worker-node-1  # delegated: master mints, worker installs
-geodineum service new --matrix                 # print the per-type requirement matrix
+sudo geodineum register                        # asks: NEW (a wired skeleton) or INTEGRATE (scan existing code)
+sudo geodineum register example.com --new website-static --env production
+sudo geodineum register app.example.com --new webapp-gcore --env production  # public PHP app on gCore, no WordPress
+sudo geodineum register worker1 --new daemon --lang python --env production --yes
+sudo geodineum register ml_api --new daemon --env production --node worker-node-1  # on the master; then --worker on the node
+sudo geodineum register /srv/existing-app --env production                  # integrate
+geodineum register --matrix                    # the types and what each sets up
 sudo geodineum credential add --service ml_api --auth '<printed>' --group ml_api  # worker side of --node
 ```
 
 ## Site Management
 
 ```bash
-sudo geodineum new site example.com --theme gcube --env testing
+sudo geodineum register example.com --new website-wp --theme gcube --env testing
 sudo geodineum status example_site             # the site: shape, placements, health, intent, this host's files
-sudo geodineum register example_site         # register existing site (ACL + streams)
+sudo geodineum register /var/www/<domain>          # integrate an existing site
 ```
 
 ## WordPress Admin
@@ -81,7 +82,7 @@ geodineum logs --service valkey                # ValKey logs
 ## Service Lifecycle
 
 ```bash
-sudo geodineum update-service example_site --express  # re-scan capabilities
+sudo geodineum register /var/www/example.site  # register again: refresh after manifest changes
 sudo geodineum deregister old_service --dry-run         # preview removal
 sudo geodineum deregister old_service --purge-data --force  # remove it and its data
 ```

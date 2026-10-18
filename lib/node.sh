@@ -109,7 +109,17 @@ cmd_node_add() {
     fi
     local -a args=(--expand "$name" "$endpoint")
     [[ -n "$tier" ]] && args+=(--tier "$tier")
-    "$ND_SETUP" "${args[@]}"
+    "$ND_SETUP" "${args[@]}" || return 1
+    # A web-tier node runs no daemon, so nothing would declare it: declare it here,
+    # in every constellation this master serves, so its services' heartbeats place.
+    if [[ "$tier" == web ]]; then
+        local c
+        while IFS= read -r c; do
+            GNODE_TOPOLOGY_NAMESPACE="$c" "${GNODE_SCRIPTS}/cli/register.sh" node "$name" --role observer >/dev/null 2>&1 \
+                && log_success "Declared ${name} in {$c} (no daemon there to declare itself)" \
+                || log_warning "Could not declare ${name} in {$c}: sudo geodineum topology register node ${name} --constellation $c"
+        done < <(gnode_cli_constellations)
+    fi
 }
 
 cmd_node_remove() {
