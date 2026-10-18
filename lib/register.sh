@@ -973,7 +973,7 @@ cmd_register() {
 
     echo -e "  ${BOLD}What happens next:${NC}"
     echo "    1. Daemon discovers capabilities within 120s (or restart for immediate)"
-    echo "    2. Service appears in the service topology (geodineum info ${site_id})"
+    echo "    2. Service appears in the service topology (geodineum status ${site_id})"
     echo "    3. Other services can discover it via geometric_discover"
     echo ""
 }

@@ -8,9 +8,8 @@
 #   geodineum new site <domain> [--theme gcube] [--env production] [--owner tenant_id]
 #   geodineum new service <name> [--lang php|python|node] [--template http-api|worker|inference] [--gcore]
 #   geodineum new pipeline <name> --source <url> [--schedule "*/5 * * * *"] [--lang python]
-#   geodineum list [--json]
+#   geodineum status [<id> | <component> | --config | --visitors] [--json]
 #   geodineum config <set|get|list> <site_id> [...]
-#   geodineum status [--site <id>] [--verbose]
 #   geodineum install [--profile minimal|standard|full] [...]
 #
 # Symlink to /usr/local/bin/:
@@ -71,7 +70,7 @@ else
     echo "  Install yq to /usr/local/bin (system path, sudo-visible)." >&2
 fi
 
-declare -gA CMD_HANDLER=() CMD_ROOT=() CMD_ARGS=() CMD_DESC=() CMD_SUDO=() CMD_CAT=() CMD_FALLBACK=()
+declare -gA CMD_HANDLER=() CMD_ROOT=() CMD_ARGS=() CMD_DESC=() CMD_SUDO=() CMD_CAT=() CMD_FALLBACK=() CMD_STATUS=()
 _MANIFEST_LOADED=false
 
 discover_manifest_commands() {
@@ -88,7 +87,7 @@ discover_manifest_commands() {
     #   ${root}/<comp>/services/<svc>/geodeploy.yaml      — bundled services
     # The hello-world and gmath demos live at the nested depth as part of
     # the Geodineum repo's services/ directory.
-    for manifest in "${root}"/*/geodeploy.yaml "${root}"/*/services/*/geodeploy.yaml; do
+    for manifest in "${root}"/*/geodeploy.yaml "${root}"/pro/*/geodeploy.yaml "${root}"/*/services/*/geodeploy.yaml; do
         [[ -f "$manifest" ]] || continue
 
         local comp_root
@@ -117,6 +116,9 @@ discover_manifest_commands() {
             CMD_SUDO["$name"]="${req_sudo:-false}"
             CMD_CAT["$name"]="${category:-Component}"
             CMD_FALLBACK["$name"]="${fallback:-}"
+            # A command named "<component> status" is that component's status:
+            # operators reach it as `geodineum status <component>`.
+            [[ "$name" =~ ^([a-z0-9-]+)\ status$ ]] && CMD_STATUS["${BASH_REMATCH[1]}"]="$name"
         done < <(yq eval '.cli.commands[] | [.name, .handler, .description // "", .args // "", .requires_sudo // "false", .category // "Component", .fallback // ""] | @tsv' "$manifest" 2>/dev/null)
     done
 }
@@ -125,9 +127,13 @@ dispatch_manifest_command() {
     local command="$1"
     shift
 
-    # Two-word match: "geodeploy status"
+    # Two-word match: "geodeploy logs"
     if [[ $# -gt 0 ]]; then
         local two_word="${command} ${1}"
+        if [[ "$1" == status && -n "${CMD_STATUS[$command]+x}" ]]; then
+            echo "geodineum ${command} status is now  geodineum status ${command}" >&2
+            exit 2
+        fi
         if [[ -n "${CMD_HANDLER[$two_word]+x}" ]]; then
             shift
             _exec_handler "$two_word" "$@"
@@ -155,7 +161,7 @@ _exec_handler() {
         exit 1
     fi
 
-    if [[ "${CMD_SUDO[$cmd_key]}" == "true" ]] && [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    if [[ "${CMD_SUDO[$cmd_key]}" == "true" ]] && [[ "${EUID:-$(id -u)}" -ne 0 ]] && [[ "${1:-}" != -h && "${1:-}" != --help ]]; then
         echo "Error: '${cmd_key}' requires sudo." >&2
         echo "  Run: sudo geodineum ${cmd_key}" >&2
         exit 1
@@ -251,7 +257,9 @@ _iris_banner_file() {
 maybe_session_banner() {
     [[ -t 2 ]] || return 0
     [[ "${GEODINEUM_NO_BANNER:-0}" == 1 ]] && return 0
-    local sid; sid="$(ps -o sid= -p $$ 2>/dev/null | tr -d '[:space:]' || true)"
+    local p=$PPID sid
+    while [[ "$(ps -o comm= -p "$p" 2>/dev/null)" == sudo ]]; do p="$(ps -o ppid= -p "$p" | tr -d '[:space:]')"; done
+    sid="$(ps -o sid= -p "$p" 2>/dev/null | tr -d '[:space:]' || true)"
     [[ -n "$sid" ]] || return 0
     local dir="${XDG_RUNTIME_DIR:-/tmp}/geodineum"
     local sentinel="${dir}/banner.${sid}"
@@ -276,6 +284,11 @@ usage() {
 Usage: geodineum <command> [subcommand] [options]
 
 Commands:
+  status                    Every constellation this node serves: nodes, services, health (sudo)
+  status <id>               One service, site, node or component
+  status <component>        A component's own status (comms, gflow, gschedule, bak, geodeploy, ...)
+  status --config           This host's configuration health (--fix, --verbose, --site <id>)
+  status --visitors [<id>]  Visitor counts today/7d/30d from the cookieless beacon
   new site <domain>         Deploy a WordPress site with Geodineum integration
   new service <name>        Scaffold a standalone gNode service (--gcore for full framework)
   new pipeline <name>       Create a data pipeline (service variant)
@@ -295,10 +308,6 @@ Commands:
   provision-service <svc>   Mint a service's ValKey auth on the master for a node to use
   service <action>          Per-service install/uninstall/health for manifest services
   harden                    Deploy web-deny rules to all ecosystem directories
-  info [<site_id>]          Show credentials, paths, .geodineum/ and connection details
-  list                      List registered sites and services
-  check                     Validate ecosystem config (was: status)
-  visitors [<site_id>]      Visitor counts today/7d/30d from the cookieless beacon
   update                    Pull latest for all installed components
   wp <site_id> <cmd>        WordPress CLI wrapper (auto-resolves path + user)
   logs                      Tail daemon and ecosystem logs
@@ -330,9 +339,6 @@ Pipeline options:
   --lang <language>         Bootstrap language: php, python (default: python)
   --env <environment>       DTAP environment (default: testing)
 
-List options:
-  --json                    Machine-readable JSON output
-
 Deregister options:
   --purge-data              Also remove the data registration created
   --keep-acl                Keep the ValKey identity
@@ -345,12 +351,6 @@ Update-service options:
   --yaml <path>             Re-read capabilities from YAML file
   --template <preset>       Re-apply capability preset
   --reimport                Also re-import app config from service files
-
-Status options:
-  --site <id>               Check specific site only
-  --verbose                 Show all checks (not just failures)
-  --json                    Machine-readable JSON output
-  --fix                     Attempt to fix issues (requires root)
 
 Update options:
   --component <name>        Update only a specific component
@@ -384,11 +384,11 @@ Examples:
   # Create a Python data pipeline
   sudo geodineum new pipeline stock_feed --source https://api.example.com/feed --lang python
 
-  # Check ecosystem health
-  geodineum status --verbose
-
-  # List all registered services
-  geodineum list --json
+  # The constellation, one entity, one component, this host's configuration
+  sudo geodineum status
+  sudo geodineum status nierto_com
+  geodineum status comms
+  geodineum status --config --verbose
 
   # Update a service's capabilities after changes
   sudo geodineum update-service my_api --express
@@ -421,7 +421,7 @@ EOF
                     seen_cats["$cat"]=1
                 fi
                 printf "  %-28s %s\n" "$cmd_name" "${CMD_DESC[$cmd_name]:-}"
-            done < <(printf '%s\n' "${!CMD_HANDLER[@]}" | sort)
+            done < <(printf '%s\n' "${!CMD_HANDLER[@]}" | grep -vE '^([a-z0-9-]+ )?status$' | sort)
         fi
     fi
 }
@@ -575,26 +575,41 @@ main() {
             source "${LIB_DIR}/common.sh"
             cmd_harden "$@"
             ;;
-        info)
-            source "${LIB_DIR}/common.sh"
-            cmd_info "$@"
+        status)
+            # The one status route. The constellation view is gNode's manifest
+            # command; components, configuration and visitors route from here.
+            case "${1:-}" in
+                --config)
+                    shift; source "${LIB_DIR}/common.sh"; cmd_status_config "$@" ;;
+                --visitors)
+                    shift; source "${LIB_DIR}/common.sh"; cmd_visitors "$@" ;;
+                *)
+                    if [[ -n "${1:-}" && -n "${CMD_STATUS[$1]+x}" ]]; then
+                        # A component's own status; a component that is also a registered
+                        # entity (gflow, gschedule) gets its topology view after it.
+                        local _comp="$1" _rc=0; shift
+                        ( _exec_handler "${CMD_STATUS[$_comp]}" "$@" ) || _rc=$?
+                        if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${CMD_HANDLER[status]+x}" && $# -eq 0 ]]; then
+                            echo ""
+                            ( _exec_handler status "$_comp" ) 2>/dev/null || true
+                        fi
+                        exit "$_rc"
+                    elif [[ -n "${CMD_HANDLER[status]+x}" ]]; then
+                        _exec_handler status "$@"
+                    else
+                        echo "geodineum status: gNode is not installed here (no status command found)" >&2
+                        exit 1
+                    fi ;;
+            esac
             ;;
-        list)
-            source "${LIB_DIR}/common.sh"
-            source "${LIB_DIR}/service.sh"
-            cmd_list "$@"
-            ;;
-        # `check` was `status` until the constellation status command (gNode
-        # manifest) needed the name: a builtin arm shadows manifest dispatch
-        # silently, and a config validator answering `status` with nothing
-        # looked like the estate had nothing to say.
-        check)
-            source "${LIB_DIR}/common.sh"
-            cmd_status "$@"
-            ;;
-        visitors)
-            source "${LIB_DIR}/common.sh"
-            cmd_visitors "$@"
+        info|list|check|visitors)
+            case "$command" in
+                info)     echo "geodineum info is now  sudo geodineum status <id>" >&2 ;;
+                list)     echo "geodineum list is now  sudo geodineum status" >&2 ;;
+                check)    echo "geodineum check is now  geodineum status --config" >&2 ;;
+                visitors) echo "geodineum visitors is now  sudo geodineum status --visitors [<site>]" >&2 ;;
+            esac
+            exit 2
             ;;
         update)
             source "${LIB_DIR}/common.sh"
@@ -711,7 +726,7 @@ USAGE
                             _found=$((_found + 1))
                         fi
                     done
-                    [[ $_found -eq 0 ]] && echo "  (no services with install: sections found)"
+                    if [[ $_found -eq 0 ]]; then echo "  (no services with install: sections found)"; fi
                     ;;
                 *)
                     echo "Unknown service subcommand: ${_svc_sub}" >&2
@@ -752,23 +767,22 @@ USAGE
                 echo "Usage: geodineum schema <list|show> [extension_id]" >&2
                 exit 1
             fi
-            local _cli=""
-            if command -v valkey-cli >/dev/null 2>&1; then
-                _cli="valkey-cli"
-            elif command -v redis-cli >/dev/null 2>&1; then
-                _cli="redis-cli"
-            fi
-            if [[ -z "$_cli" ]]; then
-                echo "Error: neither valkey-cli nor redis-cli found (install valkey-tools)" >&2
-                exit 1
-            fi
+            source "${LIB_DIR}/common.sh"
+            local _vcli="${GNODE_SCRIPTS}/valkey-cli-secure.sh"
+            [[ -x "$_vcli" ]] || { echo "Error: ${_vcli} not found — is gNode installed?" >&2; exit 1; }
+            _cli() {
+                local out; out="$(VALKEY_USER=gnode_daemon "$_vcli" --raw "$@" 2>&1)"
+                if [[ "$out" == *NOAUTH* || "$out" == *WRONGPASS* || "$out" == *"Permission denied"* || "$out" == *"no readable ValKey password"* || "$out" == FATAL:* ]]; then
+                    echo "geodineum schema reads the daemon credential: run with sudo" >&2; return 1
+                fi
+                printf '%s\n' "$out"
+            }
             local _schema_subcmd="$1"; shift
             case "$_schema_subcmd" in
                 list)
                     echo "Published config_schema entries:"
-                    "$_cli" --no-auth-warning SMEMBERS geodineum:config_schema:_index 2>/dev/null \
-                        | /usr/bin/awk 'NF{print "  ● "$0}' \
-                        || { echo "  (none — daemon may not be running)"; exit 0; }
+                    local _idx; _idx="$(_cli SMEMBERS geodineum:config_schema:_index)" || exit 1
+                    [[ -n "$_idx" ]] && /usr/bin/awk 'NF{print "  ● "$0}' <<< "$_idx" || echo "  (none — daemon may not be running)"
                     ;;
                 show)
                     if [[ $# -eq 0 ]]; then
@@ -776,8 +790,8 @@ USAGE
                         exit 1
                     fi
                     local _ext_id="$1"
-                    "$_cli" --no-auth-warning HGETALL "geodineum:config_schema:${_ext_id}" 2>/dev/null \
-                        || { echo "  (no schema for: ${_ext_id})"; exit 1; }
+                    local _sch; _sch="$(_cli HGETALL "geodineum:config_schema:${_ext_id}")" || exit 1
+                    [[ -n "$_sch" ]] && echo "$_sch" || { echo "  (no schema for: ${_ext_id})"; exit 1; }
                     ;;
                 *)
                     echo "Unknown schema subcommand: ${_schema_subcmd}" >&2
@@ -1104,7 +1118,7 @@ EOF
 # Status command (inline — simple wrapper)
 # =============================================================================
 
-cmd_status() {
+cmd_status_config() {
     local args=()
     local site=""
     local verbose=false
@@ -1118,7 +1132,7 @@ cmd_status() {
             --json)     json=true; shift ;;
             --fix)      fix=true; shift ;;
             --help|-h)
-                echo "Usage: geodineum check [--site <id>] [--verbose] [--json] [--fix]"
+                echo "Usage: geodineum status --config [--site <id>] [--verbose] [--json] [--fix]"
                 exit 0
                 ;;
             *) log_error "Unknown option: $1"; exit 1 ;;
@@ -1148,12 +1162,6 @@ cmd_status() {
     [[ "$fix" == "true" ]] && args+=(--fix)
     [[ -n "$site" ]] && args+=(--site "$site")
 
-    if [[ "$json" != "true" ]]; then
-        banner
-        # Visitor counters ride along with health — same command, one glance.
-        cmd_visitors ${site:+"$site"} --compact 2>/dev/null || true
-    fi
-
     exec "$validate_script" "${args[@]}"
 }
 
@@ -1173,7 +1181,7 @@ cmd_visitors() {
             --json)    json_mode=true; shift ;;
             --compact) compact=true; shift ;;
             --help|-h)
-                echo "Usage: geodineum visitors [<site_id>] [--json]"
+                echo "Usage: sudo geodineum status --visitors [<site_id>] [--json]"
                 echo ""
                 echo "Visitor counts (unique visitors / page views) for today, 7 and 30 days,"
                 echo "read from the cookieless beacon aggregates. All sites unless <site_id>."
@@ -1273,261 +1281,6 @@ print(f"{v1} {p1} {v7} {p7} {v30} {p30}")' <<< "$raw") || { parse_err=$((parse_e
         fi
         [[ "$compact" == "true" ]] || echo ""
     fi
-}
-
-# =============================================================================
-# Info command — show credentials, paths, connection details
-# =============================================================================
-
-cmd_info() {
-    local site_id=""
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --help|-h)
-                echo "Usage: geodineum info [<site_id>]"
-                echo ""
-                echo "Shows credentials, paths, and connection details."
-                echo "Without site_id, shows ecosystem-wide info."
-                echo "With site_id, shows site-specific credentials and config."
-                echo ""
-                echo "Examples:"
-                echo "  geodineum info                  # Ecosystem overview"
-                echo "  geodineum info your_site        # Site-specific details"
-                exit 0
-                ;;
-            -*)
-                log_error "Unknown option: $1"
-                exit 1
-                ;;
-            *)
-                site_id="$1"
-                shift
-                ;;
-        esac
-    done
-
-    banner
-
-    local cred_dir="${GEODINEUM_CREDENTIALS_DIR}"
-
-    if [[ -n "$site_id" ]]; then
-        # ── Site-specific info ──
-        log_step "Site: ${site_id}"
-
-        # Credentials
-        echo ""
-        echo -e "  ${BOLD}Credentials${NC}"
-        local pass_file="${cred_dir}/valkey_client_${site_id}.password"
-        if [[ -f "$pass_file" ]]; then
-            echo -e "    ${GREEN}●${NC} Password file: ${pass_file}"
-            echo -e "    ${DIM}ACL user:${NC}      gnode_client_${site_id}"
-        else
-            echo -e "    ${RED}●${NC} No password file at ${pass_file}"
-        fi
-
-        # Connection test
-        echo ""
-        echo -e "  ${BOLD}Connection${NC}"
-        if [[ -f "$pass_file" ]] && [[ -r "$pass_file" ]]; then
-            local pass
-            pass=$(cat "$pass_file" 2>/dev/null)
-            if REDISCLI_AUTH="$pass" valkey-cli -p "${VALKEY_PORT}" --user "gnode_client_${site_id}" PING 2>/dev/null | grep -q PONG; then
-                echo -e "    ${GREEN}●${NC} ValKey: authenticated (port ${VALKEY_PORT})"
-            else
-                echo -e "    ${RED}●${NC} ValKey: authentication failed"
-            fi
-        else
-            echo -e "    ${YELLOW}●${NC} Cannot read password file (run as root or gnode user)"
-        fi
-
-        # Streams
-        echo ""
-        echo -e "  ${BOLD}Streams${NC}"
-        if [[ -f "$pass_file" ]] && [[ -r "$pass_file" ]]; then
-            local pass
-            pass=$(cat "$pass_file" 2>/dev/null)
-            for env in testing staging acceptance production; do
-                local stream_key="${site_id}:gnode:unified:${env}"
-                local len
-                len=$(REDISCLI_AUTH="$pass" valkey-cli -p "${VALKEY_PORT}" --user "gnode_client_${site_id}" XLEN "$stream_key" 2>/dev/null)
-                if [[ -n "$len" ]] && [[ "$len" != *"ERR"* ]] && [[ "$len" != *"NOPERM"* ]]; then
-                    echo -e "    ${GREEN}●${NC} ${stream_key} (${len} messages)"
-                fi
-            done
-            # Health stream
-            local health_key="${site_id}:gnode:health"
-            local hlen
-            hlen=$(REDISCLI_AUTH="$pass" valkey-cli -p "${VALKEY_PORT}" --user "gnode_client_${site_id}" XLEN "$health_key" 2>/dev/null)
-            if [[ -n "$hlen" ]] && [[ "$hlen" != *"ERR"* ]] && [[ "$hlen" != *"NOPERM"* ]]; then
-                echo -e "    ${GREEN}●${NC} ${health_key} (${hlen} messages)"
-            fi
-        fi
-
-        # .geodineum directory
-        echo ""
-        echo -e "  ${BOLD}.geodineum${NC}"
-        local gdir
-        gdir=$(find_geodineum_dir "$site_id" 2>/dev/null) || gdir=""
-        if [[ -n "$gdir" ]] && [[ -d "$gdir" ]]; then
-            echo -e "    ${GREEN}●${NC} Location:    ${gdir}"
-            local gdir_owner
-            gdir_owner=$(stat -c '%U:%G' "$gdir" 2>/dev/null || echo "unknown")
-            echo -e "    ${DIM}  Owner:${NC}      ${gdir_owner}"
-            [[ -f "${gdir}/config.yaml" ]] && \
-                echo -e "    ${GREEN}●${NC} config.yaml  ${DIM}(bootstrap)${NC}"
-            [[ -f "${gdir}/gnode_services.yaml" ]] && \
-                echo -e "    ${GREEN}●${NC} gnode_services.yaml  ${DIM}($(grep -c 'name:' "${gdir}/gnode_services.yaml" 2>/dev/null || echo 0) capabilities)${NC}"
-            if [[ -L "${gdir}/credentials/valkey_client_${site_id}.password" ]]; then
-                local link_target
-                link_target=$(readlink -f "${gdir}/credentials/valkey_client_${site_id}.password" 2>/dev/null)
-                if [[ -f "$link_target" ]]; then
-                    echo -e "    ${GREEN}●${NC} credentials  ${DIM}→ ${link_target}${NC}"
-                else
-                    echo -e "    ${RED}●${NC} credentials  ${DIM}→ ${link_target} (broken symlink)${NC}"
-                fi
-            else
-                echo -e "    ${YELLOW}●${NC} credentials  ${DIM}(no symlink)${NC}"
-            fi
-            if [[ -f "${gdir}/.registered" ]]; then
-                local reg_ts
-                reg_ts=$(grep "^registered_at:" "${gdir}/.registered" 2>/dev/null | sed 's/^registered_at: *//')
-                echo -e "    ${GREEN}●${NC} Registered:  ${DIM}${reg_ts}${NC}"
-            fi
-        else
-            echo -e "    ${YELLOW}●${NC} Not found — run: geodineum register ${site_id} --path <service_root>"
-        fi
-
-        # Paths
-        echo ""
-        echo -e "  ${BOLD}Paths${NC}"
-        local site_env="${GEODINEUM_CONFIG_ROOT}/sites/${site_id}/site.env"
-        if [[ -f "$site_env" ]]; then
-            echo -e "    ${GREEN}●${NC} Site config: ${site_env}"
-        fi
-        local service_dir="${GEODINEUM_ROOT}/services/${site_id}"
-        if [[ -d "$service_dir" ]]; then
-            echo -e "    ${GREEN}●${NC} Service dir: ${service_dir}"
-        fi
-        local wp_root="${GEODINEUM_WEB_ROOT}/${site_id//_/.}"
-        if [[ -d "$wp_root" ]]; then
-            echo -e "    ${GREEN}●${NC} Web root:    ${wp_root}"
-        else
-            wp_root="${GEODINEUM_WEB_ROOT}/$(echo "$site_id" | sed 's/_/./g')"
-            if [[ -d "$wp_root" ]]; then
-                echo -e "    ${GREEN}●${NC} Web root:    ${wp_root}"
-            fi
-        fi
-
-        # COMMS config
-        if [[ -f "$pass_file" ]] && [[ -r "$pass_file" ]]; then
-            local pass
-            pass=$(cat "$pass_file" 2>/dev/null)
-            local comms_type
-            comms_type=$(REDISCLI_AUTH="$pass" valkey-cli -p "${VALKEY_PORT}" --user "gnode_client_${site_id}" TYPE "${site_id}:comms:config" 2>/dev/null)
-            if [[ "$comms_type" == "string" ]]; then
-                echo ""
-                echo -e "  ${BOLD}COMMS${NC}"
-                echo -e "    ${GREEN}●${NC} Notification config: ${site_id}:comms:config"
-            fi
-        fi
-
-    else
-        # ── Ecosystem-wide info ──
-        log_step "Ecosystem Overview"
-
-        # ValKey connection
-        echo ""
-        echo -e "  ${BOLD}ValKey${NC}"
-        echo -e "    Host:     ${VALKEY_HOST}"
-        echo -e "    Port:     ${VALKEY_PORT}"
-        if systemctl is-active --quiet valkey-gnode 2>/dev/null; then
-            echo -e "    Status:   ${GREEN}running${NC}"
-        else
-            echo -e "    Status:   ${RED}stopped${NC}"
-        fi
-
-        # Credentials
-        echo ""
-        echo -e "  ${BOLD}Credentials${NC} (${cred_dir}/)"
-        if [[ -d "$cred_dir" ]]; then
-            # Admin
-            [[ -f "${cred_dir}/valkey.password" ]] && \
-                echo -e "    ${GREEN}●${NC} valkey.password            ${DIM}(admin — ACL operations)${NC}"
-            # Daemon
-            [[ -f "${cred_dir}/valkey_daemon.password" ]] && \
-                echo -e "    ${GREEN}●${NC} valkey_daemon.password     ${DIM}(daemon — stream processing)${NC}"
-            # COMMS
-            [[ -f "${cred_dir}/valkey_comms.password" ]] && \
-                echo -e "    ${GREEN}●${NC} valkey_comms.password      ${DIM}(COMMS — notifications)${NC}"
-            # SMTP
-            [[ -f "${cred_dir}/smtp_comms.user" ]] && \
-                echo -e "    ${GREEN}●${NC} smtp_comms.user/password   ${DIM}(SMTP — email delivery)${NC}"
-            # Per-site clients
-            local site_count=0
-            while IFS= read -r f; do
-                [[ -f "$f" ]] || continue
-                local sid
-                sid=$(basename "$f" .password | sed 's/^valkey_client_//')
-                [[ "$sid" == "client" ]] && continue  # skip generic
-                echo -e "    ${GREEN}●${NC} valkey_client_${sid}.password"
-                site_count=$((site_count + 1))
-            done < <(find "${cred_dir}" -name "valkey_client_*.password" -type f 2>/dev/null | sort)
-            echo ""
-            echo -e "    ${DIM}${site_count} site credential(s)${NC}"
-        else
-            echo -e "    ${RED}●${NC} Credentials directory not found"
-        fi
-
-        # Services
-        echo ""
-        echo -e "  ${BOLD}Services${NC}"
-        for svc in gnode-daemon geodineum-comms valkey-gnode; do
-            if systemctl is-active --quiet "$svc" 2>/dev/null; then
-                echo -e "    ${GREEN}●${NC} ${svc}: running"
-            elif systemctl is-enabled --quiet "$svc" 2>/dev/null; then
-                echo -e "    ${YELLOW}●${NC} ${svc}: stopped (enabled)"
-            else
-                echo -e "    ${DIM}○${NC} ${svc}: not installed"
-            fi
-        done
-
-        # Config
-        echo ""
-        echo -e "  ${BOLD}Configuration${NC}"
-        [[ -f "${GEODINEUM_CONFIG_ROOT}/bootstrap.env" ]] && \
-            echo -e "    ${GREEN}●${NC} ${GEODINEUM_CONFIG_ROOT}/bootstrap.env"
-        [[ -f "${GEODINEUM_CONFIG_ROOT}/components/gnode-daemon/daemon.env" ]] && \
-            echo -e "    ${GREEN}●${NC} ${GEODINEUM_CONFIG_ROOT}/components/gnode-daemon/daemon.env"
-        [[ -f "${GEODINEUM_DISCOVERY_CONF}" ]] && \
-            echo -e "    ${GREEN}●${NC} ${GEODINEUM_DISCOVERY_CONF}"
-
-        # Components
-        echo ""
-        echo -e "  ${BOLD}Components${NC} (${GEODINEUM_ROOT}/)"
-        for dir in gNode gNode-Client gCore gTemplate gCube \
-                   Geodineum Geodineum-COMMS; do
-            if [[ -d "${GEODINEUM_ROOT}/${dir}" ]]; then
-                echo -e "    ${GREEN}●${NC} ${dir}"
-            fi
-        done
-
-        # Standalone services
-        if [[ -d "${GEODINEUM_ROOT}/services" ]]; then
-            local svc_count
-            svc_count=$(find "${GEODINEUM_ROOT}/services" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
-            if [[ $svc_count -gt 0 ]]; then
-                echo ""
-                echo -e "  ${BOLD}Standalone Services${NC} (${GEODINEUM_ROOT}/services/)"
-                for svc_dir in "${GEODINEUM_ROOT}/services"/*/; do
-                    [[ -d "$svc_dir" ]] || continue
-                    echo -e "    ${GREEN}●${NC} $(basename "$svc_dir")"
-                done
-            fi
-        fi
-    fi
-
-    echo ""
 }
 
 # =============================================================================

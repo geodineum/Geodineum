@@ -3333,7 +3333,7 @@ provision_comms_acl() {
         # Absent from the original least-privilege composition, so every COMMS
         # heartbeat failed NOPERM with the error hidden at debug level. The
         # `~*:gnode:comms:*` grant above is the ONE cross-constellation read of
-        # the estate (D17): COMMS delivers for CourseMatch's constellation until
+        # the estate (D17): COMMS delivers for a second constellation on this node until
         # it has a placement of its own (ROADMAP_ONE_TOPOLOGY R-3).
         "~*:gnode:heartbeat:*:comms:*"
     )
@@ -5611,13 +5611,13 @@ print_summary() {
 
         echo ""
         echo "  ${BOLD}Quick commands:${NC}"
-        echo "    geodineum info ${site_id}            # Full site details"
+        echo "    geodineum status ${site_id}            # Full site details"
         echo "    geodineum env viewkey ${site_id}     # Show/generate viewkey"
         echo "    geodineum env show ${site_id}        # Environment + gate status"
     fi
 
     echo ""
-    echo "    - Health check: geodineum status --verbose"
+    echo "    - Health check: geodineum status --config --verbose"
     if [[ -x /usr/local/bin/geodineum ]]; then
         echo "    - CLI ready: geodineum --help (or: gcli --help)"
     else

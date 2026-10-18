@@ -178,7 +178,7 @@ ensure_skeleton_static() {
 }
 
 # Cookieless analytics endpoint — every public type gets one; the counters
-# land in the site's own {site}:* keyspace and surface in `geodineum visitors`.
+# land in the site's own {site}:* keyspace and surface in `geodineum status --visitors`.
 ensure_visit_beacon() {
     local docroot="${GEODINEUM_WEB_ROOT}/${SVC_DOMAIN}/public_html"
     if [[ -f "${docroot}/g/hit.php" ]]; then
@@ -1030,7 +1030,7 @@ cmd_service_new() {
     fi
     echo ""
     echo -e "  ${BOLD}Verify:${NC}"
-    echo "    geodineum info ${SVC_NAME}"
+    echo "    geodineum status ${SVC_NAME}"
     echo "    sudo geodineum grants show ${SVC_NAME}"
     case "$SVC_TYPE" in
         daemon|gcore-service)

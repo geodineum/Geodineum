@@ -306,7 +306,7 @@ Show or generate the ViewKey for non-production sites.
 ### `info` — Ecosystem and site information
 
 ```bash
-geodineum info [<site_id>]
+geodineum status [<site_id>]
 ```
 
 Without a site_id, shows ecosystem overview: ValKey status, credentials, services, components.
@@ -324,7 +324,7 @@ With a site_id, shows:
 ### `list` — List registered services
 
 ```bash
-geodineum list [--json]
+geodineum status [--json]
 ```
 
 Queries the ValKey site registry. Shows site ID, active environment, and status.
@@ -448,10 +448,14 @@ See [CONTRACTS/NODE_ONBOARDING.md](CONTRACTS/NODE_ONBOARDING.md).
 ### `status` — The constellation at a glance
 
 ```bash
-sudo geodineum status [--json]
+sudo geodineum status [--json]          # every constellation this node serves
+sudo geodineum status <id>              # one service, site, node or component
+geodineum status <component>            # its own status: comms, gflow, gschedule, bak, geodeploy, ...
+geodineum status --config [--fix]       # this host's configuration health (7 layers)
+sudo geodineum status --visitors [<id>] # visitor counters
 ```
 
-Nodes (heartbeat age, load, memory), what runs where, services (shape, health, placements), components. Reads only ValKey.
+The one status route. The constellation view shows nodes (heartbeat age, load, memory), what runs where, services (shape, health, placements) and components, and reads only ValKey. A component's status is the manifest command it names `<component> status`; `geodineum <component> status` points here.
 
 ---
 
@@ -473,7 +477,7 @@ One recipe per entity type, with checks and refusals: [CONTRACTS/REGISTRATION.md
 ### `check` — Ecosystem config health check
 
 ```bash
-geodineum check [options]
+geodineum status --config [options]
 ```
 
 | Flag | Description |
@@ -678,7 +682,7 @@ geodineum config list my_api
 sudo geodineum env set myapp_com production
 
 # 6. Monitor
-geodineum status --verbose
-geodineum info my_api
+geodineum status --config --verbose
+geodineum status my_api
 geodineum logs -f
 ```

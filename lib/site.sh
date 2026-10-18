@@ -341,7 +341,7 @@ cmd_new_site() {
         echo "    - Promote: geodineum env set ${site_id} production"
     fi
     echo "    - Dashboard: https://${domain}/wp-admin/"
-    echo "    - Info: geodineum info ${site_id}"
+    echo "    - Info: geodineum status ${site_id}"
     echo ""
 }
 

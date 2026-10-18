@@ -35,7 +35,7 @@ Nothing holds state in-process that another node would need.
 | **Deploy** | your `geodeploy.yaml` — triggers, build, dirty-tree; annotated reference: `services/hello-world/` (this repo) | push to main; the orchestrator does the rest |
 | **CLI verbs** | manifest `cli:` section — verbs surface in `geodineum --help` | `geodineum --help` |
 | **Native install** | manifest `install:`/`uninstall:`/`health_check` sections | `sudo geodineum service install <repo>/geodeploy.yaml` |
-| **Backup** | manifest `backup:` section — keys, files, schedule; consumed by Geodineum-BAK | `geodineum bak status` |
+| **Backup** | manifest `backup:` section — keys, files, schedule; consumed by Geodineum-BAK | `geodineum status bak` |
 | **Permissions model** | `CONTRACTS/permission-model.md` (this repo) + gNode `docs/operations/PERMISSIONS.md` | — |
 | **Keyspace conventions** | `CONTRACTS/keyspace-model.md` (this repo) — hash-tag braces are load-bearing | — |
 | **FCALL from any language** | gNode `docs/reference/FCALL_COOKBOOK.md` — polyglot examples | `FCALL_RO GNODE_SCHEMA_GET service` |

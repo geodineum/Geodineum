@@ -389,12 +389,12 @@ ENVEOF
     echo "    1. Edit src/bootstrap.${bootstrap_ext} with your service logic"
     echo "    2. Edit .geodineum/gnode_services.yaml to refine capabilities"
     echo "    3. Daemon discovers the service within ~120s (or restart daemon)"
-    echo "    4. Test: geodineum info ${name}"
+    echo "    4. Test: geodineum status ${name}"
     echo ""
 }
 
 # =============================================================================
-# geodineum list
+# geodineum status
 # =============================================================================
 
 cmd_list() {
@@ -403,7 +403,7 @@ cmd_list() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --json) json_mode=true; shift ;;
-            --help|-h) echo "Usage: geodineum list [--json]"; exit 0 ;;
+            --help|-h) echo "Usage: geodineum status [--json]"; exit 0 ;;
             *) log_error "Unknown option: $1"; exit 1 ;;
         esac
     done

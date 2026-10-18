@@ -20,9 +20,7 @@ sudo geodineum credential add --service ml_api --auth '<printed>' --group ml_api
 
 ```bash
 sudo geodineum new site example.com --theme gcube --env testing
-geodineum info example_site                  # credentials, paths, connection details
-geodineum list                                 # all registered sites
-geodineum list --json                          # machine-readable output
+sudo geodineum status example_site             # the site: shape, placements, health, intent, this host's files
 sudo geodineum register example_site         # register existing site (ACL + streams)
 ```
 
@@ -67,12 +65,13 @@ sudo geodineum update --skip-build             # pull only, no rebuild
 ## Health & Monitoring
 
 ```bash
-sudo geodineum visitors                        # visitor counts today/7d/30d, all sites (beacon-fed)
-sudo geodineum visitors example_site --json    # one site, machine-readable
-geodineum status                               # ecosystem health check
-geodineum status --verbose                     # all checks (not just failures)
-geodineum status --site example_site         # single site check
-sudo geodineum status --fix                    # attempt to fix detected issues
+sudo geodineum status                                   # every constellation this node serves
+sudo geodineum status example_site                    # one service, site, node or component
+sudo geodineum status --json                            # one JSON object per constellation per line
+geodineum status comms                                  # a component's own status (gflow, gschedule, bak, geodeploy, ...)
+geodineum status --config --verbose                     # this host's configuration health, all checks
+sudo geodineum status --config --fix                    # and fix what it can
+sudo geodineum status --visitors [example_site]       # visitor counts today/7d/30d (beacon-fed)
 geodineum logs -f                              # follow daemon logs (real-time)
 geodineum logs -n 100                          # last 100 lines
 geodineum logs --service comms                 # COMMS daemon logs
@@ -90,7 +89,7 @@ sudo geodineum deregister old_service --purge-data --force  # remove it and its 
 ## Nodes and Constellations
 
 ```bash
-sudo ./geodineum constellation new coursematch --components gnode-daemon --yes   # fresh machine
+sudo ./geodineum constellation new mynet --components gnode-daemon --yes         # fresh machine
 sudo geodineum node add worker1 203.0.113.50:51820 --tier compute                  # on the master
 sudo geodineum node remove worker1                                                 # on the master
 ```

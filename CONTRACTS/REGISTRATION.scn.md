@@ -38,7 +38,7 @@ APP       register  sudo geodineum topology register service <n> headless   (or 
 NON-GEO   register  sudo geodineum service new <n> --type custom --env <e> --yes ; on the node: scripts/heartbeat/install-heartbeat.sh <n>
                     --probe unit:<u>|tcp:<h>:<p>|http:<url>|pid:<file>|cmd:</abs> [--apply]  (plan by default; the probe is the proof;
                     component name == manifest heartbeat:)
-CHECK     sudo geodineum topology [all|show <id>|load [id]|verify|stats] · sudo geodineum status [--json] · geodineum info <id> · geodineum list
+CHECK     sudo geodineum topology [all|show <id>|load [id]|verify|stats] · sudo geodineum status [--json] · geodineum status <id> · geodineum status
 DEREG     sudo geodineum deregister <id> [--purge-data] [--keep-acl] [--dry-run]   (THE route: intent, entity+placements in its own
           constellation, keys, identity, then the host ledger newest-first; data only with --purge-data; residue check last)
           sudo geodineum topology deregister <id>         (primitive: the topology entity only)

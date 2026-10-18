@@ -153,7 +153,7 @@ Check and deregister:
 ```bash
 sudo geodineum topology show example_com     # shape 3.1, placement example_com@<node>
 sudo geodineum status                         # health = the host daemon's heartbeat
-geodineum info example_com
+geodineum status example_com
 
 sudo geodineum deregister example_com                  # topology, intent, keys, identity, and what registering created here
 ```

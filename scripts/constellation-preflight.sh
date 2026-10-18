@@ -3,8 +3,8 @@
 # ValKey + gNode). Run it on that machine, as the user who will run install.sh,
 # before installing anything. Every FAIL names its fix; nothing is changed.
 #
-#   scripts/constellation-preflight.sh --constellation coursematch \
-#       [--domain coursematch.example.org] [--private-repo owner/repo]... \
+#   scripts/constellation-preflight.sh --constellation mynet \
+#       [--domain mynet.example.org] [--private-repo owner/repo]... \
 #       [--port 3000]... [--data /path/to/file]... [--branch one-topology]
 set -uo pipefail
 

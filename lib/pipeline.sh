@@ -297,7 +297,7 @@ CRONEOF
     echo "    1. Edit src/pipeline.${pipeline_ext} with your transformation logic"
     echo "    2. Test manually: sudo -u gnode ${cron_cmd}"
     echo "    3. Monitor: tail -f ${service_path}/logs/pipeline.log"
-    echo "    4. Status: geodineum status --site ${name}"
+    echo "    4. Status: geodineum status ${name}"
     echo ""
 }
 
