@@ -295,6 +295,11 @@ The one status route. The constellation view shows nodes (heartbeat age, load, m
 
 ### `topology` — Inspect, register and deregister topology entities
 
+The primitive under `register` and `deregister`: it writes or removes one
+entity and touches nothing else (no identity, ledger or intent). Use it to
+inspect, or to declare a node that runs no daemon; register services with
+`geodineum register`.
+
 ```bash
 sudo geodineum topology [list|all|show <id>|stats|sites|load [id]|verify]
 sudo geodineum topology register components

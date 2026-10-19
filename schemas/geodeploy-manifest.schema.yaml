@@ -2,7 +2,7 @@
 # Geodineum Modular Manifest — JSON Schema (draft 2020-12, authored in YAML)
 # =============================================================================
 # CANONICAL CONTRACT for `geodeploy.yaml` files across the ecosystem.
-# Consumed by: orchestrator, CLI dispatcher, register-site.sh, Geodineum-BAK,
+# Consumed by: orchestrator, CLI dispatcher, onboard-service.sh, Geodineum-BAK,
 # `geodineum describe`, and the install-time schema validator.
 #
 # A service joining the ecosystem provides a `geodeploy.yaml` that validates
@@ -20,7 +20,7 @@ $id: "https://geodineum.com/schemas/geodeploy-manifest.schema.yaml"
 title: "Geodineum Service Manifest"
 description: |
   Self-describing service contract. One file per service. Declares how the
-  ecosystem (orchestrator + CLI + register-site + BAK) integrates the service
+  ecosystem (orchestrator + CLI + register + BAK) integrates the service
   across deploy, install, log, config, data (streams/keys), backup, and CLI.
 
 type: object
@@ -453,7 +453,7 @@ properties:
     additionalProperties: false
     description: |
       Declares what streams/keys/channels the service reads (`consumes`) and writes
-      (`produces`). `register-site.sh` reads this and fashions the ACL grants.
+      (`produces`). `onboard-service.sh` reads this and fashions the ACL grants.
       v1 enforcement: STATIC policy — patterns must fall within the service's own
       namespace OR be in the ecosystem well-known set. v2 (planned): runtime
       daemon-mediated negotiation.

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Mail-stack provisioning: postfix relay + per-domain DKIM signing, with the
-# DNS records printed at the end. Grew out of doing this by hand for
-# palaciodeobras.com; a site that can queue COMMS mail deserves a sender
-# domain that authenticates.
+# DNS records printed at the end. A site that can queue COMMS mail deserves
+# a sender domain that authenticates.
 #
 #   sudo setup-mail-stack.sh <domain> [--selector geo] [--default noreply@ecosystem-domain]
 #

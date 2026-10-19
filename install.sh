@@ -4103,7 +4103,7 @@ phase_build() {
 
 # Install canonical helper libs to /usr/local/lib/geodineum/. Idempotent.
 # Originally only deployed bootstrap-loader.sh ; now also deploys the
-# manifest libs + cli-helpers so any consumer (handler scripts, register-site,
+# manifest libs + cli-helpers so any consumer (handler scripts, register,
 # orchestrator) can resolve them via the one canonical search path instead
 # of relying on /opt/geodineum/Geodineum/lib being on disk.
 ensure_bootstrap_loader_installed() {

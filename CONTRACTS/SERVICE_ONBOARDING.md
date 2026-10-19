@@ -234,8 +234,8 @@ geodineum grants request myservice "{geodine}:receipts:*" --reason "..." [--ttl-
 Services under one owner discover each other across site boundaries:
 
 ```bash
-./scripts/onboard-service.sh staging_my_app --owner acme --yaml /opt/acme/staging
-./scripts/onboard-service.sh my_app        --owner acme --yaml /opt/acme/production
+sudo geodineum register /opt/acme/staging    --owner acme --env staging
+sudo geodineum register /opt/acme/production --owner acme --env production
 ```
 
 Query the group (daemon-level; clients stay ACL-isolated to their own

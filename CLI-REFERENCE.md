@@ -131,6 +131,6 @@ Site IDs are derived from domain names: dots and hyphens become underscores.
 
 | Domain | Site ID |
 |---|---|
-| `innovagent.net` | `example_site` |
+| `example.com` | `example_com` |
 | `staging.example.com` | `staging_example_com` |
 | `my-app.example.org` | `my_app_example_org` |

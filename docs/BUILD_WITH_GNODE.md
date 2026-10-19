@@ -55,7 +55,7 @@ last three and nobody noticed — that is why this list exists.
 
 ```
 [ ] .geodineum/gnode_services.yaml   — onboarding manifest (ACL consumes/produces)
-[ ] onboard-service.sh run           — WITH --profile and --environment; both
+[ ] geodineum register run          — WITH --env; the manifest gnode: block declares the shape; both
                                        omissions have silently mis-registered
                                        services (wrong shape / DTAP-gated out)
 [ ] geodeploy.yaml: runtime.service  — unit name deploys restart

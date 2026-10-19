@@ -44,6 +44,7 @@ INTEGRATE — scan, report, then apply only what is missing:
   --env <tier>             as above (default: the manifest's environment)
   --type <type>            override the inferred type
   --probe <p>, --port <n>  override the heartbeat probe
+  --manifest <file>        its manifest, when it is not .geodineum/gnode_services.yaml
 
 Both: --dry-run (plan only) · --yes (no questions; --env and the type required)
 
@@ -52,7 +53,7 @@ Examples:
   sudo geodineum register example.com --new website-static --env production
   sudo geodineum register api_worker --new app --lang python --port 8090 --env testing
   sudo geodineum register nightly_sync --new scheduled --schedule daily --env production
-  sudo geodineum register ~/gh/RINO/CourseMatch --env production   # integrate
+  sudo geodineum register ~/src/my_app --env production          # integrate
   sudo geodineum deregister <id>                                 # the inverse
 USAGE
 }
@@ -148,13 +149,13 @@ express_detect_framework() {
 # and ledger, and (as root) the constellation in ValKey.
 
 integrate_scan() {
-    local path="$1" f
+    local path="$1" given="${2:-}" f
     SCAN_PATH="$path" SCAN_MANIFEST="" SCAN_SHAPE="" SCAN_CONSTELLATION="" SCAN_ID="" SCAN_ENV=""
     SCAN_LANG="" SCAN_FRAMEWORK="" SCAN_GNODE="" SCAN_WP=false SCAN_UNIT="" SCAN_TIMER="" SCAN_USER=""
     SCAN_PORT="" SCAN_HEARTBEAT="" SCAN_VHOST="" SCAN_DOMAIN="" SCAN_CRED=false SCAN_ENTITY="" SCAN_REGISTERED=false
     SCAN_DRIFT=false SCAN_FOREIGN=()
 
-    for f in "$path/.geodineum/gnode_services.yaml" "$path/gnode_services.yaml" "$path/config/gnode_services.yaml"; do
+    for f in "$given" "$path/.geodineum/gnode_services.yaml" "$path/gnode_services.yaml" "$path/config/gnode_services.yaml"; do
         [[ -f "$f" ]] && { SCAN_MANIFEST="$f"; break; }
     done
     if [[ -n "$SCAN_MANIFEST" ]] && command -v yq >/dev/null 2>&1; then
@@ -240,7 +241,7 @@ integrate_type() {
 }
 
 register_integrate() {
-    local path="" id="" env="" type="" yes=false dry=false probe="" port=""
+    local path="" id="" env="" type="" yes=false dry=false probe="" port="" manifest=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)    id="$2"; shift 2 ;;
@@ -248,6 +249,7 @@ register_integrate() {
             --type|--new) type="$2"; shift 2 ;;
             --probe)   probe="$2"; shift 2 ;;
             --port)    port="$2"; shift 2 ;;
+            --manifest) manifest="$2"; shift 2 ;;
             --yes|-y)  yes=true; shift ;;
             --dry-run) dry=true; shift ;;
             -*) log_error "Unknown option for --integrate: $1"; exit 2 ;;
@@ -258,7 +260,8 @@ register_integrate() {
     [[ -d "$path" ]] || { log_error "Not a directory: $path"; exit 2; }
     path="$(cd "$path" && pwd -P)"
 
-    integrate_scan "$path"
+    [[ -z "$manifest" || -f "$manifest" ]] || { log_error "--manifest: no such file: $manifest"; exit 2; }
+    integrate_scan "$path" "$manifest"
     [[ -n "$id" ]] && SCAN_ID="$id"
     [[ -n "$port" ]] && SCAN_PORT="$port"
     validate_site_id "$SCAN_ID" || exit 1
@@ -332,7 +335,8 @@ register_integrate() {
     SVC_PROFILE="${GEO_TYPE_PROFILE[$type]}" SVC_LANG="$SCAN_LANG" SVC_PORT="$SCAN_PORT" SVC_PROBE="$probe"
     SVC_UNIT="$SCAN_UNIT" SVC_NODE="" SVC_WORKER=false SVC_DRY_RUN=false SVC_YES=true SVC_FORM=false
     SVC_OWNER="" SVC_NOTIFY_EMAIL="" SVC_MAIL_DOMAIN="" SVC_THEME="" SVC_NO_SSL=true
-    SVC_MANIFEST_DIR="$(dirname "${SCAN_MANIFEST:-$path/.geodineum/gnode_services.yaml}")"
+    # onboard takes the manifest's directory, or the file itself when it was named.
+    SVC_MANIFEST_DIR="${manifest:-$(dirname "${SCAN_MANIFEST:-$path/.geodineum/gnode_services.yaml}")}"
     # shellcheck source=/dev/null
     source "${GNODE_SCRIPTS}/cli/constellation.sh" 2>/dev/null || true
     SVC_CONSTELLATION="${SCAN_CONSTELLATION:-$(gnode_cli_constellation 2>/dev/null || echo geodineum)}"
@@ -364,7 +368,7 @@ cmd_register() {
             --integrate) mode=integrate; shift ;;
             --matrix)    source "${LIB_DIR:-${GEODINEUM_CLI_ROOT}/lib}/service-taxonomy.sh"; taxonomy_print_matrix; return 0 ;;
             -h|--help)   usage_register; return 0 ;;
-            --*)         rest+=("$1"); if [[ $# -gt 1 && "$2" != -* && "$1" =~ ^--(env|lang|port|schedule|probe|theme|mail-domain|node|path|owner|notify-email|name|type|domain)$ ]]; then rest+=("$2"); shift; fi; shift ;;
+            --*)         rest+=("$1"); if [[ $# -gt 1 && "$2" != -* && "$1" =~ ^--(env|lang|port|schedule|probe|theme|mail-domain|node|path|owner|notify-email|name|type|domain|manifest)$ ]]; then rest+=("$2"); shift; fi; shift ;;
             *)           [[ -z "$target" ]] || { log_error "Unexpected argument: $1"; return 2; }; target="$1"; shift ;;
         esac
     done

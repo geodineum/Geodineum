@@ -8,9 +8,9 @@
 #
 # Usage (root, or a user that can read the ValKey credential):
 #   sudo ./comms-stream-inspect.sh <site_id> [--port 47445] [--env staging]
-#   e.g.  sudo ./comms-stream-inspect.sh staging_nierto_com
+#   e.g.  sudo ./comms-stream-inspect.sh staging_example_com
 #
-# site_id uses underscores (staging.nierto.com -> staging_nierto_com).
+# site_id uses underscores (staging.example.com -> staging_example_com).
 # =============================================================================
 set -uo pipefail
 BLD=$'\e[1m'; NC=$'\e[0m'; YEL=$'\e[33m'; GRN=$'\e[32m'; RED=$'\e[31m'
@@ -26,7 +26,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ $EUID -eq 0 ]] || { err "run with sudo (needs the ValKey credential)"; exit 1; }
-[[ -n "$SITE" ]] || { err "site_id required — e.g. staging_nierto_com"; exit 1; }
+[[ -n "$SITE" ]] || { err "site_id required — e.g. staging_example_com"; exit 1; }
 
 PW_FILE="/etc/geodineum/credentials/valkey.password"
 [[ -r "$PW_FILE" ]] || { err "cannot read $PW_FILE"; exit 1; }

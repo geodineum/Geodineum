@@ -316,7 +316,7 @@ SWEOF
     log_success "PWA skeleton rendered (manifest.webmanifest + sw.js)"
 }
 
-# --- form endpoint: generalized COMMS producer (the palacio pattern) --------
+# --- form endpoint: generalized COMMS producer --------------------------------
 ensure_form_endpoint() {
     [[ "$SVC_FORM" == "true" ]] || { log_info "Form endpoint: skipped (--no-form)"; return 0; }
     local root="${GEODINEUM_WEB_ROOT}/${SVC_DOMAIN}"

@@ -8,6 +8,6 @@
 
 **Read** HGETALL `{ns}:gnode:constellation:entities` → node list (no SCAN) → GET per component×env×node → judge by ts ≤75s. READ grant `~{geodineum}:gnode:*` covers all; WRITE needs the family in the WRITER's ACL (comms: `~*:gnode:heartbeat:*` in installer acl_comms_patterns — was missing once, NOPERM'd invisibly). New census row ⇒ `ACL DRYRUN <user> SETEX` first.
 
-**Census** (update WITH form changes, same commit): gnode-daemon Rust `integration/heartbeat.rs` (canonical+tests) · COMMS Rust `main.rs::write_heartbeat` · gSchedule Rust `config.rs::k_heartbeat` · gFlow Node `engine/heartbeat.js` · Geodine PHP `pipeline_runner.php` · gShield Py `gshield-decide.py`. Reader: gCore `wp-hooks.php::gcore_fetch_component_health`.
+**Census** (update WITH form changes, same commit): gnode-daemon Rust `integration/heartbeat.rs` (canonical+tests) · COMMS Rust `main.rs::write_heartbeat` · gSchedule Rust `config.rs::k_heartbeat` · gFlow Node `engine/heartbeat.js` · Geodine PHP `pipeline_runner.php` · gShield Py `gshield-decide.py` · generic Bash `scripts/heartbeat/geodineum-heartbeat.sh` (timer, probe-gated, installed by `register`). Readers: gCore `wp-hooks.php::gcore_fetch_component_health`, gNode `cli/status.sh`.
 
-4 languages, no shared code → form pinned HERE, per-writer literal tests (≡ field_names discipline).
+5 languages, no shared code → form pinned HERE, per-writer literal tests (≡ field_names discipline).

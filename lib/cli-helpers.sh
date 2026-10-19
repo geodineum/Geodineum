@@ -58,8 +58,7 @@ fi
 # =============================================================================
 # ACL ops (SETUSER/GETUSER/SAVE/DELUSER) MUST use the default/admin user
 # because gnode_daemon has -@dangerous which denies the ACL command.
-# This was the bug behind repair-site-acl.sh's NOPERM failures earlier this
-# session — see commit 8c45344.
+# A daemon-user ACL call fails NOPERM (commit 8c45344).
 
 # Run valkey-cli as the default/admin user. Use for ACL ops, FCALL admin
 # operations, registry writes. Reads /etc/geodineum/credentials/valkey.password.

@@ -199,6 +199,23 @@ except Exception: print("")' 2>/dev/null)
         log_info "  Re-run: sudo geodineum topology register service ${site_id} ${profile} --env ${new_env}"
     fi
 
+    # The intent carries the environment too; left stale, the reconciler reports drift.
+    if [[ -r "$dcred" ]] && command -v python3 >/dev/null 2>&1; then
+        local ins="${GNODE_TOPOLOGY_NAMESPACE:-geodineum}" intent
+        intent=$(REDISCLI_AUTH="$(cat "$dcred")" valkey-cli -p "$port" --user gnode_daemon \
+            HGET "{${ins}}:gnode:registrations" "$site_id" 2>/dev/null)
+        if [[ -n "$intent" ]]; then
+            intent=$(printf '%s' "$intent" | NEW_ENV="$new_env" python3 -c 'import sys,json,os
+i=json.load(sys.stdin); i["environment"]=os.environ["NEW_ENV"]; print(json.dumps(i,separators=(",",":")))' 2>/dev/null) || intent=""
+            if [[ -n "$intent" ]] && REDISCLI_AUTH="$(cat "$dcred")" valkey-cli -p "$port" --user gnode_daemon \
+                    HSET "{${ins}}:gnode:registrations" "$site_id" "$intent" >/dev/null 2>&1; then
+                log_success "Registration intent: environment → ${new_env}"
+            else
+                log_warning "Registration intent not updated — re-run: sudo geodineum env set ${site_id} ${new_env}"
+            fi
+        fi
+    fi
+
     # Best-effort broadcast → immediate daemon stream-discovery refresh.
     if [[ -r "$dcred" ]]; then
         local ts; ts=$(date +%s)

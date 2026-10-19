@@ -2,7 +2,7 @@
 
 > SCN primer (SPR + Semantic Anchors + Latent-Space Activation). Audience = an
 > agent onboarding a NEW service into a live Geodineum constellation from COLD.
-> TRUTH = code on disk (`gNode/scripts/onboard-service.sh`, `register-site.sh`,
+> TRUTH = code on disk (`Geodineum/lib/register.sh`, `gNode/scripts/onboard-service.sh`,
 > `Geodineum/lib/manifest-policy.sh`, `Geodineum/lib/service-taxonomy.sh`,
 > `scripts/cli/grants.sh`) — re-verify on drift. Human twin:
 > [[SERVICE_ONBOARDING]]. Deep layers: [[access-grants]] [[permission-model]]
@@ -78,7 +78,7 @@ GRANTS-LOOP: request = DATA on {geodineum}:gnode:grants:requests → COMMS email
 ```
 website-wp      mail wp_stack notify                          profile web  cred g-web
 website-static  docroot skeleton form_endpoint vhost manifest  profile web  cred g-web
-                mail onboard web_perms                         (generalized palacio)
+                mail onboard web_perms                         (form → COMMS)
 app-pwa         docroot skeleton_pwa [form] vhost manifest     profile web  cred g-web
                 mail onboard web_perms
 webapp-gcore    docroot web_code_group skeleton_gcore          profile web  cred g-web

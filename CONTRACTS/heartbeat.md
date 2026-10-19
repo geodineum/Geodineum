@@ -85,10 +85,11 @@ table and a function-call result never disagree about the estate).
 | gFlow | Node.js | `engine/heartbeat.js` |
 | Geodine | PHP | `workers/pipeline_runner.php` |
 | gShield | Python | `scripts/gshield-decide.py` `_heartbeat_loop` |
+| any registered app, daemon or scheduled job | Bash | `Geodineum/scripts/heartbeat/geodineum-heartbeat.sh` (systemd timer, writes only when its probe passes; installed by `geodineum register` through `install-heartbeat.sh`) |
 
-Reader: `gCore/gcore-mu/wp-hooks.php` `gcore_fetch_component_health`.
+Readers: `gCore/gcore-mu/wp-hooks.php` `gcore_fetch_component_health`; `gNode/scripts/cli/status.sh`.
 
-Six writers in four languages cannot share code, so the wire form is
+Seven writers in five languages cannot share code, so the wire form is
 pinned **here** and each writer carries a test (or the reviewed literal)
 against it — the same discipline as `utils::field_names` for the command
 schema. If you change the form, change every row of the census and this
