@@ -24,6 +24,7 @@ cmd_new_site() {
     local owner=""
     local no_ssl=false
     local dry_run=false
+    local yes=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -33,6 +34,7 @@ cmd_new_site() {
             --env)        environment="$2"; shift 2 ;;
             --owner)      owner="$2"; shift 2 ;;
             --no-ssl)     no_ssl=true; shift ;;
+            --yes|-y)     yes=true; shift ;;
             --dry-run)    dry_run=true; shift ;;
             --help|-h)    usage_new_site; exit 0 ;;
             -*)           log_error "Unknown option: $1"; usage_new_site; exit 1 ;;
@@ -200,6 +202,10 @@ cmd_new_site() {
         fi
     fi
 
+    # The stack's own artifacts go into the registration ledger (what deregister undoes).
+    wp_args+=(--ledger "${GEODINEUM_REGISTRATIONS_DIR}/${site_id}.tsv")
+    [[ "$no_ssl" == "true" ]] && wp_args+=(--no-ssl)
+    [[ "$yes" == "true" ]] && wp_args+=(--yes)
     wp_args+=("$environment")
 
     log_detail "Running: ${install_script} ${wp_args[*]}"

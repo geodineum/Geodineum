@@ -130,6 +130,7 @@ ensure_wp_stack() {
     [[ -n "$SVC_OWNER" ]] && args+=(--owner "$SVC_OWNER")
     [[ "$SVC_NO_SSL" == "true" ]] && args+=(--no-ssl)
     [[ "$SVC_DRY_RUN" == "true" ]] && args+=(--dry-run)
+    [[ "$SVC_YES" == "true" ]] && args+=(--yes)
     cmd_new_site "${args[@]}"
 }
 

@@ -5652,15 +5652,16 @@ print_summary() {
 }
 
 # =============================================================================
-# Credential reconciliation (reinstall: re-provision missing per-site creds)
+# Site reconciliation (reinstall: register each existing site again)
 # =============================================================================
 
 reconcile_site_credentials() {
     local cred_dir="${CREDENTIALS_DIR:-/etc/geodineum/credentials}"
-    local register_script="${INSTALL_ROOT}/gNode/scripts/register-site.sh"
+    local cli="${INSTALL_ROOT}/Geodineum/geodineum"
     local web_root="${WEB_ROOT:-/var/www}"
 
-    [[ -x "$register_script" ]] || return 0
+    [[ -x "$cli" ]] || cli="$(command -v geodineum 2>/dev/null || true)"
+    [[ -n "$cli" ]] || return 0
 
     # Enforce 0751 on the credentials dir. reconcile runs late,
     # so this is a belt-and-suspenders fix for a --keep-data-preserved dir that
@@ -5686,16 +5687,19 @@ reconcile_site_credentials() {
             continue
         fi
 
-        # register-site.sh is idempotent: it reuses an existing password file,
-        # (re)provisions the ACL user with full keyspace/channel/command grants,
-        # and recreates streams. This repairs BOTH missing credentials AND the
-        # half-provisioned users (wrong password / no perms) a --keep-data
-        # reinstall leaves behind — the actual root of post-reinstall free-tier.
-        log_info "Reconciling site credentials: ${site_id}"
-        if GNODE_PASSWORD_DIR="$cred_dir" "$register_script" "$site_id" >/dev/null 2>&1; then
+        # Registering again (INTEGRATE) is idempotent: it keeps the credential,
+        # recomposes the grants from the manifest and refreshes the topology.
+        local env=""
+        [[ -f "${site_dir}/.geodineum/gnode_services.yaml" ]] && env="$(yq eval '.environment // ""' "${site_dir}/.geodineum/gnode_services.yaml" 2>/dev/null)"
+        if [[ -z "$env" || "$env" == null ]]; then
+            log_warning "  ${site_id}: no environment in its manifest — re-register by hand: sudo geodineum register ${site_dir} --env <tier>"
+            continue
+        fi
+        log_info "Reconciling site registration: ${site_id}"
+        if "$cli" register "$site_dir" --env "$env" --yes >/dev/null 2>&1; then
             reconciled=$((reconciled + 1))
         else
-            log_warning "  register-site.sh issues for ${site_id} — retry: sudo ${register_script} ${site_id}"
+            log_warning "  ${site_id} did not re-register — retry: sudo geodineum register ${site_dir} --env ${env}"
         fi
     done
 
@@ -5706,43 +5710,27 @@ reconcile_site_credentials() {
 }
 
 # =============================================================================
-# Site deployment (called from both --site CLI path and post-install prompt)
+# Site deployment for --site: the one route, geodineum register (website-wp).
 # =============================================================================
 
-# extracted from main() body so the post-install "Deploy a WordPress
-# site now?" prompt can also drive deployment. Previously the prompt set
-# SITE_DOMAIN but never actually invoked the site installer — the user
-# saw "Installation Complete" with "Site deployed: https://<domain>" in
-# the next-steps summary, but no vhost, no DB, no /var/www/<domain>/, no
-# certbot run had happened. Silent inaction with a success indication.
-#
-# Reads SITE_DOMAIN, SITE_THEME, SITE_ENV, INSTALL_ROOT, DRY_RUN from
-# the outer scope. No-op if SITE_DOMAIN is empty or DRY_RUN is true.
 deploy_site_if_requested() {
     [[ -n "$SITE_DOMAIN" ]] || return 0
     [[ "$DRY_RUN" != "true" ]] || return 0
 
     log_step "Site Deployment"
-    local install_script="${INSTALL_ROOT}/gTemplate/scripts/install-geodineum.sh"
-    if [[ ! -x "$install_script" ]]; then
-        log_warning "Site installer not found at ${install_script} — deploy manually:"
-        log_info "  sudo geodineum register ${SITE_DOMAIN} --new website-wp --theme ${SITE_THEME:-gtemplate-wp} --env ${SITE_ENV}"
+    local cli="${INSTALL_ROOT}/Geodineum/geodineum"
+    [[ -x "$cli" ]] || cli="$(command -v geodineum 2>/dev/null || true)"
+    local -a args=("$SITE_DOMAIN" --new website-wp --env "${SITE_ENV:-testing}" --yes --no-mail)
+    [[ -n "$SITE_THEME" ]] && args+=(--theme "$SITE_THEME")
+    if [[ -z "$cli" ]]; then
+        log_warning "geodineum CLI not found — deploy later: sudo geodineum register ${args[*]}"
         return 1
     fi
-
-    local theme_args=()
-    if [[ -n "$SITE_THEME" ]]; then
-        local theme_path="${INSTALL_ROOT}/$(get_install_dir "$SITE_THEME")"
-        theme_args=(--theme "$SITE_THEME" --theme-path "$theme_path")
-    fi
-
-    if "$install_script" "$SITE_DOMAIN" "${theme_args[@]}" "$SITE_ENV"; then
-        log_success "Site deployed: ${SITE_DOMAIN}"
-        return 0
+    if "$cli" register "${args[@]}"; then
+        log_success "Site deployed and registered: ${SITE_DOMAIN}"
     else
         local rc=$?
-        log_error "Site deployment failed for ${SITE_DOMAIN} (exit ${rc})"
-        log_info "Re-run manually: ${install_script} ${SITE_DOMAIN} ${theme_args[*]} ${SITE_ENV}"
+        log_error "Site deployment failed for ${SITE_DOMAIN} (exit ${rc}) — re-run: sudo geodineum register ${args[*]}"
         return $rc
     fi
 }

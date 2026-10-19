@@ -4,15 +4,14 @@
 # =============================================================================
 # Proves the taxonomy onboarding is idempotent and reversible: each tested
 # type must reach the same green state on install and reinstall, and leave
-# nothing behind on removal. Covers website-static, webapp-gcore and daemon
-# (both ends of the matrix plus the public-gCore row); website-wp is covered
-# by install-cycle-test.sh --site.
+# nothing behind on removal. Covers website-static, webapp-gcore, daemon,
+# app, scheduled and website-wp, all through geodineum register / deregister.
 #
 # Touches live state (ValKey identities, apache vhosts, systemd units) using
 # throwaway cycletest_* names, and removes everything it created.
 #
 # Usage (root, from a repo checkout, on a box with gNode + ValKey live):
-#   sudo ./scripts/service-cycle-test.sh --confirm [--type static|webapp|daemon|app|scheduled|all]
+#   sudo ./scripts/service-cycle-test.sh --confirm [--type static|webapp|daemon|app|scheduled|wp|all]
 #
 # Exit: 0 = every cycle green; 1 = a phase failed (state left for inspection).
 # =============================================================================
@@ -27,6 +26,8 @@ WEBAPP_DOMAIN="cycletest-webapp.invalid"
 WEBAPP_ID="cycletest_webapp_invalid"
 DAEMON_ID="cycletest_daemon"
 APP_ID="cycletest_app"
+WP_DOMAIN="cycletest-wp.invalid"
+WP_ID="cycletest_wp_invalid"
 JOB_ID="cycletest_job"
 
 RED=$'\e[31m'; GRN=$'\e[32m'; YEL=$'\e[33m'; BLU=$'\e[34m'; BLD=$'\e[1m'; NC=$'\e[0m'
@@ -274,6 +275,30 @@ cycle_job(){
     assert_registry "$JOB_ID" 0
 }
 
+db_exists(){ [[ -n "$(mysql -N -e "SHOW DATABASES LIKE '$1'" 2>/dev/null)" ]]; }
+
+verify_wp(){
+    local root="/var/www/${WP_DOMAIN}"
+    assert_file "${root}/wp-config.php"
+    assert_file "/etc/apache2/sites-available/${WP_DOMAIN}.conf"
+    db_exists "${WP_ID}_db" && ok "database ${WP_ID}_db" || no "database ${WP_ID}_db missing"
+    grep -qP "^data\tdatabase\t${WP_ID}_db$" "/etc/geodineum/registrations/${WP_ID}.tsv" 2>/dev/null \
+        && ok "ledger records the database" || no "ledger has no database line"
+    assert_registry "$WP_ID" 1 placed
+}
+
+cycle_wp(){
+    say "website-wp: create"
+    "$CLI" register "$WP_DOMAIN" --new website-wp --env testing --yes --no-ssl --no-mail || { no "create failed"; return; }
+    verify_wp
+    say "website-wp: remove"
+    remove_svc "$WP_ID"
+    assert_no_file "/var/www/${WP_DOMAIN}"
+    assert_no_file "/etc/apache2/sites-available/${WP_DOMAIN}.conf"
+    db_exists "${WP_ID}_db" && no "database ${WP_ID}_db still there" || ok "database dropped"
+    assert_registry "$WP_ID" 0
+}
+
 # ---- main --------------------------------------------------------------------
 
 case "$TYPE" in
@@ -283,8 +308,9 @@ case "$TYPE" in
     both)   cycle_static; cycle_daemon ;;
     app)    cycle_app ;;
     scheduled) cycle_job ;;
-    all)    cycle_static; cycle_webapp; cycle_daemon; cycle_app; cycle_job ;;
-    *) die "unknown --type: $TYPE (static|webapp|daemon|app|scheduled|all)" ;;
+    wp)     cycle_wp ;;
+    all)    cycle_static; cycle_webapp; cycle_daemon; cycle_app; cycle_job; cycle_wp ;;
+    *) die "unknown --type: $TYPE (static|webapp|daemon|app|scheduled|wp|all)" ;;
 esac
 
 echo ""

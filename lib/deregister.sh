@@ -21,7 +21,7 @@ Removes a registered site, app or daemon from its constellation and from this ho
   4. removes the registration marker and the discovery entry
   5. checks that nothing is left, and names what was kept
 
-Data registration created (docroot, service dir, COMMS history) is kept unless
+Data registration created (docroot, service dir, a WordPress database, COMMS history) is kept unless
 --purge-data. Nothing registration did not create is ever removed.
 
   --purge-data   also remove the data registration created
@@ -86,6 +86,14 @@ _dr_undo() {
         dir)
             _dr_safe_path "$t" || return 1
             rm -rf "$t" ;;
+        database)
+            [[ "$t" =~ ^[A-Za-z0-9_]+$ ]] || return 1
+            command -v mysql >/dev/null 2>&1 || return 1
+            mysql -e "DROP DATABASE IF EXISTS \`${t}\`;" ;;
+        dbuser)
+            [[ "$t" =~ ^[A-Za-z0-9_]+$ ]] || return 1
+            command -v mysql >/dev/null 2>&1 || return 1
+            mysql -e "DROP USER IF EXISTS '${t}'@'localhost'; FLUSH PRIVILEGES;" ;;
         discovery)
             _dr_drop_discovery "$t" ;;
         geodineum-dir)

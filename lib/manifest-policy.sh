@@ -8,8 +8,7 @@
 # pattern against the static namespace policy. Refused patterns abort the
 # composition with a clear stderr diagnostic.
 #
-# Consumed by: register-site.sh (when refactored to manifest-driven mode),
-# `geodineum validate` (extended), and any tooling that needs to know what
+# Consumed by: gNode onboard-service.sh, `geodineum validate` (extended), and any tooling that needs to know what
 # ACL grants a manifest implies.
 #
 # Daemon-mediated runtime negotiation (planned) replaces the static checks with

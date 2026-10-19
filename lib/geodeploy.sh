@@ -1584,13 +1584,12 @@ geodeploy_fix_credential() {
 # Fix ALL credential files to match their intended runtime user.
 # Called during deploy cycles and by fix-permissions.sh.
 #
-# ─── PERMISSION / ACL MODEL — 3 COORDINATED LOCATIONS (keep in sync) ─────────
-# This function is [3] of three places that define the ValKey cred-ownership +
+# ─── PERMISSION / ACL MODEL — 2 COORDINATED LOCATIONS (keep in sync) ─────────
+# This function is [2] of two places that define the ValKey cred-ownership +
 # client ACL model; they MUST change together (fixing one alone is what caused
-# the geodine NOAUTH crash-loop). Canonical model: ~/gh/PERMISSION_MODEL.md.
-#   [1] gNode/scripts/register-site.sh   — web-site creds + ACL grant
-#   [2] gNode/scripts/onboard-service.sh — service/component creds + ACL grant
-#   [3] THIS function — deploy-time enforcement of cred ownership from the
+# the geodine NOAUTH crash-loop). Canonical model: CONTRACTS/permission-model.md.
+#   [1] gNode/scripts/onboard-service.sh — every service's and site's creds + ACL grant
+#   [2] THIS function — deploy-time enforcement of cred ownership from the
 #       per-cred .owner sidecars (root:group:mode), NO www-data default.
 # ────────────────────────────────────────────────────────────────────────────
 geodeploy_fix_all_credentials() {
