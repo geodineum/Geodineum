@@ -28,6 +28,10 @@ Value — JSON, self-describing when found detached from its key:
 Write: `SETEX <key> 120 <value>`, refreshed ~every 60s. TTL is twice the
 cadence: one missed refresh survives, two reads as down.
 
+The daemon writes its key into every constellation it serves
+(`GNODE_CONSTELLATIONS`, else the namespace): a site placed on the node reads
+its health from the daemon key of its own constellation.
+
 ## The node segment
 
 The node id is the node's **identity**: the same value as the daemon's

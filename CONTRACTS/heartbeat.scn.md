@@ -2,6 +2,8 @@
 
 **Key** `{<ns>}:gnode:heartbeat:<env>:<component>:<node>` · `gnode` LITERAL (never prefix-config) · SETEX 120, refresh ~60 (TTL=2×cadence: 1 miss survives, 2 = down) · absence IS down, no dereg.
 
+**Daemon** writes one key per SERVED constellation (`GNODE_CONSTELLATIONS`, else ns) — a site placed on the node reads health from ITS constellation's daemon key.
+
 **Value** `{"ts":u64,"pid":u32,"comp":str,"node":str}` — self-describing detached. Daemon adds `la1,cores,mem_used_mb,mem_total_mb` (node authority; additive, readers treat as optional). Consumers: `geodineum status [--json]` ≡ daemon cmd `constellation_status` (same JSON shape).
 
 **node** = identity = `GNODE_NODE_ID` = consumer name = constellation entity id = **short hostname** (first dot-label). NEVER `master` — role ≠ identity; role lives in the node entity's `node_role` axis. Pre-segment failure: all nodes → one key → last-writer-wins → dead daemon hides behind live peer's ts.
