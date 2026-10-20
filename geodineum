@@ -86,7 +86,7 @@ discover_manifest_commands() {
     #   ${root}/<comp>/services/<svc>/geodeploy.yaml      — bundled services
     # The hello-world and gmath demos live at the nested depth as part of
     # the Geodineum repo's services/ directory.
-    for manifest in "${root}"/*/geodeploy.yaml "${root}"/pro/*/geodeploy.yaml "${root}"/*/services/*/geodeploy.yaml; do
+    for manifest in "${root}"/*/geodeploy.yaml "${root}"/pro/*/*/geodeploy.yaml "${root}"/*/services/*/geodeploy.yaml; do
         [[ -f "$manifest" ]] || continue
 
         local comp_root
