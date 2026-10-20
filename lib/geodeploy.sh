@@ -1701,7 +1701,12 @@ for e in d.get('pro', []):
                 if [[ -e "$pro_dir" ]] || _gd_pro_unmanaged "$label"; then continue; fi
                 if geodeploy_as_deploy git clone --branch "$branch" "$remote" "$pro_dir" 2>> "$GEODEPLOY_LOG"; then
                     geodeploy_log "${label}: CLONE success"
-                    if [[ "$comp_type" == "gNode" ]]; then : > "$pending"; fi
+                    if [[ "$comp_type" == "gNode" ]]; then
+                        chgrp -R gnode "$pro_dir"; : > "$pending"
+                    else
+                        chgrp -R geodineum-code "$pro_dir"
+                    fi
+                    chmod -R o-rwx,g-w "$pro_dir"
                 else
                     geodeploy_log "${label}: ERROR clone-failed"
                     failed=1
