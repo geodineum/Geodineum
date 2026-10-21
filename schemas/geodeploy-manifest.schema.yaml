@@ -474,6 +474,23 @@ properties:
           streams:  { type: array, items: { $ref: "#/$defs/valkey_pattern" } }
           keys:     { type: array, items: { $ref: "#/$defs/valkey_pattern" } }
           channels: { type: array, items: { $ref: "#/$defs/channel_pattern" } }
+      persist:
+        type: array
+        description: |
+          What Geodineum-STORE keeps from this service's own streams, reviewed at
+          registration as `consumes` is. Sources outside the service's namespace are
+          refused. Entries marked `pz=1` are kept without a block here.
+        items:
+          type: object
+          additionalProperties: false
+          required: [kind, source]
+          properties:
+            kind:          { type: string, pattern: "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", description: "Record kind, e.g. `booking.event`." }
+            source:        { $ref: "#/$defs/valkey_pattern", description: "A stream in the service's own namespace." }
+            mode:          { type: string, pattern: "^(all|marked|sampled:[1-9][0-9]*)$", default: all, description: "`all` | `marked` (only `pz=1`) | `sampled:<n>` (one in n)." }
+            retention:     { type: string, pattern: "^[1-9][0-9]*d$", description: "Days kept, e.g. `730d`; absent = STORE's default." }
+            subject_field: { type: string, minLength: 1, description: "Field naming the data subject (erasure index); dotted path into the payload." }
+            to:            { type: array, items: { $ref: "#/$defs/slug" }, description: "Adapters; absent = STORE's default_to." }
       ecosystem_well_known:
         type: boolean
         default: true
