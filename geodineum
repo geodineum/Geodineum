@@ -117,7 +117,7 @@ discover_manifest_commands() {
             CMD_FALLBACK["$name"]="${fallback:-}"
             # A command named "<component> status" is that component's status:
             # operators reach it as `geodineum status <component>`.
-            [[ "$name" =~ ^([a-z0-9-]+)\ status$ ]] && CMD_STATUS["${BASH_REMATCH[1]}"]="$name"
+            [[ "$name" =~ ^([a-z0-9_-]+)\ status$ ]] && CMD_STATUS["${BASH_REMATCH[1]}"]="$name"
         done < <(yq eval '.cli.commands[] | [.name, .handler, .description // "", .args // "", .requires_sudo // "false", .category // "Component", .fallback // ""] | @tsv' "$manifest" 2>/dev/null)
     done
 }
