@@ -1668,7 +1668,8 @@ geodeploy_fix_all_credentials() {
 # Pro components: pro/gCore/* and pro/gNode/*
 # =============================================================================
 # Pulls every checkout on disk; manifest.yaml only clones missing ones, and a
-# `pro/<type>/<name>` line in unmanaged-repos.conf holds one back. Ownership is
+# `pro/<type>/<name>` line in unmanaged-repos.conf holds one back. A gCore
+# package's own geodeploy.yaml runs its build on clone and its triggers on pull. Ownership is
 # left as cloned: gCore reaches Pro code through vendor symlinks into pro/gCore,
 # so a web-readable group here would switch Pro managers on for every site.
 _gd_pro_unmanaged() {
@@ -1707,6 +1708,9 @@ for e in d.get('pro', []):
                         chgrp -R geodineum-code "$pro_dir"
                     fi
                     chmod -R o-rwx,g-w "$pro_dir"
+                    if [[ "$comp_type" == "gCore" ]] && geodeploy_parse_descriptor "${pro_dir}/geodeploy.yaml" && [[ -n "$_GD_BUILD_TYPE$_GD_BUILD_CMD" ]]; then
+                        geodeploy_action_build "$pro_dir" "$label" || failed=1
+                    fi
                 else
                     geodeploy_log "${label}: ERROR clone-failed"
                     failed=1
@@ -1748,6 +1752,9 @@ for e in d.get('pro', []):
 
         if [[ "$comp_type" == "gCore" ]]; then
             if grep -qE '\.php$' <<< "$changed"; then php_changed=1; fi
+            if geodeploy_parse_descriptor "${pro_dir}/geodeploy.yaml"; then
+                geodeploy_match_and_run "$pro_dir" "$label" "$changed"
+            fi
         else
             if grep -qE '^(functions/.*\.lua|extension\.yaml)$' <<< "$changed"; then lua_changed=1; fi
             if grep -qE '^(src/|extension\.(yaml|sig)$)' <<< "$changed"; then : > "$pending"; fi
