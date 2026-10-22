@@ -1710,6 +1710,7 @@ for e in d.get('pro', []):
                     chmod -R o-rwx,g-w "$pro_dir"
                     if [[ "$comp_type" == "gCore" ]] && geodeploy_parse_descriptor "${pro_dir}/geodeploy.yaml" && [[ -n "$_GD_BUILD_TYPE$_GD_BUILD_CMD" ]]; then
                         geodeploy_action_build "$pro_dir" "$label" || failed=1
+                        chgrp -R geodineum-code "$pro_dir"; chmod -R o-rwx,g-w "$pro_dir"
                     fi
                 else
                     geodeploy_log "${label}: ERROR clone-failed"
@@ -1754,6 +1755,7 @@ for e in d.get('pro', []):
             if grep -qE '\.php$' <<< "$changed"; then php_changed=1; fi
             if geodeploy_parse_descriptor "${pro_dir}/geodeploy.yaml"; then
                 geodeploy_match_and_run "$pro_dir" "$label" "$changed"
+                chgrp -R geodineum-code "$pro_dir"; chmod -R o-rwx,g-w "$pro_dir"
             fi
         else
             if grep -qE '^(functions/.*\.lua|extension\.yaml)$' <<< "$changed"; then lua_changed=1; fi
