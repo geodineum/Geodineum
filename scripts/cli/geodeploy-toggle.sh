@@ -24,7 +24,7 @@ case "$action" in
         exit 0
         ;;
     on|enable|--enable)
-        if crontab -l 2>/dev/null | grep -q "$CRON_PATTERN"; then
+        if crontab -l 2>/dev/null | grep -c "$CRON_PATTERN" >/dev/null; then
             log_info "Auto-deploy cron already enabled"
             exit 0
         fi
@@ -32,7 +32,7 @@ case "$action" in
         log_success "Auto-deploy cron enabled (*/5 * * * *)"
         ;;
     off|disable|--disable)
-        if ! crontab -l 2>/dev/null | grep -q "$CRON_PATTERN"; then
+        if ! crontab -l 2>/dev/null | grep -c "$CRON_PATTERN" >/dev/null; then
             log_info "Auto-deploy cron already disabled"
             exit 0
         fi

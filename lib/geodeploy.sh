@@ -988,7 +988,7 @@ geodeploy_ensure_code_members() {
     # validate-geodineum-config.sh::check_source_readable CONSUMERS.
     for u in www-data geodine; do
         id "$u" >/dev/null 2>&1 || continue
-        id -nG "$u" 2>/dev/null | tr ' ' '\n' | grep -qx geodineum-code && continue
+        id -nG "$u" 2>/dev/null | tr ' ' '\n' | grep -cx geodineum-code >/dev/null && continue
         /usr/bin/sudo /usr/bin/usermod -aG geodineum-code "$u" 2>/dev/null && changed=1
     done
     [[ $changed -eq 0 ]] && return 0
@@ -1019,7 +1019,7 @@ geodeploy_ensure_dash_members() {
     for u in www-data gnode "${GEODEPLOY_DEPLOY_USER:-}"; do
         [[ -n "$u" ]] || continue
         id "$u" >/dev/null 2>&1 || continue
-        id -nG "$u" 2>/dev/null | tr ' ' '\n' | grep -qx geodineum-dash && continue
+        id -nG "$u" 2>/dev/null | tr ' ' '\n' | grep -cx geodineum-dash >/dev/null && continue
         /usr/bin/sudo /usr/bin/usermod -aG geodineum-dash "$u" 2>/dev/null && changed=1
     done
     [[ $changed -eq 0 ]] && return 0
@@ -1185,7 +1185,7 @@ geodeploy_harden_wp_site() {
                 _gd_own "$htaccess" root www-data
                 _gd_mode "$htaccess" 640
                 _gd_priv /usr/bin/chattr +i "$htaccess" 2>/dev/null || true
-            elif ! lsattr -d "$htaccess" 2>/dev/null | cut -d' ' -f1 | grep -q i; then
+            elif ! lsattr -d "$htaccess" 2>/dev/null | cut -d' ' -f1 | grep -c i >/dev/null; then
                 # Content is right but the immutable bit was lost — restore it
                 # without touching the content.
                 _gd_own "$htaccess" root www-data
@@ -1202,7 +1202,7 @@ geodeploy_harden_wp_site() {
         local _root_ht="${wp_root}/.htaccess"
         local _ht_state _ht_immutable=0
         _ht_state=$(stat -c '%U:%G %a' "$_root_ht" 2>/dev/null)
-        lsattr -d "$_root_ht" 2>/dev/null | cut -d' ' -f1 | grep -q i && _ht_immutable=1
+        lsattr -d "$_root_ht" 2>/dev/null | cut -d' ' -f1 | grep -c i >/dev/null && _ht_immutable=1
         if [[ "$_ht_state" != "root:www-data 640" || "$_ht_immutable" -eq 0 ]]; then
             _gd_priv /usr/bin/chattr -i "$_root_ht" 2>/dev/null || true
             _gd_own "$_root_ht" root www-data

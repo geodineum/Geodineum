@@ -235,7 +235,7 @@ fi
 
 log_step "7. Group membership audit"
 
-if id -nG www-data 2>/dev/null | grep -qw gnode; then
+if id -nG www-data 2>/dev/null | grep -cw gnode >/dev/null; then
     fix "Remove www-data from gnode group" \
         gpasswd -d www-data gnode
 else
@@ -247,13 +247,13 @@ fi
 # broad geodineum group — a web RCE must not gain ecosystem-wide read.
 for g in geodineum-code geodineum-web; do
     getent group "$g" >/dev/null 2>&1 || groupadd --system "$g"
-    if ! id -nG www-data 2>/dev/null | grep -qw "$g"; then
+    if ! id -nG www-data 2>/dev/null | grep -cw "$g" >/dev/null; then
         fix "Add www-data to $g group" usermod -aG "$g" www-data
     else
         log_skip "www-data in $g group"
     fi
 done
-if id -nG www-data 2>/dev/null | grep -qw geodineum; then
+if id -nG www-data 2>/dev/null | grep -cw geodineum >/dev/null; then
     fix "Remove www-data from geodineum group (blast-radius isolation)" \
         gpasswd -d www-data geodineum
 else
@@ -334,7 +334,7 @@ log_step "9. Shared-source component groups (geodineum-code)"
 getent group geodineum-code >/dev/null 2>&1 || groupadd --system geodineum-code
 for u in www-data geodine; do
     id "$u" >/dev/null 2>&1 || continue
-    id -nG "$u" 2>/dev/null | grep -qw geodineum-code && continue
+    id -nG "$u" 2>/dev/null | grep -cw geodineum-code >/dev/null && continue
     fix "Add $u to geodineum-code group" usermod -aG geodineum-code "$u"
 done
 

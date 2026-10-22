@@ -220,7 +220,7 @@ ensure_web_code_group() {
         log_error "  The installer creates it (perm-model); re-run install or add the group first"
         return 1
     fi
-    if id -nG www-data 2>/dev/null | tr ' ' '\n' | grep -qx geodineum-code; then
+    if id -nG www-data 2>/dev/null | tr ' ' '\n' | grep -cx geodineum-code >/dev/null; then
         log_success "www-data ∈ geodineum-code (gCore source readable)"
         return 0
     fi

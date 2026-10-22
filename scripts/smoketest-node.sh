@@ -62,7 +62,7 @@ echo "────────────────────────�
     || F "master IP unknown — pass --master-ip or fix ${BOOTSTRAP}"
 
 # 2. WireGuard interface present
-if command -v wg >/dev/null 2>&1 && wg show 2>/dev/null | grep -q interface; then
+if command -v wg >/dev/null 2>&1 && wg show 2>/dev/null | grep -c interface >/dev/null; then
     P "WireGuard interface up ($(wg show interfaces 2>/dev/null))"
 else
     F "no WireGuard interface up (expected the constellation VPN)"
@@ -103,9 +103,9 @@ if [[ -n "$CLI" && -n "$MASTER_IP" && -r "$PW_FILE" ]]; then
     # FUNCTION LIST is daemon-level; a scoped per-service user may lack it.
     # PING already proved the link, so treat NOPERM as a soft skip.
     fout="$("$CLI" "${AUTH[@]}" FUNCTION LIST 2>&1)"
-    if echo "$fout" | grep -qi 'noperm'; then
+    if echo "$fout" | grep -ci 'noperm' >/dev/null; then
         echo "  [skip] FUNCTION LIST not permitted for ${USER_NAME} (scoped user) — link already proven by PING"
-    elif echo "$fout" | grep -qi 'gnode'; then
+    elif echo "$fout" | grep -ci 'gnode' >/dev/null; then
         P "gNode Lua functions visible on master"
     else
         F "FUNCTION LIST returned no gNode functions: $(echo "$fout" | head -c 60)"
@@ -113,7 +113,7 @@ if [[ -n "$CLI" && -n "$MASTER_IP" && -r "$PW_FILE" ]]; then
 
     if [[ -n "$SITE_ID" ]]; then
         hc="$("$CLI" "${AUTH[@]}" FCALL GNODE_MONITORING_HEALTH_CHECK 0 "$SITE_ID" 2>&1 | head -c 80)"
-        echo "$hc" | grep -qiv 'error\|wrongpass\|noperm' && [[ -n "$hc" ]] \
+        echo "$hc" | grep -civ 'error\|wrongpass\|noperm' >/dev/null && [[ -n "$hc" ]] \
             && P "FCALL health round-trip for site '${SITE_ID}'" \
             || F "health FCALL failed: ${hc}"
     fi

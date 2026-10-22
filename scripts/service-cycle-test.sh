@@ -150,7 +150,7 @@ verify_webapp(){
     assert_mode "${root}/src/bootstrap.php" "root:www-data:640"
     assert_mode "${root}/.env-tier" "root:www-data:640"
     assert_mode "${CRED_DIR}/valkey_client_${WEBAPP_ID}.password" "root:geodineum-web:640"
-    if id -nG www-data 2>/dev/null | tr ' ' '\n' | grep -qx geodineum-code; then
+    if id -nG www-data 2>/dev/null | tr ' ' '\n' | grep -cx geodineum-code >/dev/null; then
         ok "www-data ∈ geodineum-code"
     else
         no "www-data not in geodineum-code — the app cannot read gCore source"

@@ -237,7 +237,7 @@ service_check_prerequisites() {
         php_loaded=$(php -m 2>/dev/null | tr '[:upper:]' '[:lower:]')
         while IFS= read -r ext; do
             [[ -z "$ext" || "$ext" == "null" ]] && continue
-            if ! printf '%s\n' "$php_loaded" | grep -qx "$(echo "$ext" | tr '[:upper:]' '[:lower:]')"; then
+            if ! printf '%s\n' "$php_loaded" | grep -cx "$(echo "$ext" | tr '[:upper:]' '[:lower:]')" >/dev/null; then
                 _mi_warn "[${name}] PHP extension not loaded: $ext"
                 missing=$((missing + 1))
             fi

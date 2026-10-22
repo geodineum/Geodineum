@@ -96,7 +96,7 @@ for probe in \
   "GNODE_NODE_FETCH_CONFIG 0 general"; do
   fn="${probe%% *}"
   out="$(vk_daemon FCALL $probe 2>&1)"
-  if echo "$out" | grep -qiE 'function not found|unknown command|NOPERM|wrong number'; then no "FCALL $fn: $out"
+  if echo "$out" | grep -ciE 'function not found|unknown command|NOPERM|wrong number' >/dev/null; then no "FCALL $fn: $out"
   else ok "FCALL $fn callable"; fi
 done
 
@@ -121,7 +121,7 @@ else
   info "round-tripping through $stream"
   for cmd in ping health version echo; do
     if r="$(roundtrip "$cmd")"; then
-      if echo "$r" | grep -qiE '"status"\s*:\s*"?(ok|success)|pong|healthy'; then ok "command '$cmd' round-trip ok"
+      if echo "$r" | grep -ciE '"status"\s*:\s*"?(ok|success)|pong|healthy' >/dev/null; then ok "command '$cmd' round-trip ok"
       else wn "command '$cmd' responded but status unclear: $(echo "$r"|cut -c1-80)"; fi
     else no "command '$cmd' NO RESPONSE in 5s (daemon not consuming unified stream?)"; fi
   done
@@ -132,12 +132,12 @@ else
   if [[ -n "$desc" ]]; then
     ok "describe returned a command inventory"
     for base in ping health status version echo describe extension_list get_node_info; do
-      echo "$desc" | grep -q "\"$base\"\|'$base'\| $base\b" && ok "  baseline cmd present: $base" || wn "  baseline cmd '$base' not visible in describe output"
+      echo "$desc" | grep -c "\"$base\"\|'$base'\| $base\b" >/dev/null && ok "  baseline cmd present: $base" || wn "  baseline cmd '$base' not visible in describe output"
     done
     # Extension-command leak check — these must NOT be in a base install
     leak=0
     for pro in dep_register registry_create cross_topology template_render content_create; do
-      echo "$desc" | grep -q "$pro" && { wn "  extension command leaked into base: $pro"; leak=1; }
+      echo "$desc" | grep -c "$pro" >/dev/null && { wn "  extension command leaked into base: $pro"; leak=1; }
     done
     [[ $leak -eq 0 ]] && ok "  no extension commands in base install"
   else

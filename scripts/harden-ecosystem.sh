@@ -327,7 +327,7 @@ git_stage_deny_files() {
         done <<< "$files"
 
         # Also stage .gitignore if it was modified
-        if git -C "$repo_dir" diff --name-only .gitignore 2>/dev/null | grep -q ".gitignore"; then
+        if git -C "$repo_dir" diff --name-only .gitignore 2>/dev/null | grep -c ".gitignore" >/dev/null; then
             git -C "$repo_dir" add .gitignore 2>/dev/null || true
         fi
 

@@ -32,7 +32,7 @@ if [[ "$field_count" -ne 5 ]]; then
     exit 1
 fi
 
-if ! crontab -l 2>/dev/null | grep -q "$CRON_PATTERN"; then
+if ! crontab -l 2>/dev/null | grep -c "$CRON_PATTERN" >/dev/null; then
     log_error "Auto-deploy cron not enabled. Run: geodineum geodeploy on"
     exit 1
 fi

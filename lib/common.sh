@@ -170,7 +170,7 @@ require_gnode() {
 # Check if ValKey is reachable
 check_valkey() {
     if [[ -x "${GNODE_SCRIPTS}/valkey-cli-secure.sh" ]]; then
-        if "${GNODE_SCRIPTS}/valkey-cli-secure.sh" PING 2>/dev/null | grep -q "PONG"; then
+        if "${GNODE_SCRIPTS}/valkey-cli-secure.sh" PING 2>/dev/null | grep -c "PONG" >/dev/null; then
             return 0
         fi
     fi
@@ -387,7 +387,7 @@ ensure_geodineum_group() {
     local user="$1"
     [[ "$user" == "root" || "$user" == "gnode" ]] && return 0
 
-    if id -nG "$user" 2>/dev/null | grep -qw geodineum; then
+    if id -nG "$user" 2>/dev/null | grep -cw geodineum >/dev/null; then
         return 0
     fi
 
