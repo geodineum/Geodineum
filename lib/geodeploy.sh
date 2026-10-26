@@ -275,7 +275,7 @@ geodeploy_assert_git_guards() {
         owner="$(/usr/bin/stat -c %U "$dir")"
         changed=""
         for kv in "remote.origin.pushurl=READ_ONLY_DEPLOY_NO_PUSH" "core.fileMode=false"; do
-            now="$(_geodeploy_git_as "$owner" -C "$dir" config --get "${kv%%=*}" 2>/dev/null)"
+            now="$(_geodeploy_git_as "$owner" -C "$dir" config --get "${kv%%=*}" 2>/dev/null)" || now=""
             [[ "$now" == "${kv#*=}" ]] && continue
             if _geodeploy_git_as "$owner" -C "$dir" config "${kv%%=*}" "${kv#*=}" 2>> "$GEODEPLOY_LOG"; then
                 changed+=" ${kv%%=*}=${kv#*=}"
@@ -283,7 +283,7 @@ geodeploy_assert_git_guards() {
                 geodeploy_log "${name}: WARN could not set ${kv%%=*} (as ${owner})"
             fi
         done
-        [[ -n "$changed" ]] && geodeploy_log "${name}: guards set:${changed}"
+        if [[ -n "$changed" ]]; then geodeploy_log "${name}: guards set:${changed}"; fi
     done
     return 0
 }
