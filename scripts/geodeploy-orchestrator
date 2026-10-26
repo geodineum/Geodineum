@@ -198,6 +198,7 @@ geodeploy_harden_all_wp "/var/www" || geodeploy_log "harden_all_wp: FAILED (cont
 # Guardrail: verify the web tree is still Apache-readable (logs a WARNING on
 # any group/traversal regression — detection, not a routine restart).
 geodeploy_verify_web_readable "${GEODINEUM_ROOT}" || true
+geodeploy_assert_git_guards
 
 # =============================================================================
 # Orchestration coverage — nothing rots unseen

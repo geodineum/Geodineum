@@ -265,6 +265,36 @@ geodeploy_fetch() {
     geodeploy_as_deploy git fetch "$remote" "$branch" 2>> "$GEODEPLOY_LOG"
 }
 
+# Every checkout under GEODINEUM_ROOT, managed or not: prod never pushes, git never tracks modes.
+# Run as the checkout's owner (BAK is root's); logs only what it changed.
+geodeploy_assert_git_guards() {
+    local dir name owner now changed
+    for dir in "${GEODINEUM_ROOT}"/*/; do
+        [[ -d "${dir}.git" ]] || continue
+        name="$(basename "$dir")"
+        owner="$(/usr/bin/stat -c %U "$dir")"
+        changed=""
+        for kv in "remote.origin.pushurl=READ_ONLY_DEPLOY_NO_PUSH" "core.fileMode=false"; do
+            now="$(_geodeploy_git_as "$owner" -C "$dir" config --get "${kv%%=*}" 2>/dev/null)"
+            [[ "$now" == "${kv#*=}" ]] && continue
+            if _geodeploy_git_as "$owner" -C "$dir" config "${kv%%=*}" "${kv#*=}" 2>> "$GEODEPLOY_LOG"; then
+                changed+=" ${kv%%=*}=${kv#*=}"
+            else
+                geodeploy_log "${name}: WARN could not set ${kv%%=*} (as ${owner})"
+            fi
+        done
+        [[ -n "$changed" ]] && geodeploy_log "${name}: guards set:${changed}"
+    done
+    return 0
+}
+
+_geodeploy_git_as() {
+    local owner="$1"; shift
+    if [[ "$(/usr/bin/id -un)" == "$owner" ]]; then git "$@"
+    elif [[ "$owner" == "$GEODEPLOY_DEPLOY_USER" ]]; then geodeploy_as_deploy git "$@"
+    else /usr/bin/sudo -u "$owner" git "$@"; fi
+}
+
 geodeploy_has_changes() {
     local branch="$1"
     local local_rev remote_rev
