@@ -264,11 +264,13 @@ if [[ "$(cat "$_gd_cov_stamp" 2>/dev/null)" != "$_gd_today" ]]; then
         [[ -d "${_gd_repo_dir}.git" ]] || continue
         _gd_repo="$(basename "$_gd_repo_dir")"
         if [[ "$_gd_managed" == *$'\n'"${_gd_repo}"$'\n'* ]]; then continue; fi
-        if [[ "$_gd_unmanaged" == *$'\n'"${_gd_repo}"$'\n'* ]]; then continue; fi
+        if [[ "$_gd_unmanaged" == *$'\n'"${_gd_repo}"$'\n'* ]]; then
+            geodeploy_report_unmanaged_behind "$_gd_repo_dir"; continue
+        fi
         # Reads a file directly, so no pipe and no grep -q SIGPIPE hazard.
         if grep -qE '^[[:space:]]*unmanaged:[[:space:]]*true[[:space:]]*$' \
                 "${_gd_repo_dir}geodeploy.yaml" 2>/dev/null; then
-            continue
+            geodeploy_report_unmanaged_behind "$_gd_repo_dir"; continue
         fi
         _gd_cov_head=$(geodeploy_as_deploy git -C "$_gd_repo_dir" log -1 --format='%h %cr' 2>/dev/null) || _gd_cov_head=""
         geodeploy_log "COVERAGE WARNING: ${_gd_repo} is in neither CORE_REPOS nor site-repos.conf and is not declared unmanaged — nothing pulls it and nothing fixes its binaries (HEAD ${_gd_cov_head:-unreadable}). Add it to ${SITE_REPOS_FILE} to deploy it, or add its name to ${_GD_UNMANAGED_FILE} (or 'unmanaged: true' in ${_gd_repo}/geodeploy.yaml) to declare it deliberate."

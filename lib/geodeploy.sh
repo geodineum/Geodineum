@@ -288,6 +288,22 @@ geodeploy_assert_git_guards() {
     return 0
 }
 
+# An unmanaged checkout is never pulled; once a day it is fetched (refs only, the working tree untouched)
+# and named when it has fallen behind its origin.
+geodeploy_report_unmanaged_behind() {
+    local dir="${1%/}" name owner branch behind
+    name="$(basename "$dir")"
+    owner="$(/usr/bin/stat -c %U "${dir}/.git" 2>/dev/null)" || return 0
+    _geodeploy_git_as "$owner" -c core.sshCommand="ssh -o BatchMode=yes -o ConnectTimeout=15" \
+        -C "$dir" fetch -q origin 2>/dev/null || { geodeploy_log "COVERAGE: ${name} (unmanaged) could not be fetched"; return 0; }
+    branch="$(_geodeploy_git_as "$owner" -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null)" || return 0
+    behind="$(_geodeploy_git_as "$owner" -C "$dir" rev-list --count "HEAD..origin/${branch}" 2>/dev/null)" || return 0
+    if [[ "${behind:-0}" -gt 0 ]]; then
+        geodeploy_log "COVERAGE WARNING: ${name} is unmanaged and ${behind} commit(s) behind origin/${branch} — deploy it by hand (Geodineum-BAK: scripts/deploy.sh)"
+    fi
+    return 0
+}
+
 _geodeploy_git_as() {
     local owner="$1"; shift
     if [[ "$(/usr/bin/id -un)" == "$owner" ]]; then git "$@"
