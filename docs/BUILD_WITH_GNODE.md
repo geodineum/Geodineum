@@ -37,7 +37,7 @@ Nothing holds state in-process that another node would need.
 | **Native install** | manifest `install:`/`uninstall:`/`health_check` sections | `sudo geodineum service install <repo>/geodeploy.yaml` |
 | **Backup** | manifest `backup:` section — keys, files, schedule; consumed by Geodineum-BAK | `geodineum status bak` |
 | **Permissions model** | `CONTRACTS/permission-model.md` (this repo) + gNode `docs/operations/PERMISSIONS.md` | — |
-| **Keyspace conventions** | `CONTRACTS/keyspace-model.md` (this repo) — hash-tag braces are load-bearing | — |
+| **Keyspace conventions** | `CONTRACTS/SERVICE_ONBOARDING.md` §2 (this repo) — a service declares its keys as `consumes:`/`produces:` patterns under its own hash tag (`{myservice}:…`); `{<constellation>}:gnode:*` is written by the daemon tier only | — |
 | **FCALL from any language** | gNode `docs/reference/FCALL_COOKBOOK.md` — polyglot examples | `FCALL_RO GNODE_SCHEMA_GET service` |
 | **Tool catalogue & affordances** | `config/ecosystem_tools.yaml` (this repo) — `metadata.affordances`: how to ask any component what it does | `service_describe` on any tool entity |
 | **Node onboarding (constellation)** | `CONTRACTS/NODE_ONBOARDING.md` (this repo) — nodes self-register at daemon start | `HKEYS {ns}:gnode:constellation:entities` |

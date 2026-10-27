@@ -17,6 +17,7 @@ against.
 | [REGISTRATION.md](REGISTRATION.md) | Registering, checking and deregistering a **node**, the **ecosystem components**, a **site**, a **service** (daemon or headless app) and a **non-Geodineum service** on the one topology: exact commands, what is written, how health works, common refusals. Agent twin: `REGISTRATION.scn.md`. |
 | [SERVICE_ONBOARDING.md](SERVICE_ONBOARDING.md) | Bringing a **service** (workload) into the mesh: registration, ValKey ACL identity, grants, and the permission layers. Agent twin: `SERVICE_ONBOARDING.scn.md`. |
 | [permission-model.md](permission-model.md) | Ownership, group access classes, and the credential model — who owns and reads what, and what must restart when group membership changes. |
+| [receipt-stream.md](receipt-stream.md) | The signed record of a command's outcome on `{site}:gnode:receipts:{env}`: producers, wire fields, the exact signed bytes, the key registry, retention and the shared test vectors. Agent twin: `receipt-stream.scn.md`. |
 | [README_STYLE.md](README_STYLE.md) | The documentation standard every repo's `README.md` follows — section order, honesty/anti-drift rules, and the mandatory author/support/disclaimer/license blocks. |
 
 ## Conventions

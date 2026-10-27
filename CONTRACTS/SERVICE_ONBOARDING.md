@@ -5,7 +5,7 @@
 > end-to-end from this file alone. Machine-primer twin:
 > `SERVICE_ONBOARDING.scn.md`. Deep references: `access-grants.scn.md`
 > (ValKey ACL), `permission-model.md` (disk/group — a DIFFERENT layer),
-> `service-provisioning.md`, `keyspace-model.md`, `receipt-stream.md`.
+> `receipt-stream.md`.
 
 ## 0. The one rule
 
