@@ -10,9 +10,6 @@ contract get the most scrutiny.
   nodes ship today; a worker with a local read replica (writes forwarded to the
   master) is the next tier. The `--deploy-tier replica` flag exists and is
   marked experimental until the split lands.
-- **Per-domain mail deliverability.** Sites currently send through one
-  SPF-verified sender; per-domain SPF/DKIM/DMARC provisioning at install time
-  is the durable answer.
 
 ## Planned
 
@@ -26,9 +23,6 @@ contract get the most scrutiny.
 - **Distribution coverage.** The install → uninstall → reinstall cycle is
   validated on Ubuntu 22.04; Debian 12 and other systemd distributions need the
   same treatment.
-- **SMTP configuration at deploy time.** The installer should prompt for and
-  validate a site's outbound mail settings instead of leaving the channel
-  half-configured until first use.
 
 ## Under consideration
 
