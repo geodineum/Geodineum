@@ -104,7 +104,7 @@ COMMS_EXPLICIT=false
 SITE_DOMAIN=""
 SITE_THEME=""
 SITE_THEME_PATH=""
-SITE_ENV="testing"
+SITE_ENV=""
 DRY_RUN=false
 SKIP_BUILD=false
 YES_MODE=false
@@ -227,7 +227,7 @@ usage() {
     echo "  --join <bundle>         Join the constellation whose master ran 'geodineum node add' (the file it wrote)"
     echo "  --site <domain>         Deploy a WordPress site after install"
     echo "  --theme <name>          Child theme: gcube (default)"
-    echo "  --env <environment>     DTAP: testing, staging, acceptance, production"
+    echo "  --env <environment>     DTAP: testing, staging, acceptance, production (default: the site's recorded one; a new site: testing)"
     echo "  --dry-run               Preview without making changes"
     echo "  --skip-build            Skip compilation (use existing binaries)"
     echo "  --branch <ref>          Git branch/tag to fetch for ALL component repos"
@@ -5713,14 +5713,44 @@ reconcile_site_credentials() {
 # Site deployment for --site: the one route, geodineum register (website-wp).
 # =============================================================================
 
+# A site keeps the environment it is registered under: --env, else what the constellation (or the site's own
+# config) records, else a new site starts gated in testing. An --env that contradicts the record stops the run.
+_resolve_site_env() {
+    local site_id recorded="" f pw="${CREDENTIALS_DIR:-/etc/geodineum/credentials}/valkey.password"
+    site_id=$(echo "$SITE_DOMAIN" | sed 's/[.-]/_/g')
+    if [[ -r "$pw" ]] && command -v valkey-cli >/dev/null 2>&1; then
+        recorded=$(REDISCLI_AUTH="$(<"$pw")" valkey-cli --no-auth-warning --raw -p "${VALKEY_PORT:-47445}" \
+            HGET "{${GNODE_TOPOLOGY_NAMESPACE:-geodineum}}:gnode:constellation:env" "$site_id" 2>/dev/null) || recorded=""
+    fi
+    if [[ -z "$recorded" ]]; then
+        for f in "/var/www/${SITE_DOMAIN}/.geodineum/config.yaml" "/var/www/${SITE_DOMAIN}/wp-config-geodineum.yaml"; do
+            [[ -r "$f" ]] || continue
+            recorded=$(grep -E '^[[:space:]]+active:' "$f" | head -1 | sed -E 's/.*active:[[:space:]]*//; s/["'\'']//g') || recorded=""
+            [[ -n "$recorded" ]] && break
+        done
+    fi
+    if [[ -n "$SITE_ENV" && -n "$recorded" && "$SITE_ENV" != "$recorded" ]]; then
+        log_error "${SITE_DOMAIN} is registered as ${recorded}; --env ${SITE_ENV} would re-register it. Change it with: sudo geodineum env set ${site_id} ${SITE_ENV}"
+        return 1
+    fi
+    if [[ -z "$SITE_ENV" && -n "$recorded" ]]; then
+        SITE_ENV="$recorded"
+        log_info "${SITE_DOMAIN}: keeping its recorded environment (${SITE_ENV})"
+    elif [[ -z "$SITE_ENV" ]]; then
+        SITE_ENV="testing"
+        log_info "${SITE_DOMAIN}: new site, environment testing (gated); pass --env to choose another"
+    fi
+}
+
 deploy_site_if_requested() {
     [[ -n "$SITE_DOMAIN" ]] || return 0
     [[ "$DRY_RUN" != "true" ]] || return 0
 
     log_step "Site Deployment"
+    _resolve_site_env || return 1
     local cli="${INSTALL_ROOT}/Geodineum/geodineum"
     [[ -x "$cli" ]] || cli="$(command -v geodineum 2>/dev/null || true)"
-    local -a args=("$SITE_DOMAIN" --new website-wp --env "${SITE_ENV:-testing}" --yes --no-mail)
+    local -a args=("$SITE_DOMAIN" --new website-wp --env "$SITE_ENV" --yes --no-mail)
     [[ -n "$SITE_THEME" ]] && args+=(--theme "$SITE_THEME")
     if [[ -z "$cli" ]]; then
         log_warning "geodineum CLI not found — deploy later: sudo geodineum register ${args[*]}"
@@ -5913,7 +5943,7 @@ main() {
     [[ -n "$valkey_note" ]] && echo -e "  ${DIM}${valkey_note}${NC}" && echo ""
 
     if [[ -n "$SITE_DOMAIN" ]]; then
-        echo -e "  ${BOLD}Site deployment:${NC} ${SITE_DOMAIN} (theme: ${SITE_THEME:-gtemplate-wp}, env: ${SITE_ENV})"
+        echo -e "  ${BOLD}Site deployment:${NC} ${SITE_DOMAIN} (theme: ${SITE_THEME:-gtemplate-wp}, env: ${SITE_ENV:-as recorded, or testing if new})"
         echo ""
     fi
 
