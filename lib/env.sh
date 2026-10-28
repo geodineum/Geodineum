@@ -90,6 +90,84 @@ write_yaml_env() {
     fi
 }
 
+# Every file that records a site's environment, one "file<TAB>field" line per recorded value
+# (field: a yq path, or GNODE_ENVIRONMENT for a .env file).
+site_env_targets() {
+    local site_id="$1" domain f p
+    domain=$(echo "$site_id" | sed 's/_/./g')
+    for f in \
+        "${GEODINEUM_CONFIG_ROOT}/sites/${site_id}/config.yaml" \
+        "${GEODINEUM_CONFIG_ROOT}/services/${site_id}/config.yaml" \
+        "${GEODINEUM_WEB_ROOT}/${domain}/.geodineum/config.yaml" \
+        "${GEODINEUM_WEB_ROOT}/${domain}/wp-config-geodineum.yaml" \
+        "${GEODINEUM_WEB_ROOT}/${domain}/wp-config-gtemplate.yaml" \
+        "${GEODINEUM_ROOT}/services/${site_id}/.geodineum/config.yaml"; do
+        [[ -f "$f" ]] || continue
+        for p in .environment.active .metadata.environment; do
+            [[ "$(yq e "${p} | tag" "$f" 2>/dev/null)" == '!!str' ]] && printf '%s\t%s\n' "$f" "$p"
+        done
+    done
+    f="${GEODINEUM_ROOT}/services/${site_id}/.env"
+    [[ -f "$f" ]] && grep -q '^GNODE_ENVIRONMENT=' "$f" && printf '%s\t%s\n' "$f" GNODE_ENVIRONMENT
+    return 0
+}
+
+# One recorded value set to new_env in a staged copy: only that line changes, or nothing does.
+_stage_env_edit() {
+    local staged="$1" field="$2" new_env="$3" n tmp
+    tmp="${staged}.edit"
+    if [[ "$field" == GNODE_ENVIRONMENT ]]; then
+        sed "s/^GNODE_ENVIRONMENT=.*/GNODE_ENVIRONMENT=\"${new_env}\"/" "$staged" > "$tmp"
+        [[ "$(grep -c '^GNODE_ENVIRONMENT="'"${new_env}"'"$' "$tmp")" == 1 ]] || { rm -f "$tmp"; return 1; }
+    else
+        # the child line inside its top-level block (yq's `line` is off by the file's leading comments)
+        n=$(awk -v top="${field#.}" 'BEGIN { split(top, k, "."); t = k[1]; c = k[2] }
+            $0 ~ "^" t ":[[:space:]]*$" { inb = 1; next }
+            inb && /^[^[:space:]#]/ { inb = 0 }
+            inb && $0 ~ "^[[:space:]]+" c ":" { print NR; exit }' "$staged")
+        [[ "$n" =~ ^[1-9][0-9]*$ ]] || return 1
+        sed "${n}s/^\([[:space:]]*[A-Za-z_]*:[[:space:]]*\)[\"']\{0,1\}[A-Za-z]*[\"']\{0,1\}/\1${new_env}/" "$staged" > "$tmp"
+        [[ "$(yq e "${field} = \"${new_env}\"" "$staged" 2>/dev/null)" == "$(yq e '.' "$tmp" 2>/dev/null)" ]] || { rm -f "$tmp"; return 1; }
+    fi
+    [[ "$(diff "$staged" "$tmp" | grep -c '^[<>]')" -le 2 ]] || { rm -f "$tmp"; return 1; }
+    mv "$tmp" "$staged"
+}
+
+# Write new_env into every recorded place, or into none. Sets ENV_STAGE (originals kept there for
+# restore_site_env); returns 1 with nothing written when any edit cannot be made exactly.
+write_site_env() {
+    local site_id="$1" new_env="$2" stage f field i=0 line
+    stage=$(mktemp -d) || return 1
+    declare -A slot=()
+    while IFS=$'\t' read -r f field; do
+        [[ -n "$f" ]] || continue
+        if [[ -z "${slot[$f]:-}" ]]; then
+            i=$((i + 1)); slot[$f]=$i
+            cp -p "$f" "${stage}/orig.${i}" && cp "$f" "${stage}/new.${i}" && printf '%s\n' "$f" > "${stage}/path.${i}" || { rm -rf "$stage"; return 1; }
+        fi
+        _stage_env_edit "${stage}/new.${slot[$f]}" "$field" "$new_env" \
+            || { log_error "Cannot set ${field} in ${f} exactly; nothing written"; rm -rf "$stage"; return 1; }
+    done < <(site_env_targets "$site_id")
+    (( i > 0 )) || { log_error "No environment recorded for ${site_id}"; rm -rf "$stage"; return 1; }
+    for line in "${stage}"/path.*; do
+        i=${line##*.}; f=$(<"$line")
+        cat "${stage}/new.${i}" > "$f" || { restore_site_env "$stage"; return 1; }
+        log_success "Config: ${f} → ${new_env}"
+    done
+    ENV_STAGE="$stage"
+}
+
+# Put every file write_site_env changed back as it was.
+restore_site_env() {
+    local stage="$1" line i
+    [[ -d "$stage" ]] || return 0
+    for line in "${stage}"/path.*; do
+        [[ -e "$line" ]] || continue
+        i=${line##*.}; cat "${stage}/orig.${i}" > "$(<"$line")" && log_warning "Restored $(<"$line")"
+    done
+    rm -rf "$stage"
+}
+
 # Update viewkey in YAML config
 write_yaml_viewkey() {
     local config_file="$1"
@@ -366,14 +444,12 @@ EOF
         log_warning "Site will become publicly accessible (gate removed)"
     fi
 
-    # 1. Update config file
+    # 1. Update every file that records the environment, all or none; kept for a restore below.
     log_step "Updating Configuration"
 
-    write_yaml_env "$config_file" "$new_env" || {
-        log_error "Failed to update ${config_file}"
-        exit 1
-    }
-    log_success "Config: environment → ${new_env}"
+    local env_stage
+    write_site_env "$site_id" "$new_env" || exit 1
+    env_stage="$ENV_STAGE"
 
     # 2. Generate viewkey for non-production if not set
     if [[ "$new_env" != "production" ]]; then
@@ -398,10 +474,11 @@ EOF
         log_success "ValKey: cache invalidated + active_environment → ${new_env}  (site_id: ${vk_site_id})"
     else
         log_error "ValKey cache invalidation FAILED — runtime still serves '${current_env}', not '${new_env}'."
-        log_error "  The config file was written but {${vk_site_id}}:config:registration was not cleared,"
-        log_error "  so gtemplate_detect_environment() keeps returning the old value."
+        log_error "  {${vk_site_id}}:config:registration was not cleared; the config files are put back."
+        restore_site_env "$env_stage"
         exit 1
     fi
+    rm -rf "$env_stage"
 
     # 3b. Reconcile dim-20 (geometric env coordinate) with active_environment +
     #     notify the daemon. Without this the two env stores diverge.
