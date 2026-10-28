@@ -1261,15 +1261,18 @@ geodeploy_harden_wp_site() {
 
     # 5. .geodineum/ config: ${GEODEPLOY_DEPLOY_USER}:www-data
     # (www-data reads config, can't modify).
-    if [[ -d "${wp_root}/.geodineum" ]]; then
-        _gd_own_tree "${wp_root}/.geodineum" "${GEODEPLOY_DEPLOY_USER}" www-data
-        _gd_mode_tree "${wp_root}/.geodineum" 750 -type d
-        _gd_mode_tree "${wp_root}/.geodineum" 640 -type f
-    fi
+    # beside WordPress, or at the site root once moved out of a public_html docroot
+    local _gdir
+    for _gdir in "${wp_root}/.geodineum" "${site_dir}/.geodineum"; do
+        [[ -d "$_gdir" ]] || continue
+        [[ "$_gdir" == "${site_dir}/.geodineum" && "$wp_root" == "$site_dir" ]] && continue
+        _gd_own_tree "$_gdir" "${GEODEPLOY_DEPLOY_USER}" www-data
+        _gd_mode_tree "$_gdir" 750 -type d
+        _gd_mode_tree "$_gdir" 640 -type f
+    done
 
-    # Best-effort hardening MUST NOT return non-zero. The trailing `if`
-    # above evaluates to false on any site without a .geodineum/ dir, so
-    # without this the function returns 1 — and under the installer's
+    # Best-effort hardening MUST NOT return non-zero. A trailing test that
+    # is false on a site without a .geodineum/ dir would return 1 — and under the installer's
     # `set -e` (where the call is unguarded) that silently ABORTS the
     # whole install mid-step, before Phase 10. Explicit success.
     return 0
