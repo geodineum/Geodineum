@@ -3135,7 +3135,7 @@ provision_daemon_acl() {
         return 1
     fi
 
-    install -d -m 0755 -o gnode -g gnode /etc/geodineum/components/gnode-daemon 2>/dev/null || true
+    install -d -m 0750 -o gnode -g "$(_components_group)" /etc/geodineum/components/gnode-daemon 2>/dev/null || true
     printf '%s\n' "${acl_daemon_tier[*]}" > "$acl_rule_file"
     chown root:gnode "$acl_rule_file" 2>/dev/null || true
     chmod 0640 "$acl_rule_file" 2>/dev/null || true
@@ -4458,6 +4458,9 @@ BAKTMR
 # PHASE 7: Centralized Config
 # =============================================================================
 
+# /etc/geodineum/components: the group the perms sweep converges to (geodeploy.sh), gnode until it exists.
+_components_group() { getent group geodineum-bootstrap >/dev/null 2>&1 && echo geodineum-bootstrap || echo gnode; }
+
 phase_config() {
     local resolved=($@)
 
@@ -4534,13 +4537,13 @@ phase_config() {
     # ── 3b. Directory creation with proper ownership.
     # The gnode user now exists, so install -d -o gnode succeeds.
     install -d -m 0751 -o root  -g geodineum /etc/geodineum
-    install -d -m 0755 -o gnode -g gnode    /etc/geodineum/components
-    install -d -m 0755 -o gnode -g gnode    /etc/geodineum/components/gnode-daemon
-    install -d -m 0755 -o gnode -g gnode    /etc/geodineum/components/gnode-daemon/nodes
+    install -d -m 0750 -o gnode -g "$(_components_group)"    /etc/geodineum/components
+    install -d -m 0750 -o gnode -g "$(_components_group)"    /etc/geodineum/components/gnode-daemon
+    install -d -m 0750 -o gnode -g "$(_components_group)"    /etc/geodineum/components/gnode-daemon/nodes
     # www-data owns the read side of both: gCore's env file and the per-site
     # ValKey client credentials it loads. Neither exists without a web tier.
     if has_gcore "${resolved[@]}"; then
-        install -d -m 0755 -o gnode -g gnode    /etc/geodineum/components/gCore
+        install -d -m 0750 -o gnode -g "$(_components_group)"    /etc/geodineum/components/gCore
         install -d -m 0750 -o gnode -g www-data /etc/geodineum/sites
     fi
 
