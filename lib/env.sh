@@ -32,7 +32,9 @@ find_site_config() {
         "${GEODINEUM_CONFIG_ROOT}/sites/${site_id}/config.yaml" \
         "${GEODINEUM_CONFIG_ROOT}/services/${site_id}/config.yaml" \
         "${GEODINEUM_WEB_ROOT}/${domain}/.geodineum/config.yaml" \
+        "${GEODINEUM_WEB_ROOT}/${domain}/public_html/.geodineum/config.yaml" \
         "${GEODINEUM_WEB_ROOT}/${domain}/wp-config-geodineum.yaml" \
+        "${GEODINEUM_WEB_ROOT}/${domain}/public_html/wp-config-geodineum.yaml" \
         "${GEODINEUM_WEB_ROOT}/${domain}/wp-config-gtemplate.yaml" \
         "${GEODINEUM_ROOT}/services/${site_id}/.geodineum/config.yaml" \
         "${GEODINEUM_ROOT}/services/${site_id}/.env"; do
@@ -99,7 +101,9 @@ site_env_targets() {
         "${GEODINEUM_CONFIG_ROOT}/sites/${site_id}/config.yaml" \
         "${GEODINEUM_CONFIG_ROOT}/services/${site_id}/config.yaml" \
         "${GEODINEUM_WEB_ROOT}/${domain}/.geodineum/config.yaml" \
+        "${GEODINEUM_WEB_ROOT}/${domain}/public_html/.geodineum/config.yaml" \
         "${GEODINEUM_WEB_ROOT}/${domain}/wp-config-geodineum.yaml" \
+        "${GEODINEUM_WEB_ROOT}/${domain}/public_html/wp-config-geodineum.yaml" \
         "${GEODINEUM_WEB_ROOT}/${domain}/wp-config-gtemplate.yaml" \
         "${GEODINEUM_ROOT}/services/${site_id}/.geodineum/config.yaml"; do
         [[ -f "$f" ]] || continue
@@ -126,7 +130,7 @@ _stage_env_edit() {
             inb && /^[^[:space:]#]/ { inb = 0 }
             inb && $0 ~ "^[[:space:]]+" c ":" { print NR; exit }' "$staged")
         [[ "$n" =~ ^[1-9][0-9]*$ ]] || return 1
-        sed "${n}s/^\([[:space:]]*[A-Za-z_]*:[[:space:]]*\)[\"']\{0,1\}[A-Za-z]*[\"']\{0,1\}/\1${new_env}/" "$staged" > "$tmp"
+        sed "${n}s/^\([[:space:]]*[A-Za-z_]*:[[:space:]]*\)\([\"']\{0,1\}\)[A-Za-z]*\([\"']\{0,1\}\)/\1\2${new_env}\3/" "$staged" > "$tmp"
         [[ "$(yq e "${field} = \"${new_env}\"" "$staged" 2>/dev/null)" == "$(yq e '.' "$tmp" 2>/dev/null)" ]] || { rm -f "$tmp"; return 1; }
     fi
     [[ "$(diff "$staged" "$tmp" | grep -c '^[<>]')" -le 2 ]] || { rm -f "$tmp"; return 1; }
