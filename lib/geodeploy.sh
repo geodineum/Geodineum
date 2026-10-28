@@ -299,7 +299,9 @@ geodeploy_report_unmanaged_behind() {
     branch="$(_geodeploy_git_as "$owner" -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null)" || return 0
     behind="$(_geodeploy_git_as "$owner" -C "$dir" rev-list --count "HEAD..origin/${branch}" 2>/dev/null)" || return 0
     if [[ "${behind:-0}" -gt 0 ]]; then
-        geodeploy_log "COVERAGE WARNING: ${name} is unmanaged and ${behind} commit(s) behind origin/${branch} — deploy it by hand (Geodineum-BAK: scripts/deploy.sh)"
+        local how="sudo -u ${owner} git -C ${dir} pull --ff-only"
+        [[ "$name" == "Geodineum-BAK" ]] && how="sudo bash <another checkout>/scripts/deploy.sh"
+        geodeploy_log "COVERAGE WARNING: ${name} is unmanaged and ${behind} commit(s) behind origin/${branch} — deploy it by hand: ${how}"
     fi
     return 0
 }
