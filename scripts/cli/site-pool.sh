@@ -109,6 +109,20 @@ tree_acl() {   # <docroot>
     find "$1" -type d -exec setfacl -d -m "u:$U:rX,o::---" {} + 2>/dev/null || true
 }
 
+# Shared /opt trees the site loads, and whether its user can open them.
+shared_unreadable() {
+    local p d out=()
+    for p in /opt/geodineum/gCore /opt/geodineum/gNode-Client $SP_EXTRA_BASEDIR; do
+        [[ -d "$p" ]] && ! runuser -u "$U" -- test -r "$p" -a -x "$p" && out+=("$p")
+    done
+    if [[ "$SP_PRO" == 1 ]]; then
+        for d in /opt/geodineum/pro /opt/geodineum/pro/gCore /opt/geodineum/pro/gCore/gCore-*; do
+            [[ -d "$d" ]] && ! runuser -u "$U" -- test -r "$d" -a -x "$d" && out+=("$d")
+        done
+    fi
+    printf '%s\n' "${out[@]}"
+}
+
 vhost_files() {
     # shellcheck disable=SC2086
     site_pool_vhosts $SP_DOCROOTS
@@ -238,6 +252,11 @@ do_verify() {
         done
     done
     if ps -o user= -C "php-fpm$PHPV" | grep -cxF "$U" >/dev/null; then ok "php workers run as $U"; else bad "no php worker runs as $U (no PHP request reached the pool?)"; fi
+    local unreadable; unreadable=$(shared_unreadable)
+    if [[ -z "$unreadable" ]]; then ok "$U opens every shared tree it loads"; else
+        bad "$U cannot open: $(tr '\n' ' ' <<< "$unreadable")"
+        echo "       fix: sudo chgrp geodineum-code <dir>   (the shared-source group; www-data is already in it)"
+    fi
     runuser -u "$U" -- test -r "$CRED" && ok "$U reads its credential" || bad "$U cannot read $CRED"
     runuser -u www-data -- test -r "$CRED" && bad "www-data still reads $CRED" || ok "www-data cannot read the credential"
     other=$(ls "$SITE_POOL_CREDS"/valkey_client_*.password 2>/dev/null | grep -vF "$CRED" | head -1 || true)
