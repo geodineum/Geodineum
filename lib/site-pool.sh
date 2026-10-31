@@ -3,7 +3,7 @@
 # in ${SITE_POOL_RECORDS}/<site_id>.env; a site without a record keeps the shared www-data pool.
 
 SITE_POOL_RECORDS="${SITE_POOL_RECORDS:-/etc/geodineum/web}"
-SITE_POOL_STATE="${SITE_POOL_STATE:-/var/lib/geodineum/sites}"
+SITE_POOL_STATE="${SITE_POOL_STATE:-/var/lib/geodineum-sites}"
 SITE_POOL_LOGS="${SITE_POOL_LOGS:-/var/log/geodineum/sites}"
 SITE_POOL_APACHE="${SITE_POOL_APACHE:-/etc/apache2/geodineum}"
 SITE_POOL_CREDS="${GEODINEUM_CREDENTIALS_DIR:-/etc/geodineum/credentials}"

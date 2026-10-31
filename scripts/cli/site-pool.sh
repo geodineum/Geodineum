@@ -156,7 +156,10 @@ do_apply() {
     if ! getent group "$U" >/dev/null; then run groupadd --system "$U"; else echo "  = group exists"; fi
     if ! id "$U" >/dev/null 2>&1; then
         run useradd --system --gid "$U" --home-dir "$SITE_POOL_STATE/$ID/home" --no-create-home --shell /usr/sbin/nologin "$U"
-    else echo "  = user exists"; fi
+    else
+        echo "  = user exists"
+        [[ "$(getent passwd "$U" | cut -d: -f6)" == "$SITE_POOL_STATE/$ID/home" ]] || run usermod -d "$SITE_POOL_STATE/$ID/home" "$U"
+    fi
     local groups="geodineum-code,geodineum-bootstrap"
     [[ "$SP_DASH" == 1 ]] && groups+=",geodineum-dash"
     run usermod -aG "$groups" "$U"
@@ -167,14 +170,20 @@ do_apply() {
 
     say "4. state $SITE_POOL_STATE/$ID and logs $SITE_POOL_LOGS/$ID"
     if (( APPLY )); then
-        install -d -m 0750 -o root -g root "$SITE_POOL_STATE"
+        install -d -m 0711 -o root -g root "$SITE_POOL_STATE"
         install -d -m 0700 -o "$U" -g "$U" "$SITE_POOL_STATE/$ID"
         for d in sessions tmp cache home; do install -d -m 0700 -o "$U" -g "$U" "$SITE_POOL_STATE/$ID/$d"; done
         install -d -m 2750 -o root -g geodineum "$SITE_POOL_LOGS"
         install -d -m 2750 -o "$U" -g geodineum "$SITE_POOL_LOGS/$ID"
-        traverse_acl "$(dirname "$SITE_POOL_STATE")"; traverse_acl "$SITE_POOL_STATE"
+        # Before 2026-11-01 the state lived under /var/lib/geodineum, whose StateDirectoryMode=0700
+        # (keyspace sampler) reset the traverse ACL every hour.
+        if [[ -d "/var/lib/geodineum/sites/$ID" ]]; then
+            rm -rf "/var/lib/geodineum/sites/$ID"
+            rmdir /var/lib/geodineum/sites 2>/dev/null || true
+            setfacl -x "u:$U" /var/lib/geodineum /var/lib/geodineum/sites 2>/dev/null || true
+        fi
         traverse_acl "$(dirname "$SITE_POOL_LOGS")"; traverse_acl "$SITE_POOL_LOGS"
-    else echo "  + create sessions tmp cache home (0700 $U), log dir ($U:geodineum 2750), traverse ACLs"; fi
+    else echo "  + create $SITE_POOL_STATE (0711) with sessions tmp cache home (0700 $U), log dir ($U:geodineum 2750), traverse ACLs on the log parents"; fi
 
     say "5. docroots: $U reads through an ACL; writable dirs become $U:www-data"
     for d in $SP_DOCROOTS; do
@@ -252,6 +261,8 @@ do_verify() {
         done
     done
     if ps -o user= -C "php-fpm$PHPV" | grep -cxF "$U" >/dev/null; then ok "php workers run as $U"; else bad "no php worker runs as $U (no PHP request reached the pool?)"; fi
+    runuser -u "$U" -- test -w "$SITE_POOL_STATE/$ID/tmp" && ok "$U writes its tmp ($SITE_POOL_STATE/$ID)" || bad "$U cannot write $SITE_POOL_STATE/$ID/tmp"
+    runuser -u "$U" -- test -w "$SITE_POOL_LOGS/$ID" && ok "$U writes its log dir" || bad "$U cannot write $SITE_POOL_LOGS/$ID"
     local unreadable; unreadable=$(shared_unreadable)
     if [[ -z "$unreadable" ]]; then ok "$U opens every shared tree it loads"; else
         bad "$U cannot open: $(tr '\n' ' ' <<< "$unreadable")"
@@ -296,7 +307,7 @@ do_revert() {
     run rm -f "$REC"
     if (( PURGE )); then
         say "5. purge user, group and state"
-        for d in "$(dirname "$SITE_POOL_STATE")" "$SITE_POOL_STATE" "$(dirname "$SITE_POOL_LOGS")" "$SITE_POOL_LOGS"; do setfacl -x "u:$U" "$d" 2>/dev/null || true; done
+        for d in "$(dirname "$SITE_POOL_LOGS")" "$SITE_POOL_LOGS"; do setfacl -x "u:$U" "$d" 2>/dev/null || true; done
         run rm -rf "${SITE_POOL_STATE:?}/$ID"
         run userdel "$U"
         getent group "$U" >/dev/null && run groupdel "$U"
