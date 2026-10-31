@@ -614,8 +614,13 @@ EOF
         exit 1
     fi
 
-    local config_file
-    config_file=$(find_site_config "$site_id") || {
+    local config_file domain_dir
+    domain_dir="${GEODINEUM_WEB_ROOT}/$(echo "$site_id" | sed 's/_/./g')"
+    # The gate reads wp-config-geodineum.yaml on a WordPress site; the key lives there.
+    for config_file in "${domain_dir}/wp-config-geodineum.yaml" "${domain_dir}/public_html/wp-config-geodineum.yaml" ""; do
+        [[ -z "$config_file" || -f "$config_file" ]] && break
+    done
+    [[ -n "$config_file" ]] || config_file=$(find_site_config "$site_id") || {
         log_error "No config found for site '${site_id}'"
         exit 1
     }
