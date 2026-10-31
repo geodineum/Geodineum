@@ -29,6 +29,11 @@
 # safety net for unanticipated failures.
 set -euo pipefail
 
+# Per-site PHP pools: a site with a record in /etc/geodineum/web keeps its own user on its writable dirs.
+_GD_SITE_POOL_LIB="$(dirname "${BASH_SOURCE[0]}")/site-pool.sh"
+# shellcheck source=site-pool.sh
+[[ -f "$_GD_SITE_POOL_LIB" ]] && source "$_GD_SITE_POOL_LIB"
+
 # Source the deployment-local overlay if present (see header).
 _GEODEPLOY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${_GEODEPLOY_LIB_DIR}/geodeploy-extras.sh" ]]; then
@@ -1194,11 +1199,28 @@ geodeploy_harden_wp_site() {
         -not -path "${wp_root}/wp-content/wflogs"     -not -path "${wp_root}/wp-content/wflogs/*" \
         -not -path "${wp_root}/wp-content/gcore-logs" -not -path "${wp_root}/wp-content/gcore-logs/*"
     _gd_mode_tree "$wp_root" 750 -type d \
-        -not -path '*/uploads/*' -not -path '*/cache/*' -not -path '*/upgrade/*' -not -path '*/wflogs/*' -not -path '*/gcore-logs/*'
+        -not -path '*/uploads/*' -not -path '*/cache/*' -not -path '*/upgrade/*' -not -path '*/wflogs/*' -not -path '*/gcore-logs/*' \
+        -not -path "${wp_root}/wp-content/uploads" -not -path "${wp_root}/wp-content/cache" -not -path "${wp_root}/wp-content/upgrade" \
+        -not -path "${wp_root}/wp-content/wflogs" -not -path "${wp_root}/wp-content/gcore-logs"
     _gd_mode_tree "$wp_root" 640 -type f -not -name '.htaccess' \
         -not -path '*/uploads/*' -not -path '*/cache/*' -not -path '*/upgrade/*' -not -path '*/wflogs/*' -not -path '*/gcore-logs/*'
 
-    # 2. Writable dirs: uploads, cache, upgrade, wflogs, gcore-logs (www-data:www-data).
+    # A site on its own pool: its user owns the writable dirs and reads the rest through an ACL.
+    local _wr_owner=www-data
+    if declare -F site_pool_owner_for >/dev/null; then
+        _wr_owner="$(site_pool_owner_for "$site_dir" || true)"
+        if [[ -n "$_wr_owner" ]] && id "$_wr_owner" >/dev/null 2>&1; then
+            getfacl -cp "$wp_root" 2>/dev/null | grep -c "^user:${_wr_owner}:r" >/dev/null \
+                || find "$site_dir" -not -type l -not -name .htaccess -exec setfacl -m "u:${_wr_owner}:rX" {} + 2>/dev/null || true
+        else
+            _wr_owner=www-data
+        fi
+    fi
+    local _wr_dmode=750
+    [[ "$_wr_owner" != www-data ]] && _wr_dmode=2750
+
+    # 2. Writable dirs: uploads, cache, upgrade, wflogs, gcore-logs (www-data:www-data,
+    #    or the site's own user when it runs its own pool).
     #    gcore-logs is where gCore writes structured per-manager logs; without
     #    group-write it is logging-blind (errors only reach the apache log). It is
     #    NOT web-served (wp-content deny), but gets the PHP-exec block below anyway.
@@ -1210,8 +1232,8 @@ geodeploy_harden_wp_site() {
         "${wp_root}/wp-content/wflogs"; do
         if [[ -d "$writable_dir" ]]; then
             # .htaccess here is owned by step 3 (root:www-data, immutable).
-            _gd_own_tree "$writable_dir" www-data www-data -not -name '.htaccess'
-            _gd_mode_tree "$writable_dir" 750 -type d
+            _gd_own_tree "$writable_dir" "$_wr_owner" www-data -not -name '.htaccess' -not -type l
+            _gd_mode_tree "$writable_dir" "$_wr_dmode" -type d
             _gd_mode_tree "$writable_dir" 640 -type f -not -name '.htaccess'
         fi
     done

@@ -45,3 +45,7 @@ cli:
       description: "Install a service's ValKey credential on this node (--auth-file takes the file register --node wrote on the master)"
       requires_sudo: true
       category: Constellation
+    - name: site pool
+      handler: scripts/cli/site-pool.sh
+      description: "Run one site's PHP as its own user and pool: plan, apply, verify, revert"
+      category: Sites
