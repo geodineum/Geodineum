@@ -158,7 +158,10 @@ do_apply() {
         run useradd --system --gid "$U" --home-dir "$SITE_POOL_STATE/$ID/home" --no-create-home --shell /usr/sbin/nologin "$U"
     else
         echo "  = user exists"
-        [[ "$(getent passwd "$U" | cut -d: -f6)" == "$SITE_POOL_STATE/$ID/home" ]] || run usermod -d "$SITE_POOL_STATE/$ID/home" "$U"
+        if [[ "$(getent passwd "$U" | cut -d: -f6)" != "$SITE_POOL_STATE/$ID/home" ]]; then
+            run usermod -d "$SITE_POOL_STATE/$ID/home" "$U" 2>/dev/null \
+                || echo "  ! home field left as is while its workers run; the pool sets HOME itself"
+        fi
     fi
     local groups="geodineum-code,geodineum-bootstrap"
     [[ "$SP_DASH" == 1 ]] && groups+=",geodineum-dash"
