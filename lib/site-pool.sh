@@ -118,7 +118,11 @@ env[GCORE_LOG_PATH] = $lg
 env[GCORE_CACHE_PATH] = $st/cache
 env[VALKEY_PASSWORD_FILE] = $SITE_POOL_CREDS/valkey_client_$id.password
 EOF
-    [[ "$SP_BASEDIR" == 1 ]] && printf 'php_admin_value[open_basedir] = %s\n' "$(site_pool_basedir)"
+    if [[ "$SP_BASEDIR" == 1 ]]; then
+        printf 'php_admin_value[open_basedir] = %s\n' "$(site_pool_basedir)"
+        # gCore reads its own pool's list here: an ini_get() in shared code returns another pool's value.
+        printf 'env[GCORE_OPEN_BASEDIR] = %s\n' "$(site_pool_basedir)"
+    fi
     return 0
 }
 
