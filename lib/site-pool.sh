@@ -104,6 +104,7 @@ request_terminate_timeout = 30s
 request_slowlog_timeout = 15s
 slowlog = $lg/php-slow.log
 php_admin_flag[log_errors] = on
+php_admin_flag[display_errors] = off
 php_admin_value[error_log] = $lg/php-error.log
 php_admin_value[session.save_path] = $st/sessions
 php_admin_value[session.gc_probability] = 1
