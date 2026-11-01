@@ -15,13 +15,13 @@ site_pool_user() {   # <site_id>
     printf '%s' "$u"
 }
 
-# The PHP a new record starts on: the newest version whose FPM runs now (the shared pool's), not
-# the newest installed, so installing a newer php-fpm never moves a site by itself.
+# The PHP a new record starts on: the version whose FPM serves the shared pool (the one that holds
+# geodineum-fpm.sock), so installing another php-fpm never moves a site by itself; --php moves one.
 site_pool_phpv() {
-    local v d
-    for d in $(ls -d /etc/php/*/fpm/pool.d 2>/dev/null | sed 's#/etc/php/\([^/]*\)/.*#\1#' | sort -V); do
-        systemctl is-active --quiet "php$d-fpm" 2>/dev/null && v="$d"
-    done
+    local f v=""
+    f=$(grep -l 'geodineum-fpm\.sock' /etc/php/*/fpm/pool.d/*.conf 2>/dev/null | sort -V | tail -1 || true)
+    [[ -n "$f" ]] && v=$(cut -d/ -f4 <<< "$f")
+    [[ -z "$v" ]] && v=$(ls -d /etc/php/*/fpm/pool.d 2>/dev/null | sed 's#/etc/php/\([^/]*\)/.*#\1#' | sort -V | tail -1)
     printf '%s' "${SITE_POOL_PHPV:-$v}"
 }
 

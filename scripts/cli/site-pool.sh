@@ -23,7 +23,7 @@ Options (apply; stored in /etc/geodineum/web/<site_id>.env and reused by later r
   --dash              add the site user to geodineum-dash
   --max-children <n>  default 8
   --php <x.y>         move the pool to this PHP (kept in the record; a new record starts on the
-                      version the shared pool runs, never on a newer one merely installed)
+                      version that serves the shared pool, never on another one merely installed)
   --no-basedir        leave open_basedir off (to tell its breakage apart from the user switch)
 EOF
 }
