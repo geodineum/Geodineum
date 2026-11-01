@@ -22,6 +22,8 @@ Options (apply; stored in /etc/geodineum/web/<site_id>.env and reused by later r
   --pro               let the site load /opt/geodineum/pro/gCore
   --dash              add the site user to geodineum-dash
   --max-children <n>  default 8
+  --php <x.y>         move the pool to this PHP (kept in the record; a new record starts on the
+                      version the shared pool runs, never on a newer one merely installed)
   --no-basedir        leave open_basedir off (to tell its breakage apart from the user switch)
 EOF
 }
@@ -31,13 +33,14 @@ ID="${1:-}"
 [[ "$ID" =~ ^[a-z0-9_]+$ ]] || { echo "site_id must be [a-z0-9_]+" >&2; exit 2; }
 shift
 ACTION=plan; [[ $# -gt 0 && "$1" != --* ]] && { ACTION="$1"; shift; }
-DOCROOTS=() KIND="" PRO="" DASH="" MAXC="" BASEDIR="" PURGE=0
+DOCROOTS=() KIND="" PRO="" DASH="" MAXC="" BASEDIR="" PURGE=0 PHPARG=
 while [[ $# -gt 0 ]]; do case "$1" in
     --docroot) DOCROOTS+=("${2%/}"); shift 2 ;;
     --kind) KIND="$2"; shift 2 ;;
     --pro) PRO=1; shift ;;
     --dash) DASH=1; shift ;;
     --max-children) MAXC="$2"; shift 2 ;;
+    --php) PHPARG="$2"; [[ "$PHPARG" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "--php x.y" >&2; exit 2; }; shift 2 ;;
     --no-basedir) BASEDIR=0; shift ;;
     --purge) PURGE=1; shift ;;
     *) usage; exit 2 ;;
@@ -47,9 +50,6 @@ esac; done
 
 U="$(site_pool_user "$ID")"
 REC="$SITE_POOL_RECORDS/$ID.env"
-PHPV="$(site_pool_phpv)"
-FPM="php${PHPV}-fpm"
-POOL="/etc/php/$PHPV/fpm/pool.d/site-$ID.conf"
 SOCK="/run/php/site-$ID.sock"
 CRED="$SITE_POOL_CREDS/valkey_client_$ID.password"
 INC="$SITE_POOL_APACHE/php-$ID.conf"
@@ -60,8 +60,14 @@ run() { echo "  + $*"; if (( APPLY )); then "$@"; fi; }
 
 load_record() {
     if site_pool_read "$REC" 2>/dev/null; then :; else
-        SP_SITE_ID="$ID" SP_SITE_USER="$U" SP_KIND="" SP_DOCROOTS="" SP_PRO=0 SP_DASH=0 SP_MAX_CHILDREN="" SP_BASEDIR=1 SP_EXTRA_BASEDIR="" SP_CRED_OWNER_BEFORE=""
+        SP_SITE_ID="$ID" SP_SITE_USER="$U" SP_KIND="" SP_DOCROOTS="" SP_PRO=0 SP_DASH=0 SP_MAX_CHILDREN="" SP_BASEDIR=1 SP_EXTRA_BASEDIR="" SP_CRED_OWNER_BEFORE="" SP_PHP=""
     fi
+    [[ -n "$PHPARG" ]] && SP_PHP="$PHPARG"
+    if [[ -z "$SP_PHP" ]]; then
+        local f; for f in /etc/php/*/fpm/pool.d/site-"$ID".conf; do [[ -f "$f" ]] && SP_PHP="$(cut -d/ -f4 <<< "$f")"; done
+    fi
+    [[ -z "$SP_PHP" ]] && SP_PHP="$(site_pool_phpv)"
+    PHPV="$SP_PHP"; FPM="php${PHPV}-fpm"; POOL="/etc/php/$PHPV/fpm/pool.d/site-$ID.conf"
     (( ${#DOCROOTS[@]} )) && SP_DOCROOTS="${DOCROOTS[*]}"
     [[ -z "$SP_DOCROOTS" ]] && SP_DOCROOTS="/var/www/$(sed 's/_/./g' <<< "$ID")"
     [[ -n "$KIND" ]] && SP_KIND="$KIND"
@@ -95,6 +101,7 @@ MAX_CHILDREN="${SP_MAX_CHILDREN:-8}"
 BASEDIR="$SP_BASEDIR"
 EXTRA_BASEDIR="$SP_EXTRA_BASEDIR"
 CRED_OWNER_BEFORE="$SP_CRED_OWNER_BEFORE"
+PHP="$SP_PHP"
 EOF
     chmod 0640 "$REC"
 }
@@ -135,6 +142,9 @@ do_apply() {
     [[ -f "$CRED" ]] || { say "STOP: no credential $CRED (register the site first)"; exit 1; }
     command -v setfacl >/dev/null || { say "STOP: setfacl missing (apt install acl)"; exit 1; }
     [[ -n "$PHPV" && -x "$(command -v "php-fpm$PHPV")" ]] || { say "STOP: php-fpm$PHPV not found"; exit 1; }
+    systemctl is-active --quiet "$FPM" || { say "STOP: $FPM is not running (install and start it first)"; exit 1; }
+    local m; m=$("php-fpm$PHPV" -m 2>/dev/null || true)
+    for x in redis curl mbstring; do grep -qx "$x" <<< "$m" || { say "STOP: php$PHPV has no $x extension (apt install php$PHPV-$x)"; exit 1; }; done
     local vh; vh="$(vhost_files)"
     [[ -n "$vh" ]] || { say "STOP: no enabled vhost has DocumentRoot in $SP_DOCROOTS"; exit 1; }
     for g in geodineum-code geodineum-bootstrap; do getent group "$g" >/dev/null || { say "STOP: group $g missing"; exit 1; }; done
@@ -215,6 +225,13 @@ do_apply() {
     fi
 
     say "7. pool $POOL"
+    local other ov
+    for other in /etc/php/*/fpm/pool.d/site-"$ID".conf; do
+        [[ -f "$other" && "$other" != "$POOL" ]] || continue
+        ov="$(cut -d/ -f4 <<< "$other")"
+        echo "  + moving from php $ov: remove $other, reload php$ov-fpm (the site answers 503 until the new pool is up)"
+        if (( APPLY )); then rm -f "$other" "/etc/php/$ov/fpm/conf.d/96-geodineum-site-pools.ini.unused"; systemctl reload "php$ov-fpm"; fi
+    done
     if (( APPLY )); then
         site_pool_conf "$PHPV" > "$POOL"; chmod 0644 "$POOL"
         if ! "php-fpm$PHPV" -t >/dev/null 2>&1; then

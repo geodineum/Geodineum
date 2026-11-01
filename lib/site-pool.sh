@@ -15,9 +15,13 @@ site_pool_user() {   # <site_id>
     printf '%s' "$u"
 }
 
+# The PHP a new record starts on: the newest version whose FPM runs now (the shared pool's), not
+# the newest installed, so installing a newer php-fpm never moves a site by itself.
 site_pool_phpv() {
-    local v
-    v=$(ls -d /etc/php/*/fpm/pool.d 2>/dev/null | sed 's#/etc/php/\([^/]*\)/.*#\1#' | sort -V | tail -1)
+    local v d
+    for d in $(ls -d /etc/php/*/fpm/pool.d 2>/dev/null | sed 's#/etc/php/\([^/]*\)/.*#\1#' | sort -V); do
+        systemctl is-active --quiet "php$d-fpm" 2>/dev/null && v="$d"
+    done
     printf '%s' "${SITE_POOL_PHPV:-$v}"
 }
 
@@ -25,13 +29,13 @@ site_pool_phpv() {
 site_pool_read() {   # <record file>
     local line k v
     SP_SITE_ID="" SP_SITE_USER="" SP_KIND="" SP_DOCROOTS="" SP_WRITABLE="" SP_PRO=0 SP_DASH=0
-    SP_MAX_CHILDREN="" SP_BASEDIR=1 SP_EXTRA_BASEDIR="" SP_CRED_OWNER_BEFORE=""
+    SP_MAX_CHILDREN="" SP_BASEDIR=1 SP_EXTRA_BASEDIR="" SP_CRED_OWNER_BEFORE="" SP_PHP=""
     [[ -r "$1" ]] || return 1
     while IFS= read -r line; do
         [[ "$line" =~ ^([A-Z_]+)=\"([^\"]*)\"$ ]] || continue
         k="${BASH_REMATCH[1]}" v="${BASH_REMATCH[2]}"
         case "$k" in
-            SITE_ID|SITE_USER|KIND|DOCROOTS|WRITABLE|PRO|DASH|MAX_CHILDREN|BASEDIR|EXTRA_BASEDIR|CRED_OWNER_BEFORE)
+            SITE_ID|SITE_USER|KIND|DOCROOTS|WRITABLE|PRO|DASH|MAX_CHILDREN|BASEDIR|EXTRA_BASEDIR|CRED_OWNER_BEFORE|PHP)
                 printf -v "SP_$k" '%s' "$v" ;;
         esac
     done < "$1"
@@ -145,7 +149,7 @@ site_pool_vhosts() {   # <docroot>...
     for d in "$@"; do
         for f in /etc/apache2/sites-enabled/*.conf; do
             [[ -f "$f" ]] || continue
-            grep -lE "^\s*DocumentRoot\s+\"?${d//./\\.}(/public_html)?/?\"?\s*$" "$f" 2>/dev/null || true
+            grep -lE "^\s*DocumentRoot\s+\"?${d//./\\.}(/public_html|/public)?/?\"?\s*$" "$f" 2>/dev/null || true
         done
     done | xargs -r -n1 readlink -f | sort -u
 }
