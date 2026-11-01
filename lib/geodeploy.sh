@@ -785,7 +785,7 @@ _gd_own() {
     [[ -e "$path" ]] || return 0
     cur=$(stat -c '%U:%G' "$path" 2>/dev/null)
     [[ -n "$cur" && "$cur" == "${owner}:${group}" ]] && return 0
-    _gd_priv /usr/bin/chown "${owner}:${group}" "$path" 2>/dev/null || true
+    _gd_priv /usr/bin/chown -h "${owner}:${group}" "$path" 2>/dev/null || true
     _gd_note_fix "${path}(own)"
     return 0
 }
@@ -803,7 +803,9 @@ _gd_mode() {
     return 0
 }
 
-# Assert owner:group across a TREE. Extra find predicates go after the group
+# Assert owner:group across a TREE. chown -h: find tests a symlink's own owner, so the fix must
+# change the link, never its target (a theme link into /opt flipped the shared tree every cycle).
+# Extra find predicates go after the group
 # (e.g. -type f, -not -path '*/.git/*') and AND with the drift guard.
 _gd_own_tree() {
     local root="$1" owner="$2" group="$3"; shift 3
@@ -819,7 +821,7 @@ _gd_own_tree() {
         < <(find "$root" "$@" \( ! -user "$owner" -o ! -group "$group" \) -print0 2>/dev/null)
     (( ${#drifted[@]} )) || return 0
     printf '%s\0' "${drifted[@]}" \
-        | xargs -0r "${_GD_PRIV_ARGV[@]}" /usr/bin/chown "${owner}:${group}" 2>/dev/null || true
+        | xargs -0r "${_GD_PRIV_ARGV[@]}" /usr/bin/chown -h "${owner}:${group}" 2>/dev/null || true
     for _p in "${drifted[@]}"; do _gd_note_fix "${_p}(own ${owner}:${group})"; done
     return 0
 }
