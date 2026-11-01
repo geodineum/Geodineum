@@ -209,6 +209,10 @@ do_apply() {
     run chmod 0640 "$CRED"
     echo "  + sidecar ${CRED}.owner = root:$U:640"
     if (( APPLY )); then printf 'root:%s:640\n' "$U" > "$CRED.owner"; chown root:geodineum-creds "$CRED.owner"; chmod 0644 "$CRED.owner"; fi
+    if [[ -d "$SITE_POOL_CREDS/portal-$ID" ]]; then
+        echo "  + the portal's client credentials $SITE_POOL_CREDS/portal-$ID -> group $U"
+        run chgrp -R "$U" "$SITE_POOL_CREDS/portal-$ID"
+    fi
 
     say "7. pool $POOL"
     if (( APPLY )); then
@@ -275,6 +279,11 @@ do_verify() {
     runuser -u www-data -- test -r "$CRED" && bad "www-data still reads $CRED" || ok "www-data cannot read the credential"
     other=$(ls "$SITE_POOL_CREDS"/valkey_client_*.password 2>/dev/null | grep -vF "$CRED" | head -1 || true)
     if [[ -n "$other" ]]; then runuser -u "$U" -- test -r "$other" && bad "$U reads $(basename "$other")" || ok "$U cannot read another site's credential"; fi
+    local pc; pc=$(ls "$SITE_POOL_CREDS/portal-$ID"/*.password 2>/dev/null | head -1 || true)
+    if [[ -n "$pc" ]]; then
+        runuser -u "$U" -- test -r "$pc" && ok "$U reads the portal's client credentials" || bad "$U cannot read $pc"
+        runuser -u www-data -- test -r "$pc" && bad "www-data reads $pc" || ok "www-data cannot read the portal's client credentials"
+    fi
     local log="$SITE_POOL_LOGS/$ID/php-error.log"
     if [[ -f "$log" ]]; then
         echo "  ..   $(wc -l < "$log") lines in $log, $(grep -c open_basedir "$log" || true) about open_basedir; last 5:"
@@ -300,6 +309,7 @@ do_revert() {
     run chown "root:$before_g" "$CRED"
     run chmod "$before_m" "$CRED"
     printf 'root:%s:%s\n' "$before_g" "$before_m" > "$CRED.owner"
+    [[ -d "$SITE_POOL_CREDS/portal-$ID" ]] && run chgrp -R "$before_g" "$SITE_POOL_CREDS/portal-$ID"
     say "4. writable dirs back to www-data, ACL entries for $U removed"
     for d in $SP_DOCROOTS; do
         while IFS= read -r f; do find "$f" -not -type l -not -name .htaccess -exec chown www-data:www-data {} +; done < <(site_pool_writable_dirs "$d")
