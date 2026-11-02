@@ -16,6 +16,8 @@
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/systemctl reload php8.3-fpm
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/systemctl restart php8.4-fpm
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/systemctl reload php8.4-fpm
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/systemctl restart php8.5-fpm
+{{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/systemctl reload php8.5-fpm
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/systemctl reload apache2
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
 

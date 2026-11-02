@@ -229,12 +229,11 @@ ensure_web_code_group() {
     # Supplementary groups are read at process start: running FPM workers
     # keep the old set until respawned.
     local unit
-    for unit in php8.3-fpm php8.4-fpm php-fpm; do
+    for unit in php8.5-fpm php8.4-fpm php8.3-fpm php-fpm; do
         if systemctl is-active --quiet "$unit" 2>/dev/null; then
             systemctl reload "$unit" 2>/dev/null \
                 && log_success "${unit} reloaded (workers pick up the new group)" \
                 || log_warning "${unit} reload failed — reload it by hand before serving this app"
-            break
         fi
     done
 }

@@ -541,20 +541,30 @@ geodeploy_action_generation_bump() {
 # opcache_reset() only clears the CLI SAPI. Graceful FPM reload respawns
 # workers against fresh shm, which is the actual pool-wide clear. APCu is
 # NOT cleared by a reload; the generation bump below is what invalidates it.
+# Every active PHP FPM unit: per-site pools may run on several PHP versions at once.
+geodeploy_fpm_units() {
+    local unit
+    for unit in php8.5-fpm php8.4-fpm php8.3-fpm php-fpm; do
+        systemctl is-active --quiet "$unit" 2>/dev/null && echo "$unit"
+    done
+    return 0
+}
+
 geodeploy_action_opcache_clear() {
     local name="$1"
-    local unit
-    for unit in php8.3-fpm php8.4-fpm php-fpm; do
-        if systemctl is-active --quiet "$unit" 2>/dev/null; then
-            if /usr/bin/sudo /usr/bin/systemctl reload "$unit" 2>/dev/null; then
-                geodeploy_log "${name}: opcache-cleared (${unit} reloaded)"
-            else
-                geodeploy_log "${name}: WARN opcache-clear failed (${unit} reload denied)"
-            fi
-            geodeploy_action_generation_bump "$name"
-            return 0
+    local unit n=0
+    for unit in $(geodeploy_fpm_units); do
+        if /usr/bin/sudo /usr/bin/systemctl reload "$unit" 2>/dev/null; then
+            geodeploy_log "${name}: opcache-cleared (${unit} reloaded)"
+        else
+            geodeploy_log "${name}: WARN opcache-clear failed (${unit} reload denied)"
         fi
+        n=$((n + 1))
     done
+    if (( n > 0 )); then
+        geodeploy_action_generation_bump "$name"
+        return 0
+    fi
     php -r "if(function_exists('opcache_reset')){opcache_reset();}" 2>/dev/null \
         && geodeploy_log "${name}: opcache-cleared (cli only — no active FPM unit)"
 }
@@ -562,17 +572,16 @@ geodeploy_action_opcache_clear() {
 # Restart PHP-FPM
 geodeploy_action_php_fpm_restart() {
     local name="$1"
-    local unit
-    for unit in php8.3-fpm php8.4-fpm php-fpm; do
-        if systemctl is-active --quiet "$unit" 2>/dev/null; then
-            if /usr/bin/sudo /usr/bin/systemctl restart "$unit" 2>/dev/null; then
-                geodeploy_log "${name}: php-fpm-restarted (${unit})"
-            else
-                geodeploy_log "${name}: WARN php-fpm-restart failed (${unit})"
-            fi
-            return 0
+    local unit n=0
+    for unit in $(geodeploy_fpm_units); do
+        if /usr/bin/sudo /usr/bin/systemctl restart "$unit" 2>/dev/null; then
+            geodeploy_log "${name}: php-fpm-restarted (${unit})"
+        else
+            geodeploy_log "${name}: WARN php-fpm-restart failed (${unit})"
         fi
+        n=$((n + 1))
     done
+    (( n > 0 )) && return 0
     geodeploy_log "${name}: WARN php-fpm-restart skipped (no active FPM unit)"
 }
 
