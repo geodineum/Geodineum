@@ -1056,8 +1056,7 @@ geodeploy_ensure_code_members() {
         /usr/bin/sudo /usr/bin/usermod -aG geodineum-code "$u" 2>/dev/null && changed=1
     done
     [[ $changed -eq 0 ]] && return 0
-    fpm="$(systemctl list-unit-files 'php*-fpm.service' --no-legend 2>/dev/null | awk '{print $1}' | head -1)"
-    [[ -n "$fpm" ]] && /usr/bin/sudo /usr/bin/systemctl restart "$fpm" 2>/dev/null || true
+    for fpm in $(geodeploy_fpm_units); do /usr/bin/sudo /usr/bin/systemctl reload "$fpm" 2>/dev/null || true; done
     /usr/bin/sudo /usr/bin/systemctl restart apache2 2>/dev/null || true
     if id geodine >/dev/null 2>&1 && systemctl list-unit-files geodine.service >/dev/null 2>&1; then
         /usr/bin/sudo /usr/bin/systemctl restart geodine.service 2>/dev/null || true
@@ -1080,17 +1079,17 @@ geodeploy_ensure_dash_members() {
     local changed=0 u fpm
     getent group geodineum-dash >/dev/null 2>&1 \
         || { /usr/bin/sudo /usr/bin/groupadd --system geodineum-dash 2>/dev/null && changed=1; }
-    for u in www-data gnode "${GEODEPLOY_DEPLOY_USER:-}"; do
+    # PHP runs as each site's pool user: a site reads the dashboard credential only when its
+    # record says DASH="1"; www-data (Apache) never needs it.
+    for u in gnode "${GEODEPLOY_DEPLOY_USER:-}" $(declare -F site_pool_flag_users >/dev/null && site_pool_flag_users DASH); do
         [[ -n "$u" ]] || continue
         id "$u" >/dev/null 2>&1 || continue
         id -nG "$u" 2>/dev/null | tr ' ' '\n' | grep -cx geodineum-dash >/dev/null && continue
         /usr/bin/sudo /usr/bin/usermod -aG geodineum-dash "$u" 2>/dev/null && changed=1
     done
     [[ $changed -eq 0 ]] && return 0
-    geodeploy_log "ensure_dash_members: geodineum-dash membership changed → restarting web tier"
-    fpm="$(systemctl list-unit-files 'php*-fpm.service' --no-legend 2>/dev/null | awk '{print $1}' | head -1)"
-    [[ -n "$fpm" ]] && /usr/bin/sudo /usr/bin/systemctl restart "$fpm" 2>/dev/null || true
-    /usr/bin/sudo /usr/bin/systemctl restart apache2 2>/dev/null || true
+    geodeploy_log "ensure_dash_members: geodineum-dash membership changed → reloading PHP-FPM"
+    for fpm in $(geodeploy_fpm_units); do /usr/bin/sudo /usr/bin/systemctl reload "$fpm" 2>/dev/null || true; done
 }
 
 # Re-assert the canonical helper-lib install at /usr/local/lib/geodineum/.
@@ -1754,11 +1753,16 @@ geodeploy_fix_all_credentials() {
 # Pulls every checkout on disk; manifest.yaml only clones missing ones, and a
 # `pro/<type>/<name>` line in unmanaged-repos.conf holds one back. A gCore
 # package's own geodeploy.yaml runs its build on clone and its triggers on pull. Ownership is
-# left as cloned: gCore reaches Pro code through vendor symlinks into pro/gCore,
+# geodineum-code until the pools close, then geodineum-pro: gCore reaches Pro code through vendor symlinks into pro/gCore,
 # so a web-readable group here would switch Pro managers on for every site.
 _gd_pro_unmanaged() {
     [[ -r "${GEODINEUM_ROOT}/unmanaged-repos.conf" ]] || return 1
     grep -qxE "[[:space:]]*${1}[[:space:]]*(#.*)?" "${GEODINEUM_ROOT}/unmanaged-repos.conf"
+}
+
+# Pro gCore is readable only by Pro sites once the pools are closed (geodineum-pro exists).
+_gd_pro_group() {
+    if getent group geodineum-pro >/dev/null 2>&1; then echo geodineum-pro; else echo geodineum-code; fi
 }
 
 geodeploy_deploy_pro() {
@@ -1789,12 +1793,12 @@ for e in d.get('pro', []):
                     if [[ "$comp_type" == "gNode" ]]; then
                         chgrp -R gnode "$pro_dir"; : > "$pending"
                     else
-                        chgrp -R geodineum-code "$pro_dir"
+                        chgrp -R "$(_gd_pro_group)" "$pro_dir"
                     fi
                     chmod -R o-rwx,g-w "$pro_dir"
                     if [[ "$comp_type" == "gCore" ]] && geodeploy_parse_descriptor "${pro_dir}/geodeploy.yaml" && [[ -n "$_GD_BUILD_TYPE$_GD_BUILD_CMD" ]]; then
                         geodeploy_action_build "$pro_dir" "$label" || failed=1
-                        chgrp -R geodineum-code "$pro_dir"; chmod -R o-rwx,g-w "$pro_dir"
+                        chgrp -R "$(_gd_pro_group)" "$pro_dir"; chmod -R o-rwx,g-w "$pro_dir"
                     fi
                 else
                     geodeploy_log "${label}: ERROR clone-failed"
@@ -1839,7 +1843,7 @@ for e in d.get('pro', []):
             if grep -qE '\.php$' <<< "$changed"; then php_changed=1; fi
             if geodeploy_parse_descriptor "${pro_dir}/geodeploy.yaml"; then
                 geodeploy_match_and_run "$pro_dir" "$label" "$changed"
-                chgrp -R geodineum-code "$pro_dir"; chmod -R o-rwx,g-w "$pro_dir"
+                chgrp -R "$(_gd_pro_group)" "$pro_dir"; chmod -R o-rwx,g-w "$pro_dir"
             fi
         else
             if grep -qE '^(functions/.*\.lua|extension\.yaml)$' <<< "$changed"; then lua_changed=1; fi

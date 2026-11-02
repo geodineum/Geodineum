@@ -15,14 +15,43 @@ site_pool_user() {   # <site_id>
     printf '%s' "$u"
 }
 
-# The PHP a new record starts on: the version whose FPM serves the shared pool (the one that holds
-# geodineum-fpm.sock), so installing another php-fpm never moves a site by itself; --php moves one.
+SITE_POOL_HANDLER="${SITE_POOL_HANDLER:-/etc/apache2/conf-available/geodineum-php-fpm.conf}"
+SITE_POOL_IDLE_SOCK=/run/php/_idle.sock
+
+# The PHP a new record starts on: the version whose FPM holds the shared pool (geodineum-fpm.sock)
+# or, once closed, the [_idle] pool; installing another php-fpm never moves a site by itself.
 site_pool_phpv() {
     local f v=""
-    f=$(grep -l 'geodineum-fpm\.sock' /etc/php/*/fpm/pool.d/*.conf 2>/dev/null | sort -V | tail -1 || true)
+    f=$(grep -lE 'geodineum-fpm\.sock|^\[_idle\]' /etc/php/*/fpm/pool.d/*.conf 2>/dev/null | sort -V | tail -1 || true)
     [[ -n "$f" ]] && v=$(cut -d/ -f4 <<< "$f")
     [[ -z "$v" ]] && v=$(ls -d /etc/php/*/fpm/pool.d 2>/dev/null | sed 's#/etc/php/\([^/]*\)/.*#\1#' | sort -V | tail -1)
     printf '%s' "${SITE_POOL_PHPV:-$v}"
+}
+
+# The deploy sweep's own copy of its library (it runs from the installer clone under /opt), and
+# whether it has known <pattern> for two cycles (it sources its library before pulling it).
+site_pool_sweep_wait() {   # <pattern> -> prints why not, returns 1; silent and 0 when ready
+    local lib="${GEODINEUM_ROOT:-/opt/geodineum}/Geodineum/lib/geodeploy.sh" age
+    [[ -f "$lib" ]] || return 0
+    grep -cF "$1" "$lib" >/dev/null || { echo "the deploy sweep ($lib) does not have this change yet (git -C ${lib%/lib/*} log -1)"; return 1; }
+    age=$(( $(date +%s) - $(stat -c %Y "$lib") ))
+    (( age >= 600 )) || { echo "the deploy sweep took this change $((age / 60)) min ago and runs the old code one more cycle; retry in $(( (600 - age) / 60 + 1 )) min"; return 1; }
+    return 0
+}
+
+# The site users whose record sets a flag: site_pool_flag_users PRO|DASH
+site_pool_flag_users() {
+    local f
+    for f in "$SITE_POOL_RECORDS"/*.env; do
+        [[ -f "$f" ]] || continue
+        ( site_pool_read "$f" 2>/dev/null || exit 0; v="SP_$1"; [[ "${!v:-0}" == 1 && -n "$SP_SITE_USER" ]] && echo "$SP_SITE_USER" ) || true
+    done
+    return 0
+}
+
+# Closed: the global handler sends PHP to the unreachable [_idle] socket; no shared pool remains.
+site_pool_closed() {
+    grep -c "$SITE_POOL_IDLE_SOCK" "$SITE_POOL_HANDLER" >/dev/null 2>&1
 }
 
 # Reads KEY="value" lines into SP_<KEY>; no expansion, no sourcing.

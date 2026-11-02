@@ -148,11 +148,9 @@ do_apply() {
     local vh; vh="$(vhost_files)"
     [[ -n "$vh" ]] || { say "STOP: no enabled vhost has DocumentRoot in $SP_DOCROOTS"; exit 1; }
     for g in geodineum-code geodineum-bootstrap; do getent group "$g" >/dev/null || { say "STOP: group $g missing"; exit 1; }; done
-    local sweep_lib="$HERE/../../lib/geodeploy.sh" age
-    if [[ -f "$sweep_lib" ]]; then
-        grep -c site_pool_owner_for "$sweep_lib" >/dev/null || { say "STOP: the deploy sweep here does not know site pools yet; it would hand the writable dirs back to www-data"; exit 1; }
-        age=$(( $(date +%s) - $(stat -c %Y "$sweep_lib") ))
-        (( age >= 600 || ! APPLY )) || { say "STOP: the sweep learned site pools $((age / 60)) min ago; it runs the old code one more cycle. Retry in $(( (600 - age) / 60 + 1 )) min"; exit 1; }
+    local why
+    if (( APPLY )) && ! why=$(site_pool_sweep_wait site_pool_owner_for); then
+        say "STOP: $why (it would hand the writable dirs back to www-data)"; exit 1
     fi
 
     say "1. opcache checks file permissions per pool (global, once)"
@@ -173,9 +171,14 @@ do_apply() {
                 || echo "  ! home field left as is while its workers run; the pool sets HOME itself"
         fi
     fi
-    local groups="geodineum-code,geodineum-bootstrap"
+    local groups="geodineum-code,geodineum-bootstrap" g want
     [[ "$SP_DASH" == 1 ]] && groups+=",geodineum-dash"
+    [[ "$SP_PRO" == 1 ]] && getent group geodineum-pro >/dev/null && groups+=",geodineum-pro"
     run usermod -aG "$groups" "$U"
+    for g in geodineum-dash geodineum-pro; do
+        want=$SP_DASH; [[ "$g" == geodineum-pro ]] && want=$SP_PRO
+        [[ "$want" != 1 ]] && id -nG "$U" 2>/dev/null | tr ' ' '\n' | grep -cx "$g" >/dev/null && run gpasswd -d "$U" "$g"
+    done
 
     say "3. record $REC"
     [[ -z "$SP_CRED_OWNER_BEFORE" ]] && SP_CRED_OWNER_BEFORE="$(stat -c '%U:%G:%a' "$CRED")"
@@ -290,7 +293,10 @@ do_verify() {
     local unreadable; unreadable=$(shared_unreadable)
     if [[ -z "$unreadable" ]]; then ok "$U opens every shared tree it loads"; else
         bad "$U cannot open: $(tr '\n' ' ' <<< "$unreadable")"
-        echo "       fix: sudo chgrp geodineum-code <dir>   (the shared-source group; www-data is already in it)"
+        echo "       fix: sudo chgrp geodineum-code <dir>   (the shared-source group; the Pro tree is geodineum-pro once closed)"
+    fi
+    if [[ "$SP_PRO" != 1 && -d /opt/geodineum/pro/gCore ]] && getent group geodineum-pro >/dev/null; then
+        runuser -u "$U" -- test -r /opt/geodineum/pro/gCore && bad "$U opens the Pro tree without --pro" || ok "$U cannot open the Pro tree (not Pro)"
     fi
     runuser -u "$U" -- test -r "$CRED" && ok "$U reads its credential" || bad "$U cannot read $CRED"
     runuser -u www-data -- test -r "$CRED" && bad "www-data still reads $CRED" || ok "www-data cannot read the credential"
@@ -311,6 +317,7 @@ do_verify() {
 
 do_revert() {
     site_pool_read "$REC" || { say "no record $REC; nothing to revert"; exit 1; }
+    site_pool_closed && { say "STOP: the shared pool is closed, so a reverted site would answer 503; sudo geodineum site pools reopen first"; exit 1; }
     APPLY=1
     local f d before_g before_m
     say "1. vhosts back to the shared pool"

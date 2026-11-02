@@ -49,6 +49,11 @@ cli:
       handler: scripts/cli/site-pool.sh
       description: "Run one site's PHP as its own user and pool: plan, apply, verify, revert"
       category: Sites
+    - name: site pools
+      handler: scripts/cli/site-pools.sh
+      description: "Close the shared www-data PHP pool once every site has its own: plan, close, reopen"
+      requires_sudo: true
+      category: Sites
     - name: site user
       handler: scripts/cli/site-user.sh
       description: "The user a site's PHP runs as (its pool user, else www-data), for scripts: sudo -u \"$(geodineum site user <id>)\""
