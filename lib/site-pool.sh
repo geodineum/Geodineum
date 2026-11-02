@@ -49,7 +49,7 @@ site_pool_owner_for() {   # <dir>
         [[ -f "$f" ]] || continue
         site_pool_read "$f" || continue
         for d in $SP_DOCROOTS; do
-            if [[ "$dir" == "$d" || "$dir" == "$d/public_html" ]]; then printf '%s' "$SP_SITE_USER"; return 0; fi
+            if [[ "$dir" == "$d" || "$dir" == "$d/public_html" || "$dir" == "$d/public" ]]; then printf '%s\n' "$SP_SITE_USER"; return 0; fi
         done
     done
     return 1
