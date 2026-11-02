@@ -101,6 +101,7 @@ site_pool_basedir() {   # uses SP_*; prints the open_basedir value
             /etc/geodineum/bootstrap.env /etc/geodineum/components/gCore/gcore.env
             "$SITE_POOL_CREDS/valkey_client_${SP_SITE_ID}.password")
     for d in $SP_EXTRA_BASEDIR; do parts+=("$d"); done
+    [[ -d "$SITE_POOL_CREDS/portal-$SP_SITE_ID" ]] && parts+=("$SITE_POOL_CREDS/portal-$SP_SITE_ID")
     [[ "$SP_PRO" == 1 ]] && parts+=(/opt/geodineum/pro/gCore)
     local IFS=:; printf '%s' "${parts[*]}"
 }
