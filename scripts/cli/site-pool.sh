@@ -308,6 +308,7 @@ do_verify() {
     local pc; pc=$(ls "$SITE_POOL_CREDS/portal-$ID"/*.password 2>/dev/null | head -1 || true)
     if [[ -n "$pc" ]]; then
         runuser -u "$U" -- test -r "$pc" && ok "$U reads the portal's client credentials" || bad "$U cannot read $pc"
+        [[ "$SP_BASEDIR" != 1 ]] || { grep -qF "$SITE_POOL_CREDS/portal-$ID" "$POOL" && ok "the pool's open_basedir includes $SITE_POOL_CREDS/portal-$ID" || bad "the pool's open_basedir leaves out $SITE_POOL_CREDS/portal-$ID (re-run apply)"; }
         runuser -u www-data -- test -r "$pc" && bad "www-data reads $pc" || ok "www-data cannot read the portal's client credentials"
     fi
     local log="$SITE_POOL_LOGS/$ID/php-error.log"
