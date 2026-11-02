@@ -19,8 +19,9 @@ Usage: sudo geodineum site pool <site_id> [plan|apply|verify|revert|show] [optio
 Options (apply; stored in /etc/geodineum/web/<site_id>.env and reused by later runs):
   --docroot <dir>     a docroot of this site id; repeat for a preview copy (default /var/www/<domain from id>)
   --kind wp|standalone
-  --pro               let the site load /opt/geodineum/pro/gCore
-  --dash              add the site user to geodineum-dash
+  --pro | --no-pro    let the site load /opt/geodineum/pro/gCore (group geodineum-pro), or stop it
+  --dash | --no-dash  add the site user to geodineum-dash (the cross-site read-only ValKey token
+                      /etc/geodineum/dashboard; no PHP reads it today), or remove it
   --max-children <n>  default 8
   --php <x.y>         move the pool to this PHP (kept in the record; a new record starts on the
                       version that serves the shared pool, never on another one merely installed)
@@ -38,7 +39,9 @@ while [[ $# -gt 0 ]]; do case "$1" in
     --docroot) DOCROOTS+=("${2%/}"); shift 2 ;;
     --kind) KIND="$2"; shift 2 ;;
     --pro) PRO=1; shift ;;
+    --no-pro) PRO=0; shift ;;
     --dash) DASH=1; shift ;;
+    --no-dash) DASH=0; shift ;;
     --max-children) MAXC="$2"; shift 2 ;;
     --php) PHPARG="$2"; [[ "$PHPARG" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "--php x.y" >&2; exit 2; }; shift 2 ;;
     --no-basedir) BASEDIR=0; shift ;;
