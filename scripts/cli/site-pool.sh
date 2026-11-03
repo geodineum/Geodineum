@@ -311,6 +311,12 @@ do_verify() {
         [[ "$SP_BASEDIR" != 1 ]] || { grep -qF "$SITE_POOL_CREDS/portal-$ID" "$POOL" && ok "the pool's open_basedir includes $SITE_POOL_CREDS/portal-$ID" || bad "the pool's open_basedir leaves out $SITE_POOL_CREDS/portal-$ID (re-run apply)"; }
         runuser -u www-data -- test -r "$pc" && bad "www-data reads $pc" || ok "www-data cannot read the portal's client credentials"
     fi
+    local spub=/etc/geodineum/store-seal.pub sbin=/opt/geodineum/Geodineum-STORE/target/release/geodineum-seal
+    if [[ -f "$spub" ]]; then
+        runuser -u "$U" -- test -r "$spub" && ok "$U reads STORE's sealing key" || bad "$U cannot read $spub"
+        runuser -u "$U" -- test -x "$sbin" && ok "$U runs geodineum-seal" || bad "$U cannot run $sbin (build Geodineum-STORE here: personal data writes are refused)"
+        [[ "$SP_BASEDIR" != 1 ]] || { grep -qF "$sbin" "$POOL" && ok "the pool's open_basedir includes geodineum-seal" || bad "the pool's open_basedir leaves out $sbin (re-run apply)"; }
+    fi
     local log="$SITE_POOL_LOGS/$ID/php-error.log"
     if [[ -f "$log" ]]; then
         echo "  ..   $(wc -l < "$log") lines in $log, $(grep -c open_basedir "$log" || true) about open_basedir; last 5:"
