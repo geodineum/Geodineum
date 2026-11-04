@@ -53,6 +53,7 @@ ok()   { checks=$((checks+1)); echo "  ok   $*"; }
 bad()  { checks=$((checks+1)); echo "  FAIL $*"; failed+=("$*"); }
 note() { notes=$((notes+1)); echo "  ..   $*"; }
 refused() { [[ "$1" == *NOPERM* || "$1" == *"no permissions"* ]]; }
+as_user() { local u="$1"; shift; setpriv --reuid="$u" --regid="$(id -g "$u")" --init-groups -- "$@"; }   # no PAM session, so no journal noise
 rnd() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 echo "== on $(hostname -s): tenant probe, $N sites, $((N*(N-1))) ordered pairs, layers $LAYERS"
 
@@ -91,14 +92,16 @@ if has files && [[ -z "$SITES_OPT" ]]; then
     for ((i=0; i<N; i++)); do
         A="${IDS[$i]}"; UA="${USERS[$i]}"
         id "$UA" >/dev/null 2>&1 || { bad "$A: no unix user $UA"; continue; }
-        runuser -u "$UA" -- test -r "$CREDS/valkey_client_$A.password" && ok "$UA reads its own credential (control)" || bad "$UA cannot read its own credential"
+        as_user "$UA" test -r "$CREDS/valkey_client_$A.password" && ok "$UA reads its own credential (control)" || bad "$UA cannot read its own credential"
         for ((j=0; j<N; j++)); do
             (( i == j )) && continue
             B="${IDS[$j]}"
-            runuser -u "$UA" -- test -r "$CREDS/valkey_client_$B.password" && bad "$UA reads $B's credential" || ok "$UA -> $B credential refused"
+            as_user "$UA" test -r "$CREDS/valkey_client_$B.password" && bad "$UA reads $B's credential" || ok "$UA -> $B credential refused"
             pb=$(ls "$CREDS"/portal-*/"$B.password" 2>/dev/null | head -1 || true)
-            [[ -n "$pb" ]] && { runuser -u "$UA" -- test -r "$pb" && bad "$UA reads $B's portal credential" || ok "$UA -> $B portal credential refused"; }
-            [[ -d "$SITE_POOL_STATE/$B" ]] && { runuser -u "$UA" -- test -w "$SITE_POOL_STATE/$B/tmp" && bad "$UA writes $B's tmp" || ok "$UA -> $B tmp refused"; }
+            if [[ -n "$pb" && "$(basename "$(dirname "$pb")")" != "portal-$A" ]]; then   # the brand site IS the portal: it holds portal-<brand>/ by design
+                as_user "$UA" test -r "$pb" && bad "$UA reads $B's portal credential" || ok "$UA -> $B portal credential refused"
+            fi
+            [[ -d "$SITE_POOL_STATE/$B" ]] && { as_user "$UA" test -w "$SITE_POOL_STATE/$B/tmp" && bad "$UA writes $B's tmp" || ok "$UA -> $B tmp refused"; }
         done
     done
 fi
@@ -113,7 +116,7 @@ if has php && [[ -z "$SITES_OPT" ]]; then
         [[ -f "${POOLS[$i]}" ]] && { grep -q '^php_admin_value\[open_basedir\]' "${POOLS[$i]}" && ok "$A pool sets open_basedir" || bad "$A pool has no open_basedir line"; }
         ini="/etc/php/${PHPS[$i]}/fpm/conf.d/96-geodineum-site-pools.ini"
         [[ -f "$ini" ]] && grep -qx 'opcache.validate_permission=1' "$ini" && ok "$A php ${PHPS[$i]}: opcache.validate_permission=1" || bad "$A php ${PHPS[$i]}: opcache.validate_permission=1 missing ($ini)"
-        probe_read() { runuser -u "$UA" -- "$PHPB" -n -d "open_basedir=$BD" -d display_errors=0 -r 'exit(@file_get_contents($argv[1]) === false ? 3 : 0);' -- "$1" 2>/dev/null; echo $?; }
+        probe_read() { as_user "$UA" "$PHPB" -n -d "open_basedir=$BD" -d display_errors=0 -r 'exit(@file_get_contents($argv[1]) === false ? 3 : 0);' -- "$1" 2>/dev/null; echo $?; }
         # a world-readable file outside the basedir: only open_basedir can refuse it
         r=$(probe_read /etc/hostname); [[ "$r" == 3 ]] && ok "$UA under its open_basedir cannot read /etc/hostname" || bad "$UA under open_basedir read /etc/hostname (exit $r): open_basedir not effective"
         own="$CREDS/valkey_client_$A.password"
@@ -142,8 +145,9 @@ if has store; then
         r=$(ask "$A" "probe-$stamp-own" '{"kind":"site.content","limit":100}')
         if [[ -z "$r" ]]; then note "$A: no answer from STORE in 15 s (relay or STORE down; unproven tonight)"; continue; fi
         if [[ "$r" == *label:persistence* ]]; then note "$A holds no persistence: read-back not open to it (good, nothing to probe)"; continue; fi
-        others=$(python3 -I -c 'import json,sys; r=json.loads(sys.argv[1]); print(",".join(sorted({x.get("site","") for x in (r.get("result") or {}).get("records",[])} - {sys.argv[2]})))' "$r" "$A" 2>/dev/null || echo "unparseable")
-        [[ -z "$others" ]] && ok "$A store_list answers only $A's rows" || bad "$A store_list returned rows of: $others"
+        if [[ "$r" == *"Relay denied by policy"* ]]; then note "$A may not reach STORE: $(sed -E 's/.*Relay denied by policy: ([^"]*)".*/\1/' <<<"$r") (unreachable, nothing to probe)"; continue; fi
+        others=$(python3 -I -c 'import json,sys; r=json.loads(sys.argv[1]); assert r.get("status")=="ok"; print(",".join(sorted({x.get("site","") for x in (r.get("result") or {}).get("records",[])} - {sys.argv[2]})))' "$r" "$A" 2>/dev/null || echo "not an ok answer: ${r:0:160}")
+        [[ -z "$others" ]] && ok "$A store_list answers only $A's rows" || bad "$A store_list: $others"
         r=$(ask "$A" "probe-$stamp-mail" '{"kind":"mail.message","limit":1}')
         [[ "$r" == *"not served"* ]] && ok "$A cannot list mail.message (refused by name)" || bad "$A store_list mail.message was not refused: ${r:0:160}"
     done
@@ -154,14 +158,16 @@ if has http && [[ -z "$SITES_OPT" ]]; then
     echo "-- http"
     for ((i=0; i<N; i++)); do
         [[ "${KINDS[$i]}" == wp ]] && continue
-        A="${IDS[$i]}"
+        A="${IDS[$i]}"; tpl=0
+        for d in ${DOCS[$i]}; do [[ -f "$d/.site" || -f "$(dirname "$d")/.site" ]] && tpl=1; done
+        (( tpl )) || continue   # only an innovagent-template deployment has /_edit
         # shellcheck disable=SC2086
         hosts=$(for f in $(site_pool_vhosts ${DOCS[$i]}); do sed -nE 's/^\s*ServerName\s+//p' "$f"; done | sort -u)
         for h in $hosts; do
             code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 15 --resolve "$h:443:127.0.0.1" "https://$h/_edit/enter?t=$(rnd)" || echo 000)
             case "$code" in
                 403) ok "https://$h/_edit/enter with a random token -> 403" ;;
-                404) note "https://$h has no /_edit yet (template not redeployed)" ;;
+                404) note "https://$h has no /_edit yet (redeploy the template)" ;;
                 *) bad "https://$h/_edit/enter with a random token -> $code" ;;
             esac
         done
