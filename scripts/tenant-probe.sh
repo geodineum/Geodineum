@@ -3,7 +3,7 @@
 # layer and must be refused everywhere (SPEC-SITE-STUDIO S0c). Read-only on the live constellation:
 # writes are tried with ACL DRYRUN, reads as the site's own ValKey user. Nightly from
 # geodineum-tenant-probe.timer (install-tenant-probe.sh); by hand:
-#   sudo bash scripts/tenant-probe.sh [--layers valkey,files,php,store,http] [--alert-site <site>] [--no-alert]
+#   sudo bash scripts/tenant-probe.sh [--layers valkey,daemon,files,php,store,http] [--alert-site <site>] [--no-alert]  (daemon is not in the default list until gNode has the tenant guard)
 # A throwaway run (tests/tenant-probe/local.sh): --sites a,b --creds <dir> --port <n> --layers valkey
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -56,6 +56,40 @@ refused() { [[ "${1,,}" == *noperm* || "${1,,}" == *"no permissions"* ]]; }
 as_user() { local u="$1"; shift; setpriv --reuid="$u" --regid="$(id -g "$u")" --init-groups -- "$@"; }   # no PAM session, so no journal noise
 rnd() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 echo "== on $(hostname -s): tenant probe, $N sites, $((N*(N-1))) ordered pairs, layers $LAYERS"
+
+# ---- daemon: what A may ask gNode to do, through A's own stream ------------------------------
+# The ACLs above cannot see this: the daemon acts with its own rights. The id does not exist, so a
+# daemon that wrongly obeys changes nothing and answers not_found, and that answer is the alarm.
+ask_daemon() { # <site> <user> <password file> <command> <params json>
+    local id="$1:probe-$(rnd)" i r
+    vk_as "$2" "$3" XADD "{$1}:gnode:unified:$ENVN" '*' t c id "$id" c "$4" ss "$1" sn tenant-probe p "${5%\}},\"_request_id\":\"$id\"}" >/dev/null
+    for i in $(seq 40); do
+        r=$(vk_as "$2" "$3" GET "{$1}:res:$id")
+        [[ -n "$r" ]] && { printf '%s' "$r"; return 0; }
+        sleep 0.25
+    done
+    return 1
+}
+if has daemon; then
+    echo "-- daemon"
+    for ((i=0; i<N; i++)); do
+        A="${IDS[$i]}"; UA="gnode_client_$A"; PA="$CREDS/valkey_client_$A.password"
+        [[ -r "$PA" ]] || continue
+        if ! r=$(ask_daemon "$A" "$UA" "$PA" ping '{"probe":1}') || [[ "$r" != *'"ok"'* ]]; then
+            note "$A: the daemon did not answer on its $ENVN stream (not a $ENVN site, or down): nothing proved"
+            continue
+        fi
+        ok "$A: the daemon answers on its own stream (control)"
+        r=$(ask_daemon "$A" "$UA" "$PA" deregister_service '{"service_id":"tenant-probe-no-such-entity"}') || r=""
+        if [[ "$r" == *"may deregister only itself"* ]]; then ok "$A may not deregister another entity"
+        elif [[ -z "$r" ]]; then note "$A: no answer to the deregister: nothing proved"
+        else bad "$A asked the daemon to deregister another entity and it obeyed: $r"; fi
+        r=$(ask_daemon "$A" "$UA" "$PA" channel_open "{\"target_site\":\"tenant-probe-no-such-site\",\"ttl_seconds\":1}") || r=""
+        if [[ "$r" == *"may not open a channel"* ]]; then ok "$A may not open a channel"
+        elif [[ -z "$r" ]]; then note "$A: no answer to channel_open: nothing proved"
+        else bad "$A asked the daemon for a channel and it obeyed: $r"; fi
+    done
+fi
 
 # ---- valkey: A's users against B's keys -----------------------------------------------------
 if has valkey; then
