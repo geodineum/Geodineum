@@ -52,7 +52,7 @@ checks=0; failed=(); notes=0
 ok()   { checks=$((checks+1)); echo "  ok   $*"; }
 bad()  { checks=$((checks+1)); echo "  FAIL $*"; failed+=("$*"); }
 note() { notes=$((notes+1)); echo "  ..   $*"; }
-refused() { [[ "$1" == *NOPERM* || "$1" == *"no permissions"* ]]; }
+refused() { [[ "${1,,}" == *noperm* || "${1,,}" == *"no permissions"* ]]; }
 as_user() { local u="$1"; shift; setpriv --reuid="$u" --regid="$(id -g "$u")" --init-groups -- "$@"; }   # no PAM session, so no journal noise
 rnd() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 echo "== on $(hostname -s): tenant probe, $N sites, $((N*(N-1))) ordered pairs, layers $LAYERS"
@@ -74,14 +74,25 @@ if has valkey; then
             r=$(vk_as "$UA" "$PA" XLEN "{$B}:gnode:unified:$ENVN"); refused "$r" && ok "$A -> {$B} unified stream refused" || bad "$A -> {$B} unified stream answered: $r"
             r=$(dryrun "$UA" SET "{$B}:edit:token:probe" x); [[ "$r" != OK ]] && ok "$A -> {$B} edit token write refused (dry run)" || bad "$A may write {$B}:edit:token:*"
             r=$(dryrun "$UA" XADD "{$B}:gnode:comms:$ENVN" '*' a 1); [[ "$r" != OK ]] && ok "$A -> {$B} comms write refused (dry run)" || bad "$A may XADD to {$B}:gnode:comms"
-            r=$(dryrun "$UA" FCALL_RO gnode_probe 1 "{$B}:x"); [[ "$r" != OK ]] && ok "$A -> {$B} function call refused (dry run)" || bad "$A may FCALL_RO on a {$B} key"
+            # a real call: ACL DRYRUN answers OK for FCALL even when the script's own key access is refused.
+            # Refused writes nothing; a success writes one harmless field into {B}, and that is the alarm.
+            r=$(vk_as "$UA" "$PA" FCALL GCORE_MGR_CONFIG_SET 0 "$B" TenantProbe crossed "$A"); refused "$r" && ok "$A -> {$B} a function writing {$B} is refused inside the script" || bad "$A wrote {$B} through a function: $r"
             if [[ -n "$PORTAL_A" ]]; then
                 r=$(vk_as "portal_$A" "$PORTAL_A" HGETALL "{$B}:site:content"); refused "$r" && ok "portal_$A -> {$B} content refused" || bad "portal_$A -> {$B} content answered: $r"
                 r=$(dryrun "portal_$A" SET "{$B}:edit:token:probe" x EX 60); [[ "$r" != OK ]] && ok "portal_$A -> {$B} edit token refused (dry run)" || bad "portal_$A may mint edit tokens for {$B}"
+                for k in site:profile site:terms site:shop site:draft site:theme planning:vocab; do
+                    r=$(vk_as "portal_$A" "$PORTAL_A" HGETALL "{$B}:$k"); refused "$r" && ok "portal_$A -> {$B}:$k refused" || bad "portal_$A read {$B}:$k"
+                done
             fi
         done
         if [[ -n "$PORTAL_A" ]]; then
             r=$(dryrun "portal_$A" SET "{$A}:edit:token:probe" x EX 60); [[ "$r" == OK ]] && ok "portal_$A mints edit tokens for its own site (control)" || note "portal_$A has no edit-token grant yet (client-site.sh portal)"
+            # write-only means write-only: the portal never reads a key, even its own site's
+            for k in "gcore:secrets:MollieManager api_key_live" "site:shop:pending api_key_live"; do
+                set -- $k
+                r=$(vk_as "portal_$A" "$PORTAL_A" HGET "{$A}:$1" "$2"); refused "$r" && ok "portal_$A cannot read {$A}:$1" || bad "portal_$A read {$A}:$1"
+            done
+            r=$(dryrun "portal_$A" HSET "{$A}:gcore:config:MollieManager" probe 1); [[ "$r" != OK ]] && ok "portal_$A cannot change Mollie's settings" || note "portal_$A still has the old Mollie grant (client-site.sh portal)"
         fi
     done
 fi

@@ -22,6 +22,7 @@ shape() { # <site>: the grant onboard-service.sh composes (own tag, brace-less a
     vk ACL SETUSER "gnode_client_$1" on ">$(<"$W/valkey_client_$1.password")" resetkeys "~{$1}:*" "~$1:*" "%R~{geodineum}:gnode:*" \
         nocommands +@read +@write +@stream +@hash +@string +fcall +fcall_ro +ping +auth +select +info +scan +publish >/dev/null
 }
+REDISCLI_AUTH="$(<"$W/valkey.password")" valkey-cli --no-auth-warning -p $PORT -x FUNCTION LOAD REPLACE < "${GNODE_FUNCTIONS_DIR:-$HOME/gh/gNode/daemon/functions}/gnode_gcore_config.lua" >/dev/null
 shape a_nl; shape b_nl
 vk HSET '{a_nl}:site:content' hero.title A >/dev/null; vk HSET '{b_nl}:site:content' hero.title B >/dev/null
 
@@ -40,7 +41,7 @@ vk ACL SETUSER gnode_client_a_nl '~{b_nl}:*' >/dev/null
 out=$(probe 2>&1) && rc=0 || rc=$?
 check "the probe fails" "$rc" 1
 check "it names the pair and the layer" "$(grep -c -E 'FAIL a_nl -> \{b_nl\}: EXISTS answered' <<<"$out" || true)" 1
-check "the write dry runs went red too" "$(grep -c -E 'FAIL a_nl may (write|XADD|FCALL_RO)' <<<"$out" || true)" 3
+check "the write checks went red too" "$(grep -c -E 'FAIL a_nl (may (write|XADD)|wrote \{b_nl\} through a function)' <<<"$out" || true)" 3
 check "b_nl -> a_nl is still refused (the breach is one-way)" "$(grep -c -E 'FAIL b_nl -> ' <<<"$out" || true)" 0
 check "the record carries the failures" "$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["failed"]) > 0)' "$W/state/last.json")" True
 
