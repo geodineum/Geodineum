@@ -99,6 +99,10 @@ if has valkey; then
         if [[ ! -r "$PA" ]]; then bad "$A: no credential at $(basename "$PA") (cannot probe as $A)"; continue; fi
         r=$(vk_as "$UA" "$PA" EXISTS "{$A}:site:content")
         [[ "$r" == 0 || "$r" == 1 ]] && ok "$A reads its own tag (control)" || bad "$A cannot read its own tag: $r"
+        # the grant itself: no site may touch what is everyone's (a flush, the shared Lua libraries)
+        for c in FLUSHALL FLUSHDB "FUNCTION FLUSH" "FUNCTION DELETE gnode_core" "FUNCTION LOAD x" "SWAPDB 0 1" "CONFIG SET x y" SHUTDOWN; do
+            r=$(dryrun "$UA" $c); [[ "$r" != OK ]] && ok "$A may not $c" || bad "$A's grant allows $c"
+        done
         PORTAL_A=$(ls "$CREDS"/portal-*/"$A.password" 2>/dev/null | head -1 || true)
         for ((j=0; j<N; j++)); do
             (( i == j )) && continue

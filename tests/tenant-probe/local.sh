@@ -20,7 +20,7 @@ valkey-cli -p $PORT ACL SETUSER default on ">$(<"$W/valkey.password")" >/dev/nul
 vk() { REDISCLI_AUTH="$(<"$W/valkey.password")" valkey-cli --no-auth-warning --raw -p $PORT "$@"; }
 shape() { # <site>: the grant onboard-service.sh composes (own tag, brace-less alias, read on the shared topology)
     vk ACL SETUSER "gnode_client_$1" on ">$(<"$W/valkey_client_$1.password")" resetkeys "~{$1}:*" "~$1:*" "%R~{geodineum}:gnode:*" \
-        nocommands +@read +@write +@stream +@hash +@string +fcall +fcall_ro +ping +auth +select +info +scan +publish >/dev/null
+        nocommands +xread +xreadgroup +xadd +xack +xclaim +xpending +xinfo +xlen +xtrim +xrange +xrevrange +xgroup +xdel +fcall +fcall_ro +get +set +setex +setnx +del +exists +ttl +expire +mget +mset +incr +decr +incrby +decrby +hget +hset +hgetall +hdel +hexists +hkeys +hvals +hincrby +hmget +hmset +sadd +smembers +sismember +srem +scard +lpush +rpush +lpop +rpop +lrange +llen +lindex +ltrim +zadd +zrange +zrevrange +zrem +zscore +zcard +scan +ping +publish +auth +select +info +multi +exec +discard +time +type +object >/dev/null
 }
 REDISCLI_AUTH="$(<"$W/valkey.password")" valkey-cli --no-auth-warning -p $PORT -x FUNCTION LOAD REPLACE < "${GNODE_FUNCTIONS_DIR:-$HOME/gh/gNode/daemon/functions}/gnode_gcore_config.lua" >/dev/null
 shape a_nl; shape b_nl
@@ -49,6 +49,11 @@ echo "red: only the brace-less alias leaks"
 shape a_nl; vk ACL SETUSER gnode_client_a_nl '~b_nl:*' >/dev/null
 out=$(probe 2>&1) && rc=0 || rc=$?
 check "the probe fails on the alias alone" "$rc $(grep -c 'FAIL a_nl -> b_nl:site:content answered' <<<"$out" || true)" "1 1"
+
+echo "red: a grant that allows a flush"
+shape a_nl; vk ACL SETUSER gnode_client_a_nl +flushall >/dev/null
+out=$(probe 2>&1) && rc=0 || rc=$?
+check "the probe names it" "$rc $(grep -c "a_nl's grant allows FLUSHALL" <<<"$out" || true)" "1 1"
 
 echo "red: a wrong credential cannot pass as 'refused'"
 shape a_nl; head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$W/valkey_client_a_nl.password"
