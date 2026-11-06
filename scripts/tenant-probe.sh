@@ -3,7 +3,7 @@
 # layer and must be refused everywhere (SPEC-SITE-STUDIO S0c). Read-only on the live constellation:
 # writes are tried with ACL DRYRUN, reads as the site's own ValKey user. Nightly from
 # geodineum-tenant-probe.timer (install-tenant-probe.sh); by hand:
-#   sudo bash scripts/tenant-probe.sh [--layers valkey,daemon,files,php,store,http] [--alert-site <site>] [--no-alert]  (daemon is not in the default list until gNode has the tenant guard)
+#   sudo bash scripts/tenant-probe.sh [--layers valkey,daemon,files,php,store,http] [--alert-site <site>] [--no-alert]
 # A throwaway run (tests/tenant-probe/local.sh): --sites a,b --creds <dir> --port <n> --layers valkey
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -12,7 +12,7 @@ LIB="${TENANT_PROBE_LIB:-$HERE/../lib/site-pool.sh}"; [[ -f "$LIB" ]] || LIB="$H
 source "$LIB"
 
 RECORDS="$SITE_POOL_RECORDS"; CREDS="$SITE_POOL_CREDS"; PORT="${VALKEY_PORT:-47445}"; ENVN=production
-LAYERS=valkey,files,php,store,http; ALERT_SITE="${TENANT_PROBE_ALERT_SITE:-}"; ALERT=1; STATE=/var/lib/geodineum/tenant-probe
+LAYERS=valkey,files,php,store,http,daemon; ALERT_SITE="${TENANT_PROBE_ALERT_SITE:-}"; ALERT=1; STATE=/var/lib/geodineum/tenant-probe
 SITES_OPT=""; C=geodineum
 while [[ $# -gt 0 ]]; do case "$1" in
     --records) RECORDS="$2"; shift 2 ;; --creds) CREDS="$2"; shift 2 ;; --port) PORT="$2"; shift 2 ;;
@@ -85,7 +85,7 @@ if has daemon; then
         elif [[ -z "$r" ]]; then note "$A: no answer to the deregister: nothing proved"
         else bad "$A asked the daemon to deregister another entity and it obeyed: $r"; fi
         r=$(ask_daemon "$A" "$UA" "$PA" channel_open "{\"target_site\":\"tenant-probe-no-such-site\",\"ttl_seconds\":1}") || r=""
-        if [[ "$r" == *"may not open a channel"* ]]; then ok "$A may not open a channel"
+        if [[ "$r" == *"may not open or list channels"* ]]; then ok "$A may not open a channel"
         elif [[ -z "$r" ]]; then note "$A: no answer to channel_open: nothing proved"
         else bad "$A asked the daemon for a channel and it obeyed: $r"; fi
     done
