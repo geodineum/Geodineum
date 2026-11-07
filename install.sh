@@ -774,7 +774,9 @@ phase_deploy_user() {
     # at startup. geodine needs read for ValKey-integration discovery.
     # NOTHING ELSE goes in this group — adding a user here MUST be
     # justified by a documented bootstrap.env read need.
-    usermod -aG geodineum-bootstrap www-data 2>/dev/null || true
+    local _hosts_sites=1
+    [[ "${DEPLOY_TIER:-}" == compute || "${DEPLOY_TIER:-}" == replica ]] && _hosts_sites=0
+    (( _hosts_sites )) && usermod -aG geodineum-bootstrap www-data 2>/dev/null || true
     usermod -aG geodineum-bootstrap gnode    2>/dev/null || true
     # COMMS daemon reads bootstrap.env for ecosystem_config at
     # startup (same justification as gnode).
@@ -793,8 +795,10 @@ phase_deploy_user() {
     # (onboard-service.sh) adds later gCore-consuming services to geodineum-code.
     # Group changes don't apply to a running process — Apache/PHP-FPM MUST be
     # restarted; the next restart in this install flow picks them up.
-    usermod -aG geodineum-web    www-data 2>/dev/null || true
-    usermod -aG geodineum-code   www-data 2>/dev/null || true
+    if (( _hosts_sites )); then
+        usermod -aG geodineum-web    www-data 2>/dev/null || true
+        usermod -aG geodineum-code   www-data 2>/dev/null || true
+    fi
     if id geodine >/dev/null 2>&1; then
         usermod -aG geodineum-code geodine 2>/dev/null || true
     fi
@@ -2282,6 +2286,7 @@ Restart=on-failure
 RestartSec=2s
 User=valkey
 Group=valkey
+UMask=0027
 RuntimeDirectory=valkey
 RuntimeDirectoryMode=0755
 LimitNOFILE=65536
@@ -2439,6 +2444,7 @@ Restart=on-failure
 RestartSec=2s
 User=valkey
 Group=valkey
+UMask=0027
 RuntimeDirectory=valkey
 RuntimeDirectoryMode=0755
 LimitNOFILE=65536
@@ -3319,9 +3325,10 @@ provision_comms_acl() {
         "~*:gnode:comms:*" "~*:comms:config" "~*:comms:retry:*"
         "~*:comms:messages:*" "~*:comms:stats:*" "~*:comms:conversation:*"
         "~*:comms:context:*" "~*:comms:active_context:*"
-        "~gnode:site:*" "~gnode:sites:*" "~gnode:routing:*" "~topology:*"
-        "~*:gnode:unified:*" "~*:geodine:metrics:*" "~*:geodine:history:*"
-        "~*:gnode:schema:*"
+        # Read, never write: discovery and what Geodine leaves for it.
+        "%R~gnode:site:*" "%R~gnode:sites:*" "%R~gnode:routing:*" "%R~topology:*"
+        "%R~*:gnode:schema:*" "%R~*:inference:metrics:*" "%R~*:inference:history:*"
+        "%R~*:gnode:pipeline:_index"
         # Receipts (T-E). BOTH are required: the registry is where the producer
         # publishes its pubkey so verifiers can resolve its signer, and the
         # streams are where the receipts themselves go. Granting only the first
@@ -3336,12 +3343,16 @@ provision_comms_acl() {
         # the estate (D17): COMMS delivers for a second constellation on this node until
         # it has a placement of its own (ROADMAP_ONE_TOPOLOGY R-3).
         "~*:gnode:heartbeat:*:comms:*"
+        # A person's message goes to the site's own stream and the reply is read
+        # back there, so every tag stays reachable, but only to add and read:
+        # no delete, trim or consumer group on anyone's command stream.
+        "(~*:gnode:unified:* -@all +xadd +xrange +xrevrange +xlen)"
     )
     if ! REDISCLI_AUTH="$(cat "$admin_pwfile")" valkey-cli -p "$valkey_port" \
         ACL SETUSER geodineum_comms \
         on \
         resetpass ">${password}" \
-        resetkeys "${acl_comms_keys[@]}" \
+        resetkeys clearselectors "${acl_comms_keys[@]}" \
         resetchannels "&*" \
         "${acl_comms_commands[@]}" \
         >/dev/null; then
@@ -4567,7 +4578,7 @@ phase_config() {
     #   geodineum           → empty marker (kept for /opt/geodineum/
     #                         chown back-compat per decision R).
     id -u gnode    &>/dev/null && true   # gnode in gnode primary only
-    id -u www-data &>/dev/null && usermod -aG geodineum-dash www-data 2>/dev/null || true
+    [[ "${DEPLOY_TIER:-}" == compute || "${DEPLOY_TIER:-}" == replica ]] || { id -u www-data &>/dev/null && usermod -aG geodineum-dash www-data 2>/dev/null || true; }
     id -u "$deploy_user" &>/dev/null && usermod -aG geodineum-creds "$deploy_user" 2>/dev/null || true
     id -u "$deploy_user" &>/dev/null && usermod -aG geodineum-dash  "$deploy_user" 2>/dev/null || true
     # gnode user reads its own daemon credential via gnode group

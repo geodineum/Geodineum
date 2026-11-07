@@ -16,8 +16,6 @@ contract get the most scrutiny.
 - **`config.defaults` NX-seeding.** The orchestrator should seed a manifest's
   declared config defaults into ValKey at install time (SET NX, never
   clobbering operator values).
-- **Per-manifest topology tier.** Services register on the 30-D service tier
-  implicitly; `topology.tier` should be a manifest field.
 - **Selective per-service backup.** The RDB snapshot is wholesale; a service's
   `backup.*` manifest entries should drive selective dump/restore.
 - **Distribution coverage.** The install → uninstall → reinstall cycle is
