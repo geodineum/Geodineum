@@ -43,6 +43,7 @@ def args_():
     a.add_argument("--accept", action="store_true", help="record what is there now as the expected state")
     a.add_argument("--alert-site", default=os.environ.get("ESTATE_WATCH_ALERT_SITE", ""))
     a.add_argument("--no-alert", action="store_true")
+    a.add_argument("--private", nargs="*", default=["/etc/valkey/users.acl"], help="files that must never be world-readable")
     a.add_argument("--env", default="production")
     return a.parse_args()
 
@@ -201,6 +202,12 @@ def run(a):
             latest = fetch_json(a.version_url)["offers"][0]["current"]
         except Exception as e:  # the watch must not stop on wordpress.org
             print(f"  ..   latest WordPress version not available: {e}")
+    for secret in a.private:
+        try:
+            if os.stat(secret).st_mode & 0o004:
+                findings.append(f"{secret} is readable by every local user")
+        except OSError:
+            pass
     done_wp, done_title, done_vh = set(), set(), set()
     for v in vs:
         doc, primary = v["docroot"], v["names"][0]
@@ -208,7 +215,8 @@ def run(a):
             seen["vhosts"][n] = doc
         if not doc:
             continue
-        unknown = doc not in known and not (set(v["names"]) & allow)
+        # a record names the site root; the vhost often serves its public/ or public_html/ below that
+        unknown = not any(doc == k or doc.startswith(k + "/") for k in known) and not (set(v["names"]) & allow)
         if unknown and primary not in done_vh:
             done_vh.add(primary)
             findings.append(f"{primary}: public vhost ({v['file']}, {doc}) has no site record and is not allowed: nothing maintains it")

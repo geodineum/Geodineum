@@ -18,6 +18,7 @@ cat > "$D/vh/site.conf" <<E
 </VirtualHost>
 E
 printf 'DOCROOTS="%s"\n' "$SITE" > "$D/rec/site.env"
+touch "$D/acl"; chmod 0640 "$D/acl"
 cat > "$SITE/wp-config.php" <<'E'
 <?php define('DB_NAME','n'); define('DB_USER','u'); define('DB_PASSWORD','p'); define('DB_HOST','localhost'); $table_prefix='wp_';
 E
@@ -44,7 +45,7 @@ s='$SITE'
 json.dump({'checksums':{'wp-includes/version.php':hashlib.md5(open(s+'/wp-includes/version.php','rb').read()).hexdigest()}},open('$D/sums.json','w'))
 json.dump({'offers':[{'current':'9.9'}]},open('$D/ver.json','w'))"
 go() { python3 -I "$W" --vhosts "$D/vh" --records "$D/rec" --allow "$D/allow" --state "$D/st" --status "$D/nodir/s" --mysql "$D/bin/mysql" --curl "$D/bin/curl" \
-       --checksums-url "file://$D/sums.json" --version-url "file://$D/ver.json" --no-alert "$@" 2>&1; }
+       --checksums-url "file://$D/sums.json" --version-url "file://$D/ver.json" --private "$D/acl" --no-alert "$@" 2>&1; }
 
 o=$(go); none "first run on a clean site: baseline, no flags" "$o"; has "first run says it is the baseline" "baseline recorded" "$o"
 o=$(go); none "second run on the same site: quiet" "$o"
@@ -87,6 +88,11 @@ o=$(go); has "a public site nothing maintains (how this one hid)" "innovagent.te
 echo 'innovagent.test' > "$D/allow"; o=$(go); r=$(grep -F 'public vhost' <<<"$o" || true); [[ -z "$r" ]] && { pass=$((pass+1)); echo "  ok   allowed by name: not an unregistered site"; } || { fail=$((fail+1)); echo "  FAIL allow list"; }
 rm -f "$D/allow" "$D/vh/forgotten.conf"
 
+mkdir -p "$D/www/under/public"
+printf '<VirtualHost *:443>\n  ServerName under.test\n  DocumentRoot %s\n</VirtualHost>\n' "$D/www/under/public" > "$D/vh/under.conf"
+printf 'DOCROOTS="%s"\n' "$D/www/under" > "$D/rec/under.env"; o=$(go); r=$(grep -F 'under.test: public vhost' <<<"$o" || true); [[ -z "$r" ]] && { pass=$((pass+1)); echo "  ok   a vhost serving public/ below its record's root is known"; } || { fail=$((fail+1)); echo "  FAIL subfolder docroot"; }
+rm -f "$D/rec/under.env"; o=$(go); has "the same vhost with no record is flagged" "under.test: public vhost" "$o"; rm -f "$D/vh/under.conf"
+chmod 0644 "$D/acl"; o=$(go); has "a world-readable ACL file" "is readable by every local user" "$o"; chmod 0640 "$D/acl"
 echo "<?php \$wp_version = '9.8';" > "$SITE/wp-includes/version.php"; rm -f "$D/st/state.json"
 o=$(go); has "old WordPress is flagged on the first run: a compromise cannot become the baseline" "WordPress 9.8, current 9.9" "$o"
 secret=$(grep -c "'p'" <<<"$o" || true); [[ "$secret" == 0 ]] && { pass=$((pass+1)); echo "  ok   no database password in the output"; } || { fail=$((fail+1)); echo "  FAIL password printed"; }
