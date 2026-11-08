@@ -4434,7 +4434,7 @@ BAKSVC
 Description=Daily ValKey Backup Timer
 
 [Timer]
-OnCalendar=*-*-* 02:00:00
+OnCalendar=*-*-* 02:00:00 UTC
 Persistent=true
 RandomizedDelaySec=300
 
