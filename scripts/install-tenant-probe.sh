@@ -1,6 +1,6 @@
 #!/bin/bash
 # on aesir, as root: install the nightly tenant probe (scripts/tenant-probe.sh) as a root-owned copy
-# under /usr/local/lib/geodineum, with its timer (04:10 UTC). Re-run after changing the probe or lib/site-pool.sh.
+# under /usr/local/lib/geodineum, with its timer (03:00 UTC). Re-run after changing the probe or lib/site-pool.sh.
 #   sudo bash scripts/install-tenant-probe.sh --alert-site <site with COMMS recipients> [--run-now] [--apply]
 set -euo pipefail
 APPLY=0; NOW=0; ALERT_SITE=""
@@ -39,7 +39,7 @@ timer=$(cat <<'TIMER'
 Description=Geodineum: nightly tenant probe
 
 [Timer]
-OnCalendar=*-*-* 04:10:00 UTC
+OnCalendar=*-*-* 03:00:00 UTC
 RandomizedDelaySec=20m
 Persistent=true
 
