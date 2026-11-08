@@ -99,6 +99,7 @@ if has valkey; then
         if [[ ! -r "$PA" ]]; then bad "$A: no credential at $(basename "$PA") (cannot probe as $A)"; continue; fi
         r=$(vk_as "$UA" "$PA" EXISTS "{$A}:site:content")
         [[ "$r" == 0 || "$r" == 1 ]] && ok "$A reads its own tag (control)" || bad "$A cannot read its own tag: $r"
+        r=$(vk_as "$UA" "$PA" HLEN "{$A}:portal:email"); [[ "$r" =~ ^[0-9]+$ ]] && ok "$A reads its own portal accounts (control)" || bad "$A cannot read its own portal accounts: $r"
         # the grant itself: no site may touch what is everyone's (a flush, the shared Lua libraries)
         for c in FLUSHALL FLUSHDB "FUNCTION FLUSH" "FUNCTION DELETE gnode_core" "FUNCTION LOAD x" "SWAPDB 0 1" "CONFIG SET x y" SHUTDOWN; do
             r=$(dryrun "$UA" $c); [[ "$r" != OK ]] && ok "$A may not $c" || bad "$A's grant allows $c"
@@ -110,6 +111,10 @@ if has valkey; then
             r=$(vk_as "$UA" "$PA" EXISTS "{$B}:site:content"); refused "$r" && ok "$A -> {$B}: EXISTS refused" || bad "$A -> {$B}: EXISTS answered: $r"
             r=$(vk_as "$UA" "$PA" EXISTS "$B:site:content"); refused "$r" && ok "$A -> $B:* (brace-less alias) refused" || bad "$A -> $B:site:content answered: $r"
             r=$(vk_as "$UA" "$PA" XLEN "{$B}:gnode:unified:$ENVN"); refused "$r" && ok "$A -> {$B} unified stream refused" || bad "$A -> {$B} unified stream answered: $r"
+            # a site's own portal: its accounts, its clients' requests, its status
+            r=$(vk_as "$UA" "$PA" HLEN "{$B}:portal:email"); refused "$r" && ok "$A -> {$B} portal accounts refused" || bad "$A read {$B}'s portal accounts: $r"
+            r=$(vk_as "$UA" "$PA" XLEN "{$B}:portal:requests"); refused "$r" && ok "$A -> {$B} change requests refused" || bad "$A read {$B}'s change requests: $r"
+            r=$(dryrun "$UA" HSET "{$B}:site:status" state up); [[ "$r" != OK ]] && ok "$A -> {$B} status write refused (dry run)" || bad "$A may write {$B}'s status"
             r=$(dryrun "$UA" SET "{$B}:edit:token:probe" x); [[ "$r" != OK ]] && ok "$A -> {$B} edit token write refused (dry run)" || bad "$A may write {$B}:edit:token:*"
             r=$(dryrun "$UA" XADD "{$B}:gnode:comms:$ENVN" '*' a 1); [[ "$r" != OK ]] && ok "$A -> {$B} comms write refused (dry run)" || bad "$A may XADD to {$B}:gnode:comms"
             # a real call: ACL DRYRUN answers OK for FCALL even when the script's own key access is refused.
