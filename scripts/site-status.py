@@ -59,8 +59,10 @@ def tls_days(domain):
         with socket.create_connection(("127.0.0.1", 443), timeout=8) as s, ctx.wrap_socket(s, server_hostname=domain) as t:
             end = ssl.cert_time_to_seconds(t.getpeercert()["notAfter"])
         return max(0, int((end - time.time()) // 86400))
-    except (OSError, ssl.SSLError, KeyError, ValueError):
+    except ssl.SSLCertVerificationError:
         return 0
+    except (OSError, ssl.SSLError, KeyError, ValueError):
+        return None
 
 
 def last_backup_ms(a):
@@ -98,8 +100,9 @@ def check(a, domain, site, backup_ms, now_ms):
     fields = ["state", state, "fails", str(fails), "since_ms", str(since), "checked_ms", str(now_ms)]
     if backup_ms:
         fields += ["backup_ms", str(backup_ms)]
-    if not a.no_tls:
-        fields += ["tls_days", str(tls_days(domain))]
+    days = None if a.no_tls else tls_days(domain)
+    if days is not None:
+        fields += ["tls_days", str(days)]
     vk(a, "HSET", key, *fields)
     return ok
 
