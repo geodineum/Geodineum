@@ -33,6 +33,11 @@ T yes XADD "$S:gnode:unified:production" '*' a 1
 T yes XRANGE "$S:gnode:unified:production" - +
 T yes XREVRANGE "$S:gnode:unified:production" + -
 T yes XLEN "$S:gnode:unified:production"
+T yes SET '{geodine}:gnode:schema:geodineum_comms:outbound_alert' x
+T yes SET 'geodine:gnode:schema:geodineum_comms:outbound_alert' x
+T yes SET '{geodine}:gnode:schema:_index' x
+T yes GET '{geodine}:gnode:schema:gnode_daemon:x'
+T no SET '{geodine}:gnode:schema:gnode_daemon:x' x
 T yes GET 'gnode:site:x:meta'
 T yes HGETALL 'gnode:site:x:meta'
 T yes GET "$S:inference:metrics:p"

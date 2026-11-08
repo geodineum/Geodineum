@@ -3328,6 +3328,8 @@ provision_comms_acl() {
         # Read, never write: discovery and what Geodine leaves for it.
         "%R~gnode:site:*" "%R~gnode:sites:*" "%R~gnode:routing:*" "%R~topology:*"
         "%R~*:gnode:schema:*" "%R~*:inference:metrics:*" "%R~*:inference:history:*"
+        # ...except the schema it publishes itself at start.
+        "~*:gnode:schema:geodineum_comms:*" "~*:gnode:schema:_index"
         "%R~*:gnode:pipeline:_index"
         # Receipts (T-E). BOTH are required: the registry is where the producer
         # publishes its pubkey so verifiers can resolve its signer, and the
