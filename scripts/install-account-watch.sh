@@ -1,6 +1,6 @@
 #!/bin/bash
 # on every node, as root: install the account watch (scripts/account-watch.py) as a root-owned copy, run daily at 07:40
-# node time (after the 06:30 reboot and the morning updates). It reports through the same COMMS site as the estate watch.
+# node time (after the 06:30 reboot and the morning updates). It reports through COMMS as site geodineum (the admin bot's chat).
 # The first run records the baseline; after that every change to accounts, privileged groups, sudoers, ssh keys,
 # crontabs, units, docker images and listeners is flagged, with a daily digest of logins and sudo use.
 #   sudo bash scripts/install-account-watch.sh [--alert-site <site>] [--no-digest] [--apply]
@@ -10,7 +10,8 @@ while [[ $# -gt 0 ]]; do case "$1" in
     --apply) APPLY=1; shift ;; --alert-site) ALERT_SITE="${2:-}"; shift 2 ;; --no-digest) ARGS=""; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;; esac; done
 [[ $EUID -eq 0 ]] || { echo "on $(hostname -s): needs root: sudo bash $0 $*" >&2; exit 1; }
-[[ -n "$ALERT_SITE" ]] || ALERT_SITE=$(sed -n 's/^ESTATE_WATCH_ALERT_SITE=//p' /etc/geodineum/estate-watch.env 2>/dev/null || true)
+# the operators' own site: COMMS sends its Telegram to the admin bot's chat, and a site's client mailboxes never see it
+[[ -n "$ALERT_SITE" ]] || ALERT_SITE=geodineum
 [[ "$ALERT_SITE" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || { echo "--alert-site <site_id> is required (no estate watch to copy it from)" >&2; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"; LIB=/usr/local/lib/geodineum; ENVF=/etc/geodineum/account-watch.env
 python3 -I -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$HERE/account-watch.py"

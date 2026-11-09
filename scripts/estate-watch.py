@@ -303,7 +303,7 @@ def alert(a, host, findings, state_dir):
                         "site_id", a.alert_site, "environment", a.env, "type", "alert", "priority", "2" if findings else "4",
                         "timestamp", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "sender", '{"name":"estate watch"}',
                         "subject", subject, "body", body, "metadata", '{"source":"estate-watch","form_type":"alert"}',
-                        "dispatch", '{"channels":["email"]}'],
+                        "dispatch", '{"channels":["email","telegram"]}'],
                        env=dict(os.environ, REDISCLI_AUTH=open(cred).read().strip()), capture_output=True, text=True, timeout=20)
     print(f"  ..   alert to {a.alert_site}: {r.stdout.strip() or r.stderr.strip()}")
     if send:
