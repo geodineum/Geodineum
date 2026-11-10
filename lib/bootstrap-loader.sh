@@ -1,73 +1,25 @@
 #!/bin/bash
-# Strict mode; sourced libs no longer
-# silent-fail when called from a context that does not pre-set -euo.
 set -euo pipefail
 
 # =============================================================================
-# Geodineum Ecosystem Bootstrap Loader (canonical, shared)
+# Geodineum bootstrap loader, sourced by every component
 # =============================================================================
-#
-# Single-route config loader for every Geodineum component. Implements the
-# two-tier model:
-#
-#   Tier 1 (disk):   /etc/geodineum/bootstrap.env
-#                    root:geodineum-bootstrap 0640 (or 0600 root-only).
-#                    World-readable or group-writable is REJECTED. The
-#                    geodineum-bootstrap narrow group contains only the
-#                    legitimate readers (www-data, gnode, service users,
-#                    deploy_user).
-#                    Exactly 3 whitelisted keys:
-#                       VALKEY_HOST
-#                       VALKEY_PORT
-#                       VALKEY_CREDS_PATH
-#                    Strict regex parse, never `source`'d.
-#
-#   Tier 2 (ValKey): geodineum:bootstrap:<KEY>  (flat string values)
-#                    geodineum:bootstrap:_index (SET of populated KEYs)
-#                    Populated by the installer; read by every consumer.
-#
-# Canonical install location:
-#   /usr/local/lib/geodineum/bootstrap-loader.sh   (root:root 0755)
-#
-# Dev override:
-#   GEODINEUM_LIB=<checkout>/lib
-#
-# Public API (consumer):
-#   load_ecosystem_config            # disk + ValKey, the one-call wrapper
-#   load_bootstrap_disk_tier         # disk only (3 keys)
-#   load_bootstrap_valkey_tier       # ValKey only (assumes disk tier loaded)
-#
-# Public API (installer-only, requires root + admin creds):
-#   write_disk_bootstrap <host> <port> <creds_path>
-#   populate_valkey_tier             # reads `KEY=value` lines from stdin
-#
-# This file is `source`'d by callers. It does NOT run anything on its own.
-# Callers should `set -euo pipefail` themselves; this file does not modify
-# the caller's shell options beyond exporting config variables.
-# =============================================================================
+# Disk tier: /etc/geodineum/bootstrap.env, root-owned 0640 or 0600, exactly VALKEY_HOST, VALKEY_PORT, VALKEY_CREDS_PATH.
+# ValKey tier: geodineum:bootstrap:<KEY>, indexed by the SET geodineum:bootstrap:_index.
 
-# Canonical disk file location. Override via env for testing.
 : "${GEODINEUM_BOOTSTRAP_FILE:=/etc/geodineum/bootstrap.env}"
 
-# Whitelisted disk-tier keys. Order matters for required-key checks below.
 __GEODINEUM_DISK_KEYS=(VALKEY_HOST VALKEY_PORT VALKEY_CREDS_PATH)
 
-# ValKey key namespace (tier 2). Global, no hash-tag.
 __GEODINEUM_VK_PREFIX="geodineum:bootstrap:"
 __GEODINEUM_VK_INDEX="${__GEODINEUM_VK_PREFIX}_index"
 
-# Internal: write a FATAL line to stderr and exit non-zero.
 __geodineum_fatal() {
     echo "FATAL: bootstrap-loader: $*" >&2
     return 1
 }
 
-# -----------------------------------------------------------------------------
-# load_bootstrap_disk_tier
-# -----------------------------------------------------------------------------
-# Verify ownership/mode of the disk file, parse exactly 3 whitelisted KEY=value
-# lines, export them. Fail-fast on any drift, missing key, or unexpected line.
-# -----------------------------------------------------------------------------
+# Verify the disk file's owner and mode, then parse and export exactly the whitelisted keys.
 load_bootstrap_disk_tier() {
     local f="$GEODINEUM_BOOTSTRAP_FILE"
     [[ -f "$f" ]] || { __geodineum_fatal "$f missing — installer not run?"; return 1; }
@@ -78,19 +30,10 @@ load_bootstrap_disk_tier() {
     mode=$(stat -c "%a" "$f" 2>/dev/null) \
         || { __geodineum_fatal "stat failed on $f"; return 1; }
 
-    # Allow loosened ownership in dev mode (GEODINEUM_BOOTSTRAP_DEV=1) so the
-    # loader is testable without root. Never honor this in production.
+    # GEODINEUM_BOOTSTRAP_DEV=1 skips the owner and mode checks, for tests without root.
     if [[ "${GEODINEUM_BOOTSTRAP_DEV:-0}" != "1" ]]; then
-        # Owner MUST be root. Group identity is install-defined (canonically
-        # geodineum-bootstrap, a narrow group of legitimate readers). We
-        # don't hardcode the group name here — if the group is wrong, the
-        # `read < "$f"` further down would fail with EACCES and emit a
-        # clearer error than a string compare.
         [[ "$uid" == "0" ]] \
             || { __geodineum_fatal "$f ownership drift (got uid=$uid, want 0 — owner must be root, group must be geodineum-bootstrap)"; return 1; }
-        # Strict-deny mode policy: 0640 (root:geodineum-bootstrap rw-r-----)
-        # or 0600 (root-only rw-------). Anything else — especially 0644
-        # which exposes deployment topology to "others" — REJECTED.
         [[ "$mode" == "640" || "$mode" == "600" ]] \
             || { __geodineum_fatal "$f mode drift (got $mode, want 0640 or 0600 — strict-deny on world-readable / group-writable)"; return 1; }
     fi
@@ -149,13 +92,7 @@ load_bootstrap_disk_tier() {
     return 0
 }
 
-# -----------------------------------------------------------------------------
-# __geodineum_resolve_valkey_password
-# -----------------------------------------------------------------------------
-# Internal: emit a path to a readable ValKey password file. Honors
-# VALKEY_PASSWORD_FILE override; otherwise tries daemon then admin creds in
-# VALKEY_CREDS_PATH. Returns 0 on success and prints the path; 1 on miss.
-# -----------------------------------------------------------------------------
+# Print a readable password file: VALKEY_PASSWORD_FILE, else daemon then admin creds.
 __geodineum_resolve_valkey_password() {
     if [[ -n "${VALKEY_PASSWORD_FILE:-}" ]] && [[ -r "$VALKEY_PASSWORD_FILE" ]]; then
         printf '%s' "$VALKEY_PASSWORD_FILE"
@@ -171,13 +108,6 @@ __geodineum_resolve_valkey_password() {
     return 1
 }
 
-# -----------------------------------------------------------------------------
-# __geodineum_valkey_cli
-# -----------------------------------------------------------------------------
-# Internal: invoke valkey-cli with auth + connection from the disk tier.
-# Caller passes the command + args. Stdout = command output. Stderr passes
-# through. Returns valkey-cli's exit status.
-# -----------------------------------------------------------------------------
 __geodineum_valkey_cli() {
     local pwfile
     if ! pwfile=$(__geodineum_resolve_valkey_password); then
@@ -198,40 +128,29 @@ __geodineum_valkey_cli() {
         "$@"
 }
 
-# -----------------------------------------------------------------------------
-# load_bootstrap_valkey_tier
-# -----------------------------------------------------------------------------
-# Iterate geodineum:bootstrap:_index, GET each key, export under its bare name.
-# Assumes load_bootstrap_disk_tier already ran (uses VALKEY_HOST/PORT/CREDS_PATH).
-# Fail-fast on ValKey unreachable, index missing, or any indexed key GET-fail.
-# -----------------------------------------------------------------------------
+# Export every key in the bootstrap index under its bare name; needs the disk tier loaded.
 load_bootstrap_valkey_tier() {
     [[ -n "${VALKEY_HOST:-}" ]] \
         || { __geodineum_fatal "load_bootstrap_disk_tier must run before load_bootstrap_valkey_tier"; return 1; }
 
-    # Probe reachability + auth.
     local pong
     pong=$(__geodineum_valkey_cli PING 2>&1) \
         || { __geodineum_fatal "ValKey unreachable at ${VALKEY_HOST}:${VALKEY_PORT}: $pong"; return 1; }
     [[ "$pong" == "PONG" ]] \
         || { __geodineum_fatal "ValKey ping returned unexpected: $pong"; return 1; }
 
-    # Read the index. Empty SET (uninitialized) is acceptable for first-boot,
-    # but we treat missing-index as an installer-incompleteness fault.
     local index_keys
     index_keys=$(__geodineum_valkey_cli SMEMBERS "$__GEODINEUM_VK_INDEX") \
         || { __geodineum_fatal "SMEMBERS $__GEODINEUM_VK_INDEX failed"; return 1; }
 
     if [[ -z "$index_keys" ]]; then
-        # First-boot tolerance: index empty means installer hasn't run
-        # populate_valkey_tier yet. Disk tier alone is enough to reach ValKey.
+        # Before the installer populates the index, the disk tier alone is enough.
         return 0
     fi
 
     local k v
     while IFS= read -r k; do
         [[ -z "$k" ]] && continue
-        # Defense-in-depth: indexed key names must match KEY syntax.
         if ! [[ "$k" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
             __geodineum_fatal "indexed key name rejected: $k"
             return 1
@@ -244,30 +163,20 @@ load_bootstrap_valkey_tier() {
     return 0
 }
 
-# -----------------------------------------------------------------------------
-# load_ecosystem_config
-# -----------------------------------------------------------------------------
-# One-call wrapper: disk tier then ValKey tier. The canonical entry point.
-# -----------------------------------------------------------------------------
+# The entry point: disk tier, then ValKey tier.
 load_ecosystem_config() {
     load_bootstrap_disk_tier || return 1
     load_bootstrap_valkey_tier || return 1
     return 0
 }
 
-# -----------------------------------------------------------------------------
-# write_disk_bootstrap <host> <port> <creds_path>
-# -----------------------------------------------------------------------------
-# INSTALLER ONLY. Writes the canonical 3-key disk file with strict perms.
-# Caller must run as root.
-# -----------------------------------------------------------------------------
+# Installer only, as root: write_disk_bootstrap <host> <port> <creds_path>
 write_disk_bootstrap() {
     local host="$1" port="$2" creds="$3"
 
     [[ "$EUID" -eq 0 ]] \
         || { __geodineum_fatal "write_disk_bootstrap requires root"; return 1; }
 
-    # Validate args before writing.
     [[ "$host" =~ ^[A-Za-z0-9.\-]+$ ]] \
         || { __geodineum_fatal "invalid VALKEY_HOST: $host"; return 1; }
     [[ "$port" =~ ^[1-9][0-9]*$ ]] \
@@ -279,7 +188,6 @@ write_disk_bootstrap() {
     dir=$(dirname "$GEODINEUM_BOOTSTRAP_FILE")
     [[ -d "$dir" ]] || mkdir -p "$dir"
 
-    # Write atomically via temp file in same dir (rename is POSIX-atomic).
     local tmp
     tmp=$(mktemp "${dir}/.bootstrap.env.XXXXXX") \
         || { __geodineum_fatal "mktemp failed"; return 1; }
@@ -288,16 +196,9 @@ write_disk_bootstrap() {
         printf 'VALKEY_PORT=%s\n' "$port"
         printf 'VALKEY_CREDS_PATH=%s\n' "$creds"
     } > "$tmp"
-    # root owner, narrow geodineum-bootstrap group, mode 0640, never
-    # world-readable (group created by install.sh phase_users_groups).
-    # gNode daemon's ecosystem_config.rs strict-deny check accepts only
-    # 0640 or 0600. Any drift here → daemon FATAL at startup.
+    # The gNode daemon refuses to start unless this file is 0640 or 0600.
     chown root:geodineum-bootstrap "$tmp" || {
-        # geodineum-bootstrap group may not yet exist on a fresh install
-        # before phase_users_groups has run. Fall back to root:root 0600
-        # (root-only) — strictly tighter than the target 0640, so the
-        # daemon's mode check still passes (0600 is one of the accepted
-        # values). install.sh will fix up the group on the next run.
+        # Without the group yet, root-only 0600 is tighter and still accepted.
         chown root:root "$tmp"
         chmod 0600 "$tmp"
         mv "$tmp" "$GEODINEUM_BOOTSTRAP_FILE"
@@ -308,24 +209,14 @@ write_disk_bootstrap() {
     return 0
 }
 
-# -----------------------------------------------------------------------------
-# populate_valkey_tier
-# -----------------------------------------------------------------------------
-# INSTALLER ONLY. Reads KEY=value lines from stdin and SETs each as
-# geodineum:bootstrap:<KEY>, then SADD's KEY to geodineum:bootstrap:_index.
-# Existing index entries for keys NOT present in this stdin batch are removed
-# (idempotent re-run semantics: stdin defines the complete authoritative set).
-#
-# Requires disk tier loaded (uses VALKEY_HOST/PORT/CREDS_PATH) and admin creds
-# (valkey.password readable in $VALKEY_CREDS_PATH).
-# -----------------------------------------------------------------------------
+# Installer only, with admin creds: stdin KEY=value lines become the complete ValKey tier.
 populate_valkey_tier() {
     [[ -n "${VALKEY_HOST:-}" ]] \
         || { __geodineum_fatal "load_bootstrap_disk_tier must run before populate_valkey_tier"; return 1; }
     [[ -r "${VALKEY_CREDS_PATH}/valkey.password" ]] \
         || { __geodineum_fatal "populate_valkey_tier requires admin creds at ${VALKEY_CREDS_PATH}/valkey.password"; return 1; }
 
-    # Force admin auth for SET operations (override any daemon-cred default).
+    # SET needs admin auth, not the daemon credential.
     local prev_pwfile="${VALKEY_PASSWORD_FILE:-}"
     export VALKEY_PASSWORD_FILE="${VALKEY_CREDS_PATH}/valkey.password"
 
@@ -344,7 +235,6 @@ populate_valkey_tier() {
         fi
         k="${BASH_REMATCH[1]}"
         v="${BASH_REMATCH[2]}"
-        # Strip surrounding double quotes from value if present.
         if [[ "${v:0:1}" == '"' && "${v: -1}" == '"' ]]; then
             v="${v:1:-1}"
         fi
@@ -362,7 +252,7 @@ populate_valkey_tier() {
         wanted_keys["$k"]=1
     done
 
-    # Reconcile the index: prune any previously-indexed key not in this batch.
+    # Prune keys indexed before but absent from this batch.
     local existing
     existing=$(__geodineum_valkey_cli SMEMBERS "$__GEODINEUM_VK_INDEX") || existing=""
     while IFS= read -r k; do
@@ -373,7 +263,6 @@ populate_valkey_tier() {
         fi
     done <<< "$existing"
 
-    # Add wanted keys to the index.
     for k in "${!wanted_keys[@]}"; do
         __geodineum_valkey_cli SADD "$__GEODINEUM_VK_INDEX" "$k" >/dev/null \
             || { __geodineum_fatal "SADD $__GEODINEUM_VK_INDEX $k failed"; export VALKEY_PASSWORD_FILE="$prev_pwfile"; return 1; }

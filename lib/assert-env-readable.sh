@@ -1,18 +1,6 @@
 #!/bin/bash
-#
-# Preflight: a component must be able to READ the env files it was given.
-#
-# Run as ExecStartPre, so it executes under the unit's own User=/Group= and
-# therefore answers the only question that matters: can THIS service, as the
-# identity it will actually run under, read this file?
-#
-# `EnvironmentFile=-` skips an unreadable file without a word; an optional file
-# may be absent, but one that EXISTS and cannot be read is a misconfiguration.
-#
-#   absent      -> report and continue (may be deliberate)
-#   unreadable  -> report loudly, exit 1, let Restart= retry and keep saying so
-#   readable    -> silent
-#
+# ExecStartPre check, run as the unit's own user: fail when an existing env file is unreadable,
+# which `EnvironmentFile=-` would otherwise skip silently.
 # Usage: assert-env-readable.sh <env-file> [<env-file>...]
 
 set -uo pipefail
@@ -30,8 +18,6 @@ for _f in "$@"; do
         continue
     fi
 
-    # Unreadable. Say exactly who we are, what the file is, and what to change:
-    # the 20-hour outage was expensive because none of that was anywhere.
     _owner="$(stat -c '%U:%G' "$_f" 2>/dev/null || echo '?:?')"
     _mode="$(stat -c '%a' "$_f" 2>/dev/null || echo '?')"
     echo "env-preflight: FATAL — ${_f} exists but is NOT readable by this service." >&2

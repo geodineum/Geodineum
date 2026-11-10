@@ -1,17 +1,6 @@
 #!/bin/bash
-#
-# Geodineum CLI — Register
-# ========================
-# The one route that brings a service onto the constellation.
-#   NEW        a skeleton of the kind asked for, every integration point wired
-#              (lib/service-taxonomy.sh: the type matrix and its rows)
-#   INTEGRATE  scan an existing codebase, say what it has and what it lacks,
-#              then apply only the missing parts, through the same rows
-# Registering again (a changed manifest, another environment) is the same
-# command; there is no separate update verb.
-#
-# Requires: common.sh sourced first
-#
+# geodineum register: NEW builds a wired skeleton, INTEGRATE adds only what an existing codebase lacks;
+# re-running it is the update. Requires common.sh.
 
 usage_register() {
     cat <<'USAGE'
@@ -64,7 +53,6 @@ USAGE
 express_detect_language() {
     local path="$1"
 
-    # Check for definitive project files first
     [[ -f "${path}/composer.json" ]] && { echo "php"; return 0; }
     [[ -f "${path}/wp-config.php" ]] && { echo "php"; return 0; }
     [[ -f "${path}/Cargo.toml" ]] && { echo "rust"; return 0; }
@@ -76,7 +64,7 @@ express_detect_language() {
     [[ -f "${path}/Gemfile" ]] && { echo "ruby"; return 0; }
     [[ -f "${path}/build.gradle" ]] || [[ -f "${path}/pom.xml" ]] && { echo "java"; return 0; }
 
-    # Fall back to file extension counting (depth-limited)
+    # No project file: the most common source extension wins.
     local counts=()
     local php_n py_n js_n rs_n go_n
     php_n=$(find "$path" -maxdepth 3 -name "*.php" 2>/dev/null | wc -l)
@@ -144,9 +132,7 @@ express_detect_framework() {
 # =============================================================================
 # INTEGRATE — what an existing codebase already has, and what it lacks
 # =============================================================================
-# Sets SCAN_* for the report and the plan. Reads only: files under the path,
-# unit files in /etc/systemd/system, the apache vhosts, this host's credential
-# and ledger, and (as root) the constellation in ValKey.
+# Sets SCAN_* for the report and the plan; reads only, changes nothing.
 
 integrate_scan() {
     local path="$1" given="${2:-}" f
@@ -269,7 +255,6 @@ register_integrate() {
     taxonomy_is_type "$type" || { log_error "Unknown type '$type' (types: ${GEO_SERVICE_TYPES[*]})"; exit 2; }
     env="${env:-$SCAN_ENV}"
 
-    # What it has, what it lacks, and what register will do about each.
     local -a has=() missing=() plan=() rows=()
     [[ -n "$SCAN_MANIFEST" ]] && has+=("manifest (${SCAN_SHAPE:-no gnode: block}${SCAN_CONSTELLATION:+, constellation ${SCAN_CONSTELLATION}})") \
         || { missing+=("manifest"); plan+=("write .geodineum/gnode_services.yaml (shape from the type, own namespace only)"); rows+=(manifest); }
@@ -291,7 +276,7 @@ register_integrate() {
         has+=("heartbeat (${SCAN_HEARTBEAT})")
     elif [[ "$type" != website-* && "$type" != custom ]]; then
         local hp="${probe}"
-        # An existing app serves what it serves: probe its port, unless --probe names a URL.
+        # Probe the existing app's port unless --probe names a URL.
         [[ -z "$hp" && -n "$SCAN_PORT" ]] && hp="tcp:127.0.0.1:${SCAN_PORT}"
         [[ -z "$hp" && -n "$SCAN_TIMER" ]] && hp="unit:${SCAN_TIMER}"
         [[ -z "$hp" && -n "$SCAN_UNIT" ]] && hp="unit:${SCAN_UNIT}"

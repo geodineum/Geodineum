@@ -1,41 +1,16 @@
 #!/bin/bash
 # =============================================================================
-# manifest-install.sh — execute the install + backup hooks
+# manifest-install.sh — run a geodeploy.yaml's install:, uninstall: and health_check
 # =============================================================================
-# Reads a service's geodeploy.yaml install:/uninstall: sections and runs them
-# with the documented manifest contract (install section):
-#
-#   install.prerequisites.apt/php_ext/commands  - checked, optionally installed
-#   install.steps[]                              - ordered, idempotent
-#     name                                       - identifier
-#     run                                        - script path relative to manifest dir
-#     on_failure: fatal | warn | skip            - explicit graceful degradation
-#     requires_sudo: bool                        - refuse if we lack permission
-#     timeout_seconds: int (default 600)         - hard timeout per step
-#   install.health_check                         - script; exit 0 = healthy
-#   uninstall.steps[]                            - mirrors install.steps
-#   uninstall.preserve_on_keep_data[]            - paths NOT deleted under --keep-data
-#
-# Audit trail (best-effort, published to ValKey under geodineum:registry:<name>):
-#   install:last_run_at, install:last_run_ok, install:last_run_reason
-#   health:last_check_at, health:last_ok, health:last_reason
-#
-# Concurrency: each service install/uninstall holds a flock on
-# /var/lock/geodineum-service-<name>.lock to prevent two runs colliding.
-#
-# Failure model: every operation reports its outcome via exit code AND
-# stdout/stderr. Library functions return 0/1 — they do NOT call exit; the
-# caller (geodineum CLI handler) decides whether a failure aborts a session.
+# Functions return 0/1 and never exit; outcomes are recorded under geodineum:registry:<name>.
 # =============================================================================
 
 [[ -n "${_GEODINEUM_MANIFEST_INSTALL_SH:-}" ]] && return 0
 _GEODINEUM_MANIFEST_INSTALL_SH=1
 
-# Source registry for audit-trail writes (best-effort; missing is OK)
 _mi_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -f "${_mi_lib_dir}/manifest-registry.sh" ]] && source "${_mi_lib_dir}/manifest-registry.sh"
 
-# Colors — only if stdout is a TTY and not already set by a caller
 if [[ -t 1 ]] && [[ -z "${MI_RED:-}" ]]; then
     MI_RED='\033[0;31m'; MI_GREEN='\033[0;32m'; MI_YELLOW='\033[1;33m'
     MI_CYAN='\033[0;36m'; MI_DIM='\033[2m'; MI_BOLD='\033[1m'; MI_NC='\033[0m'
@@ -51,29 +26,25 @@ _mi_dry()    { echo -e "${MI_DIM}[DRY]${MI_NC}  $*"; }
 
 # ---- helpers ---------------------------------------------------------------
 
-# Echo manifest path for a name, by searching well-known locations.
-# Usage: _mi_find_manifest <name>
+# Manifest path for a name: registry, then /opt/geodineum/<name>, then ./services/<name>.
 _mi_find_manifest() {
     local name="$1"
     local root="${GEODINEUM_ROOT:-/opt/geodineum}"
     local candidate
 
-    # 1. Registry-known path
     if declare -F manifest_get_field >/dev/null 2>&1; then
         candidate=$(manifest_get_field "$name" "manifest_path" 2>/dev/null)
         [[ -n "$candidate" && -f "$candidate" ]] && { printf '%s' "$candidate"; return 0; }
     fi
-    # 2. /opt/geodineum/<name>/geodeploy.yaml
     candidate="${root}/${name}/geodeploy.yaml"
     [[ -f "$candidate" ]] && { printf '%s' "$candidate"; return 0; }
-    # 3. ./services/<name>/geodeploy.yaml
     candidate="./services/${name}/geodeploy.yaml"
     [[ -f "$candidate" ]] && { printf '%s' "$candidate"; return 0; }
 
     return 1
 }
 
-# Resolve manifest arg — accept full path OR name. Echo the resolved path.
+# Accept a manifest path or a name.
 _mi_resolve_manifest() {
     local arg="$1"
     if [[ -f "$arg" ]]; then
@@ -92,10 +63,7 @@ _mi_manifest_name() {
     basename "$(dirname "$m")"
 }
 
-# Run a step. Echoes step result. Returns:
-#   0 — step OK
-#   1 — step failed and on_failure=fatal (caller should abort the chain)
-#   2 — step failed but on_failure=warn or skip (caller should continue)
+# Returns 0 ok, 1 failed with on_failure=fatal, 2 failed with warn or skip.
 # Usage: _mi_run_step <manifest-dir> <name> <run> <on_failure> <requires_sudo> <timeout_seconds> <dry_run>
 _mi_run_step() {
     local mdir="$1" name="$2" run="$3" on_failure="$4" requires_sudo="$5"
@@ -157,21 +125,14 @@ _mi_run_step() {
     esac
 }
 
-# Acquire per-service lock (flock). Uses fixed FD 200 — the dynamic
-# {VAR}>file syntax is bash-4.1+ but behaves inconsistently in
-# `bash -c` subshells, so we stay portable. Returns 1 on conflict, 0 on
-# acquired (or if locking isn't possible — we warn but don't block).
+# Per-service flock on fixed FD 200; returns 1 only when another run holds it.
 _mi_lock() {
     local name="$1"
     local lockfile="/var/lock/geodineum-service-${name}.lock"
-    # /var/lock is a symlink to /run/lock on systemd hosts; -d follows the
-    # symlink. Fall back to /tmp if /var/lock isn't writable.
     if ! ( [[ -d /var/lock ]] && [[ -w /var/lock ]] ); then
         lockfile="/tmp/geodineum-service-${name}.lock"
     fi
-    # Open FD 200 for writing. If open itself fails, warn and proceed
-    # without lock — the executor's idempotency contract is the real safety
-    # net; the lock is only "don't accidentally double-run".
+    # Steps are idempotent, so an unopenable lockfile only warns.
     if ! eval "exec 200>\"$lockfile\"" 2>/dev/null; then
         _mi_warn "could not open lockfile $lockfile — running without lock"
         MI_LOCK_FD=""
@@ -191,7 +152,6 @@ _mi_unlock() {
     MI_LOCK_FD=""
 }
 
-# Publish audit-trail fields to registry. Best-effort.
 _mi_audit() {
     local name="$1"; shift
     declare -F manifest_get_field >/dev/null 2>&1 || return 0
@@ -201,8 +161,7 @@ _mi_audit() {
 
 # ---- public API: prerequisites ---------------------------------------------
 
-# Check install.prerequisites. Echoes missing items; returns 0 if all met, 1 otherwise.
-# Usage: service_check_prerequisites <manifest>
+# Usage: service_check_prerequisites <manifest>; warns per missing item.
 service_check_prerequisites() {
     local m
     m=$(_mi_resolve_manifest "$1") || { _mi_fail "manifest not found: $1"; return 1; }
@@ -231,7 +190,7 @@ service_check_prerequisites() {
         fi
     done < <(yq eval '.install.prerequisites.apt[] // empty' "$m" 2>/dev/null)
 
-    # php_ext — only check if `php` is on PATH
+    # php_ext
     if command -v php >/dev/null 2>&1; then
         local php_loaded
         php_loaded=$(php -m 2>/dev/null | tr '[:upper:]' '[:lower:]')
@@ -254,12 +213,7 @@ service_check_prerequisites() {
 
 # ---- public API: install ---------------------------------------------------
 
-# Execute install.steps in order. Returns 0 on success, 1 on first fatal failure.
-# Options:
-#   MI_DRY_RUN=true       — print what would happen, do not execute
-#   MI_SKIP_PREREQ=true   — skip prerequisites check (use after a prior pass)
-#   MI_SKIP_HEALTH=true   — skip health_check
-# Usage: service_install <manifest>
+# Usage: service_install <manifest>; honours MI_DRY_RUN, MI_SKIP_PREREQ, MI_SKIP_HEALTH.
 service_install() {
     local m
     m=$(_mi_resolve_manifest "$1") || { _mi_fail "manifest not found: $1"; return 1; }
@@ -276,7 +230,6 @@ service_install() {
     # shellcheck disable=SC2064
     trap "_mi_unlock" RETURN
 
-    # Prerequisites gate (default ON)
     if [[ "${MI_SKIP_PREREQ:-false}" != "true" ]]; then
         if ! service_check_prerequisites "$m"; then
             _mi_fail "[${name}] prerequisites not met — aborting (use MI_SKIP_PREREQ=true to bypass)"
@@ -285,7 +238,6 @@ service_install() {
         fi
     fi
 
-    # Iterate steps (no install: section ⇒ no-op success)
     local step_count
     step_count=$(yq eval '(.install.steps // []) | length' "$m" 2>/dev/null)
     [[ "$step_count" =~ ^[0-9]+$ ]] || step_count=0
@@ -314,7 +266,6 @@ service_install() {
         esac
     done
 
-    # Health check (optional, default ON)
     local health_ok="skipped" health_reason=""
     local health_check
     health_check=$(yq eval '.install.health_check // ""' "$m" 2>/dev/null)
@@ -349,9 +300,7 @@ service_install() {
 
 # ---- public API: uninstall ------------------------------------------------
 
-# Execute uninstall.steps. Path preservation via preserve_on_keep_data.
-# Options: MI_DRY_RUN=true, MI_KEEP_DATA=true
-# Usage: service_uninstall <manifest>
+# Usage: service_uninstall <manifest>; honours MI_DRY_RUN, MI_KEEP_DATA.
 service_uninstall() {
     local m
     m=$(_mi_resolve_manifest "$1") || { _mi_fail "manifest not found: $1"; return 1; }
@@ -395,8 +344,7 @@ service_uninstall() {
         esac
     done
 
-    # Report preserve_on_keep_data paths (informational; we do NOT delete other paths
-    # — that's the steps' job. We only enumerate so the operator knows what stayed.)
+    # Only lists preserve_on_keep_data; removing anything is the steps' job.
     if [[ "${MI_KEEP_DATA:-false}" == "true" ]]; then
         local preserved
         preserved=$(yq eval '(.uninstall.preserve_on_keep_data // []) | .[]' "$m" 2>/dev/null)
@@ -406,7 +354,6 @@ service_uninstall() {
         fi
     fi
 
-    # Drop registry entry (best-effort)
     if declare -F manifest_drop_registry >/dev/null 2>&1; then
         manifest_drop_registry "$name"
     fi
@@ -417,7 +364,6 @@ service_uninstall() {
 
 # ---- public API: health ---------------------------------------------------
 
-# Run the health_check script in isolation. Useful for periodic checks.
 # Usage: service_health <manifest>
 service_health() {
     local m

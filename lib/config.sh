@@ -1,31 +1,11 @@
 #!/bin/bash
-# Strict mode: sourced libs must not silent-fail when called from a context
-# that does not pre-set -euo (the same sweep already applied to every other
-# lib/*.sh; config.sh was the last one missing it).
 set -euo pipefail
 
-#
-# Geodineum CLI — Config Management Commands
-# =============================================
-# Read, write, and import service configuration via ValKey.
-# Changes propagate to running services via PUBLISH notifications.
-#
-# Two config namespaces per service:
-#   {site_id}:config:capabilities   — topology dimensions (service identity)
-#   {site_id}:config:app            — application config imported from service files
-#
-# Config authority chain:
-#   WRITE: geodineum config set / geodineum config import (only writer)
-#   STORE: ValKey hashes under {site_id}:config:*
-#   READ:  Any service via gNode-Client or ValKey directly
-#   NOTIFY: PUBLISH {site_id}:config:changed <namespace>:<key>
-#
-# Requires: common.sh sourced first
-#
+# Config commands: ValKey hashes {site_id}:config:capabilities and {site_id}:config:app;
+# every write PUBLISHes {site_id}:config:changed <namespace>:<key>. Requires common.sh.
 
 # =============================================================================
-# Capability vocabulary: the service body of gNode's topology_schema.yaml (one topology).
-# clearance_required / data_sensitivity become REACH labels; the daemon codes every word.
+# Capability vocabulary (the service words of gNode's topology_schema.yaml)
 # =============================================================================
 
 CAPABILITY_SCHEMA=(
@@ -76,9 +56,7 @@ validate_capability_value() {
 # Config file scanning & parsing (YAML, INI, TOML, PHP, dotenv)
 # =============================================================================
 
-# Scan a service root for config files.
-# Args: path [depth] [extra_includes] [extra_excludes] [include_env]
-# Extra includes/excludes are comma-separated glob patterns.
+# Args: path [depth] [extra_includes] [extra_excludes] [include_env]; includes/excludes are comma-separated globs.
 scan_config_files() {
     local path="$1"
     local max_depth="${2:-3}"
@@ -196,8 +174,7 @@ parse_ini_to_kv() {
     done < "$file"
 }
 
-# Parse PHP define() constants into key=value pairs.
-# Handles: define('KEY', 'value'); and define('KEY', 123);
+# Parse PHP define('KEY', 'value'|123) constants into key=value pairs.
 parse_php_defines_to_kv() {
     local file="$1"
     local prefix="${2:-}"
@@ -216,8 +193,7 @@ parse_php_defines_to_kv() {
     done
 }
 
-# Parse PHP array config files into key=value pairs.
-# Handles: 'key' => 'value' and 'key' => 123
+# Parse PHP array config ('key' => 'value'|123) into key=value pairs.
 parse_php_array_to_kv() {
     local file="$1"
     local prefix="${2:-}"
@@ -238,8 +214,7 @@ parse_php_array_to_kv() {
     done
 }
 
-# Parse TOML files into key=value pairs.
-# Handles: key = "value", [section], key = 123, key = true
+# Parse TOML scalars and [section] headers into key=value pairs.
 parse_toml_to_kv() {
     local file="$1"
     local prefix="${2:-}"
@@ -299,8 +274,7 @@ parse_dotenv_to_kv() {
     done < "$file"
 }
 
-# Route a file to the appropriate parser based on extension and content.
-# Handles unreadable files gracefully (returns empty).
+# Route a file to its parser by extension and content; unreadable files yield nothing.
 parse_config_file() {
     local file="$1"
     local prefix="${2:-}"
@@ -399,9 +373,7 @@ short_key() {
     echo "${key##*.}"
 }
 
-# Generate a config-schema.yaml from scanned key-value pairs.
-# Input: array of "key=value" strings via all_kvs global.
-# Output: YAML schema file.
+# Generate config-schema.yaml from the "key=value" strings in the all_kvs global.
 generate_config_schema() {
     local output_file="$1"
     local site_id="$2"
@@ -480,8 +452,7 @@ SCHEMAHEAD
     chmod 640 "$output_file" 2>/dev/null || true
 }
 
-# Read a config-schema.yaml and return info about a specific key.
-# Returns: type|default|description|section|values
+# Print a key's schema entry as type|default|description|section|values.
 schema_lookup() {
     local schema_file="$1"
     local lookup_key="$2"
@@ -524,9 +495,7 @@ schema_lookup() {
     return 0
 }
 
-# Filter out sensitive-looking keys.
-# Matches common secret patterns but avoids false positives on config dimension names
-# like auth_method, api_version, clearance_required, etc.
+# Filter out secret-looking keys without catching dimension names such as auth_method.
 is_sensitive_key() {
     local key="$1"
     local lower
@@ -668,8 +637,7 @@ cmd_config_set() {
     # Publish change notification
     valkey_cmd PUBLISH "{${site_id}}:config:changed" "${namespace}:${key}" >/dev/null 2>&1 || true
 
-    # Bump the constellation generation: APCu-cached config on every FPM
-    # worker is invalidated at once instead of waiting out the 300 s TTL.
+    # Bump the constellation generation so cached config is invalidated at once.
     local gen
     gen=$(VALKEY_USER=gnode_daemon valkey_cmd FCALL GNODE_CONSTELLATION_GENERATION_INCR 0 "$site_id" "config:${namespace}:${key}" 2>&1) || gen=""
     gen="${gen#(integer) }"

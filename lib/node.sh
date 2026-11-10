@@ -1,14 +1,6 @@
 #!/bin/bash
-#
-# Geodineum CLI — Node and Constellation Lifecycle
-# =================================================
-# The one route for each: a new constellation on a fresh machine, a node added to
-# or removed from it, and what work a node takes (exposure). The primitives stay
-# in gNode: constellation-setup.sh (WireGuard + per-node identity),
-# cli/deregister.sh (topology), node-exposure.sh.
-#
-# Requires: common.sh sourced first
-#
+# Node and constellation lifecycle: new constellation, node add/remove, exposure;
+# the primitives live in gNode's scripts. Requires common.sh.
 
 NODE_STATE_FILE="${GEODINEUM_CONFIG_ROOT}/components/gnode/constellation.state"
 NODE_PEERS_DIR="${GEODINEUM_CONFIG_ROOT}/components/gnode/peers"
@@ -110,8 +102,7 @@ cmd_node_add() {
     local -a args=(--expand "$name" "$endpoint")
     [[ -n "$tier" ]] && args+=(--tier "$tier")
     "$ND_SETUP" "${args[@]}" || return 1
-    # A web-tier node runs no daemon, so nothing would declare it: declare it here,
-    # in every constellation this master serves, so its services' heartbeats place.
+    # A web-tier node runs no daemon to declare it, so declare it in every constellation here.
     if [[ "$tier" == web ]]; then
         local c
         while IFS= read -r c; do
@@ -269,9 +260,7 @@ cmd_node() {
     esac
 }
 
-# A new constellation on a fresh machine: preflight, then the installer with the
-# name. The mesh comes with the first `node add`; a one-machine constellation
-# needs none.
+# A new constellation on a fresh machine; the mesh comes with the first `node add`.
 cmd_constellation_new() {
     local name="" ; local -a pre=() inst=()
     while [[ $# -gt 0 ]]; do

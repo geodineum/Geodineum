@@ -11,11 +11,7 @@ ORCHESTRATOR_PATH="${GEODINEUM_ROOT:-/opt/geodineum}/Geodineum/scripts/geodeploy
 CRON_PATTERN="geodeploy-orchestrator"
 
 action="${1:-}"
-# Accept all forms the usage string + the CLI dispatcher might pass:
-#   on  / enable  / --enable   → turn cron on
-#   off / disable / --disable  → turn cron off
-# Pre-fix only --enable/--disable worked; direct invocation with the
-# usage-advertised `on`/`off` fell through to the error case.
+# on/off is the usage form; the CLI dispatcher may pass enable/disable or --enable/--disable.
 case "$action" in
     -h|--help)
         echo "Usage: geodineum geodeploy <on|off>"

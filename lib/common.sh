@@ -1,22 +1,12 @@
 #!/bin/bash
-# Strict mode; sourced libs no longer
-# silent-fail when called from a context that does not pre-set -euo.
 set -euo pipefail
 
-#
-# Geodineum CLI — Shared Utilities
-# =================================
-# Colors, logging, bootstrap.env loading, validation helpers.
-# Sourced by all lib/*.sh modules — never executed directly.
-#
-
-# (strict mode declared at top of file post-1.14.f)
+# Geodineum CLI shared utilities, sourced by lib/*.sh: colors, logging, bootstrap loading, validation.
 
 # =============================================================================
 # Paths
 # =============================================================================
 
-# Resolve CLI root (parent of lib/)
 GEODINEUM_CLI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Ecosystem paths (all overridable via environment for portable deployments)
@@ -63,11 +53,9 @@ log_detail()  { echo -e "    ${DIM}$1${NC}"; }
 log_dry()     { echo -e "${YELLOW}[DRY-RUN]${NC} Would: $1"; }
 
 # =============================================================================
-# Bootstrap (canonical ecosystem loader)
+# Bootstrap
 # =============================================================================
-#
-# Soft-load so the CLI itself can run on hosts without /etc/geodineum/ (e.g.,
-# pre-install). Subcommands that need ValKey re-load strictly themselves.
+# Soft-load so the CLI runs before install; subcommands that need ValKey re-load strictly.
 
 GEODINEUM_LIB="${GEODINEUM_LIB:-/usr/local/lib/geodineum}"
 if [[ -r "${GEODINEUM_LIB}/bootstrap-loader.sh" ]]; then
@@ -170,30 +158,11 @@ print_kv() {
 }
 
 # =============================================================================
-# Template Rendering
-# =============================================================================
-
-# =============================================================================
 # .geodineum/ Directory Management
 # =============================================================================
-#
-# The .geodineum/ directory is the service-local footprint of the Geodineum
-# ecosystem. Every registered service gets one in its root directory.
-#
-# Structure:
-#   .geodineum/
-#     ├── .htaccess              (Apache: Deny from all)
-#     ├── nginx-deny.conf        (nginx: location block snippet)
-#     ├── credentials/
-#     │   └── valkey_client_{site_id}.password → /etc/geodineum/credentials/...
-#     ├── config.yaml            (unified: identity, environment, valkey, capabilities, metadata)
-#     ├── gnode_services.yaml    (capability config — daemon discovers this)
-#     ├── config-schema.yaml     (developer config option schema — generated on import)
-#     └── .registered            (marker: ISO timestamp + sha256 of config)
-#
+# Every registered service keeps its local footprint in <service root>/.geodineum/.
 
-# Deploy web-deny rules (.htaccess + nginx snippet) to a directory.
-# Idempotent — skips if already present and current.
+# Deploy web-deny rules (.htaccess + nginx snippet) to a directory; idempotent.
 deploy_web_deny() {
     local dir="$1"
     local label="${2:-Geodineum ecosystem directory}"
@@ -213,22 +182,12 @@ deploy_web_deny() {
     Deny from all
 </IfModule>
 HTEOF
-        # root:www-data 640 — Apache (www-data) MUST be able to read every
-        # .htaccess it's configured to honor; if it can't, Apache fails
-        # closed ("unable to read htaccess file, denying access to be safe")
-        # which silently 403s the whole subtree. www-data is deliberately
-        # NOT in the broad `geodineum` group, so root:geodineum made these
-        # files unreadable — fine by accident for deny-dirs, fatal for the
-        # theme asset .htaccess that must ALLOW static files.
+        # Apache 403s the subtree when it cannot read an .htaccess; www-data is not in group geodineum.
         chown root:www-data "$htaccess" 2>/dev/null || true
         chmod 640 "$htaccess" 2>/dev/null || true
     fi
 
-    # nginx
-    # Accept any existing file that already denies — several component repos
-    # TRACK a nginx-deny.conf whose header lacks the word "Geodineum", and
-    # rewriting those dirtied every /opt working tree, blocking all future
-    # ff-only pulls (geodeploy and install re-runs silently stopped updating).
+    # nginx: keep any existing deny file, since component repos track their own.
     local ngconf="${dir}/nginx-deny.conf"
     if [[ ! -f "$ngconf" ]] || ! grep -q "deny all" "$ngconf" 2>/dev/null; then
         local dirname
@@ -246,9 +205,7 @@ NGEOF
     fi
 }
 
-# Deploy web-deny rules to ALL ecosystem directories that www-data must not serve.
-# www-data is in the geodineum group for credential file access, but a compromised
-# PHP process should never be able to serve source code or infrastructure files.
+# Deploy web-deny rules to every ecosystem directory the web server must not serve.
 harden_ecosystem_dirs() {
     local root="${GEODINEUM_ROOT:-/opt/geodineum}"
     local config_root="${GEODINEUM_CONFIG_ROOT:-/etc/geodineum}"
@@ -257,8 +214,7 @@ harden_ecosystem_dirs() {
     # Root-level catch-all
     deploy_web_deny "$root" "Geodineum ecosystem root"
 
-    # Infrastructure components (NEVER web-served). The for-loop
-    # existence check guards against missing dirs.
+    # Infrastructure components, never web-served.
     local -a infra_dirs=(
         "gNode"
         "Geodineum"
@@ -273,8 +229,7 @@ harden_ecosystem_dirs() {
         fi
     done
 
-    # Pro extension dirs (guarded by existence check — harmless when
-    # absent; kept for forward-compat).
+    # Extension dirs, when present.
     for ext_root in "${root}/pro/gNode" "${root}/pro/gCore"; do
         if [[ -d "$ext_root" ]]; then
             deploy_web_deny "$ext_root" "Pro extensions"
@@ -285,8 +240,7 @@ harden_ecosystem_dirs() {
         fi
     done
 
-    # PHP components — served by WordPress via autoloader/symlink, but the
-    # source directories themselves should not be directly browsable.
+    # PHP components: WordPress needs the root, so deny only the sensitive subdirs.
     local -a php_dirs=(
         "gCore"
         "gTemplate"
@@ -294,7 +248,6 @@ harden_ecosystem_dirs() {
     )
     for d in "${php_dirs[@]}"; do
         if [[ -d "${root}/${d}" ]]; then
-            # Protect sensitive subdirs (don't block root — WordPress symlinks need it)
             for subdir in scripts tests docs .git; do
                 [[ -d "${root}/${d}/${subdir}" ]] && deploy_web_deny "${root}/${d}/${subdir}" "${d}/${subdir}"
             done
@@ -320,9 +273,7 @@ harden_ecosystem_dirs() {
     echo "$hardened"
 }
 
-# Ensure a user is in the geodineum group (ecosystem-level access).
-# The geodineum group grants access to .geodineum/ dirs and credential symlinks.
-# Warns if not; does not modify groups automatically.
+# Warn (never change groups) when a user is not in the geodineum group.
 ensure_geodineum_group() {
     local user="$1"
     [[ "$user" == "root" || "$user" == "gnode" ]] && return 0
@@ -337,9 +288,7 @@ ensure_geodineum_group() {
     return 1
 }
 
-# Create the .geodineum/ directory skeleton with .htaccess protection.
-# Call BEFORE onboarding. Config and credentials are written by later steps.
-# Ownership inherits from the service root directory owner with group=geodineum.
+# Create the .geodineum/ skeleton with web-deny files; call before onboarding.
 create_geodineum_dir() {
     local service_path="$1"
     local site_id="$2"
@@ -351,8 +300,7 @@ create_geodineum_dir() {
         return 1
     }
 
-    # Web server protection — blocks all HTTP access to .geodineum/
-    # Critical when .geodineum/ sits inside a web root (e.g. /var/www/).
+    # .geodineum/ may sit inside a web root: deny all HTTP access.
 
     # Apache (.htaccess)
     cat > "${geodineum_dir}/.htaccess" << 'HTEOF'
@@ -395,15 +343,13 @@ NGEOF
     return 0
 }
 
-# Finalize .geodineum/ after onboarding completes.
-# Creates credential symlink (password file now exists) and .registered marker.
+# Finalize .geodineum/ after onboarding: credential symlink and .registered marker.
 finalize_geodineum_dir() {
     local service_path="$1"
     local site_id="$2"
     local environment="${3:-testing}"
     local geodineum_dir="${service_path}/.geodineum"
 
-    # Credential symlink — same filename as the source for clarity
     local cred_filename="valkey_client_${site_id}.password"
     local cred_source="${GEODINEUM_CREDENTIALS_DIR}/${cred_filename}"
     local cred_link="${geodineum_dir}/credentials/${cred_filename}"
@@ -432,7 +378,6 @@ environment: ${environment}
 config_hash: ${config_hash}
 REGEOF
 
-    # Preserve ownership from create step (service owner:gnode)
     local svc_owner
     svc_owner=$(stat -c '%U' "$service_path" 2>/dev/null) || svc_owner="root"
     chown -R "${svc_owner}:geodineum" "$geodineum_dir" 2>/dev/null || true
@@ -444,8 +389,7 @@ REGEOF
     return 0
 }
 
-# Find the .geodineum directory for a given site_id.
-# Searches known paths and discovery-paths.conf.
+# Find a site_id's .geodineum directory: known paths, then discovery-paths.conf.
 find_geodineum_dir() {
     local site_id="$1"
     local domain
@@ -511,9 +455,7 @@ resolve_service_path() {
 # WordPress Integration (mu-plugin + parent theme)
 # =============================================================================
 
-# Wire up gCore mu-plugin and gTemplate parent theme for a WordPress site.
-# Creates symlinks and the loader PHP file. Idempotent — safe to re-run.
-# Returns 0 if WordPress detected and wired, 1 if not a WordPress site.
+# Wire the gCore mu-plugin and gTemplate parent theme (idempotent); returns 1 when not WordPress.
 setup_wordpress_integration() {
     local service_path="$1"
     local wp_root="$service_path"
@@ -619,7 +561,6 @@ render_template() {
     local content
     content="$(cat "$template_file")"
 
-    # Replace all known {{VAR}} placeholders
     # Identity
     content="${content//\{\{SERVICE_NAME\}\}/${SERVICE_NAME:-}}"
     content="${content//\{\{SERVICE_ID\}\}/${SERVICE_ID:-}}"
@@ -634,7 +575,7 @@ render_template() {
     content="${content//\{\{DOMAIN\}\}/${DOMAIN:-}}"
     content="${content//\{\{GCORE_ENTRY\}\}/${GCORE_ENTRY:-/opt/geodineum/gCore/gcore-standalone.php}}"
     content="${content//\{\{PROFILE\}\}/${GEO_PROFILE:-web}}"
-    # The one topology's declaration, from the profile + CAP_* words
+    # gnode: block, from the profile and CAP_* words
     local _gnode_block
     _gnode_block="$(gnode_block_yaml "${GEO_PROFILE:-web}" "${SERVICE_ID:-${SERVICE_NAME:-${SITE_ID:-}}}")"
     content="${content//\{\{GNODE_BLOCK\}\}/${_gnode_block}}"
@@ -678,12 +619,7 @@ resolve_deploy_user() {
 # =============================================================================
 # Registration ledger
 # =============================================================================
-# What registering a service created on THIS host, one line per artifact:
-#   <class>\t<kind>\t<target>     class: config | data | keep
-# `geodineum deregister` undoes it last-in first-out: config always, data only
-# with --purge-data, keep never. Anything registration found already in place
-# is never recorded, so deregister never removes what it did not create.
-# ${GEODINEUM_REGISTRATIONS_DIR}/<id>.tsv, root 0640.
+# <id>.tsv lines <class>\t<kind>\t<target>; deregister undoes config always, data with --purge-data, keep never.
 
 ledger_add() {   # <id> <class> <kind> <target>
     [[ "${SVC_DRY_RUN:-false}" == "true" ]] && return 0
@@ -715,8 +651,6 @@ ledger_file() {   # <id> <class> <path>
 # The one topology
 # =============================================================================
 
-# A registration profile names a shape: web → site (3.1), headless → app (3.2),
-# service | system | component → daemon (3.3).
 profile_to_shape() {
     case "${1:-web}" in
         web) echo site ;;
@@ -725,11 +659,7 @@ profile_to_shape() {
     esac
 }
 
-# The manifest's `gnode:` block: the declaration by name the daemon registers
-# (the daemon codes the words). Axes come from the CAP_* words when set, else
-# the shape's defaults. holds/requires are REACH labels: daemons require
-# `internal` and hold it; sites hold nothing and require nothing.
-# Usage: gnode_block_yaml <profile> <service_id> [constellation]
+# Usage: gnode_block_yaml <profile> <service_id> [constellation]; prints the manifest's gnode: block.
 gnode_block_yaml() {
     local profile="${1:-web}" id="${2:-}" c="${3:-}"
     if [[ -z "$c" ]]; then
@@ -775,8 +705,7 @@ gnode:
 EOF
 }
 
-# A detected language as the schema's word (topology_schema.yaml implementation_language);
-# the daemon refuses any other word, so an unlisted language is `undefined`.
+# The daemon refuses any implementation_language word outside its schema, so unlisted is `undefined`.
 gnode_language_word() {
     case "${1,,}" in
         rust|php|lua|python|go|bash) echo "${1,,}" ;;

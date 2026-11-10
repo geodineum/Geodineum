@@ -142,14 +142,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 [[ "$DRY_RUN" == "true" ]] && echo -e "${YELLOW}DRY RUN — no changes will be made${NC}"
 
 # =============================================================================
-# 1. Web-read files: root:root → root:www-data 640
-#    Apache runs as www-data, which is NOT in the broad `geodineum` group
-#    (deliberate blast-radius limit). An .htaccess Apache cannot READ makes
-#    Apache fail closed — "unable to read htaccess file, denying access to
-#    be safe" — silently 403ing the whole subtree. So every .htaccess (and
-#    nginx-deny.conf) must be www-data-readable: root:www-data 640.
-#    (Pre-fix this set root:geodineum on a false "www-data is in geodineum"
-#    premise — fine by accident for deny-dirs, fatal for theme asset dirs.)
+# 1. Web-read files: root:www-data 640 (an .htaccess Apache cannot read 403s its subtree)
 # =============================================================================
 
 log_step "1. Web-read files (root:www-data 640 — Apache must read .htaccess)"
@@ -217,7 +210,7 @@ if [[ -f "$DAEMON_BIN" ]]; then
 fi
 
 # =============================================================================
-# 6. auto-deploy.sh — runs as  via cron
+# 6. auto-deploy.sh
 # =============================================================================
 
 log_step "6. auto-deploy.sh"
@@ -239,9 +232,7 @@ else
     log_skip "www-data not in gnode group"
 fi
 
-# www-data belongs to its single-purpose groups only: geodineum-code (read
-# shared source) and geodineum-web (read web-site creds). It must NOT be in the
-# broad geodineum group — a web RCE must not gain ecosystem-wide read.
+# www-data stays out of the broad geodineum group: a web RCE must not gain ecosystem-wide read.
 for g in geodineum-code geodineum-web; do
     getent group "$g" >/dev/null 2>&1 || groupadd --system "$g"
     if ! id -nG www-data 2>/dev/null | grep -cw "$g" >/dev/null; then
@@ -258,8 +249,7 @@ else
 fi
 
 # =============================================================================
-# 8. Infrastructure repos: ensure <deploy user>:gnode (not www-data)
-#    These are not PHP-autoloaded. Only deploy user + daemon need access.
+# 8. Infrastructure repos: group gnode (not PHP-autoloaded, so not www-data)
 # =============================================================================
 
 log_step "8. Infrastructure component groups"
@@ -279,9 +269,7 @@ for repo in gNode Geodineum-BAK; do
     fi
 done
 
-# Geodineum-COMMS runs under its own user — group is
-# geodineum-comms, NOT gnode. Runtime-writable subdirs (.gnode/, logs/)
-# stay geodineum-comms-OWNED (service writes as geodineum-comms).
+# Geodineum-COMMS runs as its own user: group geodineum-comms; .gnode/ and logs/ owned by it.
 comms_dir="${GEODINEUM_ROOT}/Geodineum-COMMS"
 if [[ -d "$comms_dir" ]]; then
     current=$(stat -c '%G' "$comms_dir" 2>/dev/null)
@@ -318,10 +306,7 @@ if [[ -d "$gshield_rel" ]]; then
 fi
 
 # =============================================================================
-# 9. Shared source (framework + library + themes): group geodineum-code — the
-#    SINGLE source-read class. NOT www-data: that conflates source with the
-#    web-credentials group and would force services into www-data to use the
-#    library. www-data reads via geodineum-code membership.
+# 9. Shared source: group geodineum-code, the one source-read group (www-data is a member)
 # =============================================================================
 
 log_step "9. Shared-source component groups (geodineum-code)"
@@ -333,8 +318,7 @@ for u in www-data geodine; do
     fix "Add $u to geodineum-code group" usermod -aG geodineum-code "$u"
 done
 
-# Web components discovered from the manifest group so comprehensive
-# installs are covered without enumerating their components in this source.
+# Plus any component whose geodeploy.yaml declares group geodineum-code.
 web_repos=(gCore gTemplate gCube gNode-Client)
 for _wd in "${GEODINEUM_ROOT}"/*/; do
     _wn="$(basename "$_wd")"

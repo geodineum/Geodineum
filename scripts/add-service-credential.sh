@@ -51,7 +51,6 @@ if [[ -n "${AUTH_FILE:-}" ]]; then
     shred -u "$AUTH_FILE" 2>/dev/null || rm -f "$AUTH_FILE"
 fi
 
-# Prompt for anything not supplied.
 if [[ -z "$SERVICE" ]]; then
     read -r -p "Service name (from register --node on the master): " SERVICE
 fi
@@ -63,10 +62,8 @@ if [[ -z "$AUTH" ]]; then
 fi
 [[ -n "$AUTH" ]] || die "auth is empty"
 
-# Pick an owner that exists: prefer gnode (the daemon user), else root.
 OWNER="root"
 id gnode >/dev/null 2>&1 && OWNER="gnode"
-# Fall back to root group if the requested group is absent on this node.
 getent group "$GROUP" >/dev/null 2>&1 || { echo "[!] group '${GROUP}' absent — using root"; GROUP="root"; }
 
 install -d -m 0750 "$CREDS_DIR" 2>/dev/null || true

@@ -1,19 +1,10 @@
 #!/bin/bash
-# Commit 1.14.f: strict mode added; sourced libs no longer
-# silent-fail when called from a context that does not pre-set -euo.
 set -euo pipefail
 
-#
-# Geodineum CLI — New Site Command
-# =================================
-# Deploys a WordPress site by wrapping gTemplate's install script
-# and gNode's onboard-service.sh into a single command.
-#
-# Requires: common.sh sourced first
-#
+# Deploy a WordPress site: gTemplate's installer, then gNode onboarding. Requires common.sh.
 
 # =============================================================================
-# The website-wp row of geodineum register (via ensure_wp_stack)
+# The website-wp row of geodineum register
 # =============================================================================
 
 cmd_new_site() {
@@ -26,7 +17,6 @@ cmd_new_site() {
     local dry_run=false
     local yes=false
 
-    # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --theme)      theme="$2"; shift 2 ;;
@@ -50,7 +40,6 @@ cmd_new_site() {
         esac
     done
 
-    # Validate required args
     if [[ -z "$domain" ]]; then
         log_error "Domain is required"
         usage_new_site
@@ -63,9 +52,7 @@ cmd_new_site() {
     local site_id
     site_id="$(domain_to_site_id "$domain")"
 
-    # Validate the theme by locating its source (a WP theme carries a
-    # style.css theme header) rather than a hardcoded name list — so any
-    # installed child theme is accepted and none are enumerated here.
+    # A theme is valid when its directory has a style.css with a Theme Name header.
     if [[ -n "$theme" && -z "$theme_path" ]]; then
         local _tcap _found=""
         _tcap="g$(echo "${theme#g}" | sed 's/.*/\u&/')"
@@ -113,7 +100,6 @@ cmd_new_site() {
 
     log_step "Detecting Ecosystem"
 
-    # Find gTemplate install script
     local install_script=""
     for candidate in \
         "${GTEMPLATE_PATH}/scripts/install-geodineum.sh" \
@@ -131,7 +117,6 @@ cmd_new_site() {
     fi
     log_success "gTemplate installer: ${install_script}"
 
-    # Find onboard-service.sh
     local onboard_script=""
     for candidate in \
         "${GNODE_SCRIPTS}/onboard-service.sh" \
@@ -148,7 +133,6 @@ cmd_new_site() {
         log_success "gNode onboarding: ${onboard_script}"
     fi
 
-    # Check ValKey
     if check_valkey; then
         log_success "ValKey reachable on port ${VALKEY_PORT}"
     else
@@ -184,9 +168,7 @@ cmd_new_site() {
     if [[ -n "$theme" ]]; then
         wp_args+=(--theme "$theme")
 
-        # Auto-detect theme path if not specified
         if [[ -z "$theme_path" ]]; then
-            # Try production path first, then common locations
             for tp_candidate in \
                 "${GEODINEUM_ROOT}/${theme}" \
                 "${GEODINEUM_ROOT}/g$(echo "${theme#g}" | sed 's/.*/\u&/')"; do
@@ -202,7 +184,7 @@ cmd_new_site() {
         fi
     fi
 
-    # The stack's own artifacts go into the registration ledger (what deregister undoes).
+    # The installer records what it creates in the ledger deregister undoes.
     wp_args+=(--ledger "${GEODINEUM_REGISTRATIONS_DIR}/${site_id}.tsv")
     [[ "$no_ssl" == "true" ]] && wp_args+=(--no-ssl)
     [[ "$yes" == "true" ]] && wp_args+=(--yes)
@@ -226,13 +208,12 @@ cmd_new_site() {
     if [[ -n "$onboard_script" ]]; then
         log_step "Step 2/3: gNode Service Onboarding"
 
-        # Create .geodineum/ in WordPress root
         log_info "Creating .geodineum/ in ${wp_root}..."
         create_geodineum_dir "$wp_root" "$site_id" "$environment" || {
             log_warning "Could not create .geodineum/ — continuing with onboarding"
         }
 
-        # The manifest, from the one writer (lib/service-taxonomy.sh ensure_manifest).
+        # ensure_manifest (service-taxonomy.sh) is the only manifest writer.
         if [[ ! -f "${geodineum_dir}/gnode_services.yaml" ]] && [[ -d "$geodineum_dir" ]]; then
             # shellcheck source=/dev/null
             declare -F ensure_manifest >/dev/null || source "${GEODINEUM_CLI_ROOT}/lib/service-taxonomy.sh"
@@ -244,7 +225,6 @@ cmd_new_site() {
             ensure_manifest
         fi
 
-        # Onboard with .geodineum/ as discovery path
         local onboard_args=("$site_id" --environment "$environment")
         [[ -d "$geodineum_dir" ]] && onboard_args+=(--yaml "$geodineum_dir")
         [[ -n "$owner" ]] && onboard_args+=(--owner "$owner")
@@ -255,7 +235,6 @@ cmd_new_site() {
             log_info "You can retry: ${onboard_script} ${onboard_args[*]}"
         }
 
-        # Finalize .geodineum/ (credential symlink + .registered marker)
         finalize_geodineum_dir "$wp_root" "$site_id" "$environment" || {
             log_warning "Could not finalize .geodineum/"
         }

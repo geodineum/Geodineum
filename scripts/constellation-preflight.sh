@@ -5,7 +5,7 @@
 #
 #   scripts/constellation-preflight.sh --constellation mynet \
 #       [--domain mynet.example.org] [--private-repo owner/repo]... \
-#       [--port 3000]... [--data /path/to/file]... [--branch one-topology]
+#       [--port 3000]... [--data /path/to/file]... [--branch <name>]
 set -uo pipefail
 
 CONSTELLATION="" DOMAIN="" BRANCH="" REPOS=() PORTS=() DATA=()

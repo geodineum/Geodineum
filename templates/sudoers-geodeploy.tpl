@@ -1,12 +1,8 @@
 # =============================================================================
 # Geodineum Deploy — Scoped sudo for auto-deploy cron
 # =============================================================================
-# Install: sudo cp templates/sudoers-geodeploy.tpl /etc/sudoers.d/geodineum-deploy
-#          sudo chmod 440 /etc/sudoers.d/geodineum-deploy
-#          sudo visudo -cf /etc/sudoers.d/geodineum-deploy
-#
-# Principle: minimum privilege per operation. No blanket sudo.
-# The installer replaces '{{DEPLOY_USER}}' with the actual deploy user.
+# Minimum privilege per operation, no blanket sudo.
+# Rendered for the deploy user by install.sh or scripts/sudoers-refresh.sh.
 # =============================================================================
 
 # --- Service management (restart only, not stop/enable/disable) ---
@@ -33,20 +29,12 @@
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:gnode /opt/geodineum/Geodineum-COMMS/*
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:gnode /opt/geodineum/Geodineum-BAK
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:gnode /opt/geodineum/Geodineum-BAK/*
-# The deploy repo itself (descriptor declares group: geodineum). Without this
-# rule its own fix_perms sweep is refused on every pull — harmless while the
-# tree is clean, unhealable the day it drifts.
+# The deploy repo itself (its descriptor declares group geodineum)
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum /opt/geodineum/Geodineum
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum /opt/geodineum/Geodineum/*
 
-# PHP components. Each component's geodeploy.yaml declares its runtime group
-# and the whitelist MUST cover that exact owner:group+path or the deploy
-# sweep's `sudo chown` dies at the password prompt (cron has no tty) and the
-# tree keeps its stale group. That skew crash-looped a gCore-consuming service
-# when gCore's descriptor moved www-data → geodineum-code while this template
-# still granted only www-data. BOTH groups are therefore granted per
-# component, so a node converges whichever side (template vs descriptor) is
-# ahead; every rule still pins the deploy user as owner on a fixed path.
+# PHP components: each rule must match the owner:group+path its geodeploy.yaml
+# declares; both groups are granted so template and descriptor may differ.
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum-code /opt/geodineum/gCore
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum-code /opt/geodineum/gCore/*
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chown -R {{DEPLOY_USER}}\:geodineum-code /opt/geodineum/gTemplate
@@ -129,8 +117,6 @@
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chmod 750 /etc/geodineum
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chmod 750 /etc/geodineum/*
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chmod 750 /opt/geodineum
-# 751 variants: the orchestrator moved the root (and gNode) mode to 751 so
-# www-data can traverse to theme symlinks / credential symlinks. Keep 750 too
-# for older orchestrators (same skew-tolerance rule as the PHP groups above).
+# 751 lets www-data traverse to theme and credential symlinks
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chmod 751 /opt/geodineum
 {{DEPLOY_USER}} ALL=(root) NOPASSWD: /usr/bin/chmod 751 /opt/geodineum/gNode

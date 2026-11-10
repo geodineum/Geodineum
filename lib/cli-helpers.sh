@@ -1,28 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# cli-helpers.sh — Shared helpers for manifest-declared handler scripts
+# cli-helpers.sh — helpers for manifest-declared CLI handler scripts (cli.commands[].handler)
 # =============================================================================
-# Handler scripts declared via `cli.commands[].handler` should source this file
-# instead of common.sh directly. It pulls in:
-#   - common.sh (log_info/log_success/log_warning/log_error + color vars)
-#   - manifest-registry.sh (manifest_get_field, manifest_describe_raw, etc.)
-# and adds CLI-specific helpers: ValKey wrappers per user-class, registry
-# lookup, graceful-degradation orchestration, sudo gate, site-id resolution.
-#
-# Search path for common.sh / manifest-registry.sh (first hit wins):
-#   1. $GEODINEUM_LIB (default /usr/local/lib/geodineum) — install symlinks here
-#   2. $GEODINEUM_ROOT/Geodineum/lib — deployed location
-#   3. $(dirname "$BASH_SOURCE") — same dir as this file (dev/repo)
-#
-# Handler skeleton:
-#   #!/bin/bash
-#   set -euo pipefail
-#   source "${GEODINEUM_LIB:-/usr/local/lib/geodineum}/cli-helpers.sh" || \
-#       source "${GEODINEUM_ROOT:-/opt/geodineum}/Geodineum/lib/cli-helpers.sh"
-#   ...handler body using log_info, valkey_daemon_cli, etc...
+# Usage: source "${GEODINEUM_LIB:-/usr/local/lib/geodineum}/cli-helpers.sh"  (also loads common.sh)
 # =============================================================================
 
-# Guard against double-sourcing
 [[ -n "${_GEODINEUM_CLI_HELPERS_SH:-}" ]] && return 0
 _GEODINEUM_CLI_HELPERS_SH=1
 
@@ -54,14 +36,10 @@ if [[ -f "$_GD_LIB/manifest-registry.sh" ]]; then
 fi
 
 # =============================================================================
-# ValKey wrappers — pick the RIGHT user for the operation class
+# ValKey wrappers, one per user class
 # =============================================================================
-# ACL ops (SETUSER/GETUSER/SAVE/DELUSER) MUST use the default/admin user
-# because gnode_daemon has -@dangerous which denies the ACL command.
-# A daemon-user ACL call fails NOPERM (commit 8c45344).
 
-# Run valkey-cli as the default/admin user. Use for ACL ops, FCALL admin
-# operations, registry writes. Reads /etc/geodineum/credentials/valkey.password.
+# Admin user: required for ACL commands, which gnode_daemon (-@dangerous) cannot run.
 valkey_admin_cli() {
     local pw_file="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}/valkey.password"
     if [[ ! -r "$pw_file" ]]; then
@@ -72,8 +50,6 @@ valkey_admin_cli() {
     REDISCLI_AUTH="$(cat "$pw_file")" valkey-cli -p "${VALKEY_PORT:-47445}" --no-auth-warning "$@"
 }
 
-# Run valkey-cli as the gnode_daemon user. Use for everyday daemon-side ops
-# (XADD, FCALL of business functions, key reads/writes). NOT for ACL ops.
 valkey_daemon_cli() {
     local pw_file="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}/valkey_daemon.password"
     if [[ ! -r "$pw_file" ]]; then
@@ -84,8 +60,6 @@ valkey_daemon_cli() {
     REDISCLI_AUTH="$(cat "$pw_file")" valkey-cli -p "${VALKEY_PORT:-47445}" --user gnode_daemon --no-auth-warning "$@"
 }
 
-# Run valkey-cli as a per-site client user (e.g. gnode_client_example_site).
-# Use when the operation should be scoped to a single site's namespace.
 # Usage: valkey_client_cli <site_id> <args...>
 valkey_client_cli() {
     local site_id="$1"; shift
@@ -105,11 +79,7 @@ valkey_client_cli() {
 # Manifest registry lookup
 # =============================================================================
 
-# Read a single field from the manifest registry. Returns empty + non-zero if
-# the registry is unavailable or the field is unset.
 # Usage: registry_field <service-name> <field>
-#   fields: version, description, tier, language, log_path, log_journald,
-#           config_keyspace, auto_enabled, auto_branch, manifest_path
 registry_field() {
     local svc="$1" field="$2"
     [[ -n "$svc" && -n "$field" ]] || return 2
@@ -120,7 +90,6 @@ registry_field() {
     fi
 }
 
-# Returns 0 if the service is registered, 1 otherwise.
 registry_has() {
     local svc="$1"
     [[ -n "$svc" ]] || return 2
@@ -135,18 +104,13 @@ registry_has() {
 # Site-id resolution
 # =============================================================================
 
-# Convert a domain (example.site) to its site_id form (example_site).
 resolve_site_id_from_domain() {
     local domain="$1"
     [[ -n "$domain" ]] || return 1
     echo "$domain" | sed 's/\./_/g'
 }
 
-# Resolve a site_id from (in order):
-#   1. explicit positional arg
-#   2. $GEODINEUM_SITE_ID env var
-#   3. $PWD if it lies under /var/www/<domain>/
-# Echoes the resolved id; returns 1 if none found.
+# site_id from the argument, else $GEODINEUM_SITE_ID, else a $PWD under /var/www/<domain>.
 resolve_site_id() {
     local explicit="${1:-}"
     if [[ -n "$explicit" ]]; then
@@ -168,9 +132,7 @@ resolve_site_id() {
 # Graceful degradation
 # =============================================================================
 
-# Run a primary command; if it exits non-zero, run a fallback.
 # Usage: with_fallback <primary> <fallback> [--] <args...>
-# Exits with the primary's status if no fallback declared or fallback also fails.
 with_fallback() {
     local primary="$1" fallback="${2:-}"
     shift 2 || true
@@ -199,7 +161,6 @@ with_fallback() {
 # Sudo gate
 # =============================================================================
 
-# Exit with a clear error message if not running as root.
 # Usage: require_sudo "<short reason>"
 require_sudo() {
     local reason="${1:-this operation}"
@@ -211,10 +172,8 @@ require_sudo() {
 }
 
 # =============================================================================
-# Deploy-user resolution (mirror of common.sh; idempotent re-declaration ok)
+# Deploy-user resolution
 # =============================================================================
-# common.sh already provides resolve_deploy_user; re-exported here for handler
-# discoverability via `declare -F resolve_deploy_user`. No-op if already defined.
 declare -F resolve_deploy_user >/dev/null 2>&1 || resolve_deploy_user() {
     local user="${DEPLOY_USER:-}"
     if [[ -z "$user" ]] && [[ -r /etc/geodineum/deploy.env ]]; then

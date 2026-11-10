@@ -100,8 +100,7 @@ if [[ -n "$CLI" && -n "$MASTER_IP" && -r "$PW_FILE" ]]; then
     [[ "$pong" == "PONG" ]] && P "authenticated PING over VPN → PONG (user ${USER_NAME})" \
         || F "PING failed (auth/ACL/connectivity): '${pong}'"
 
-    # FUNCTION LIST is daemon-level; a scoped per-service user may lack it.
-    # PING already proved the link, so treat NOPERM as a soft skip.
+    # A scoped per-service user may lack FUNCTION LIST; PING already proved the link.
     fout="$("$CLI" "${AUTH[@]}" FUNCTION LIST 2>&1)"
     if echo "$fout" | grep -ci 'noperm' >/dev/null; then
         echo "  [skip] FUNCTION LIST not permitted for ${USER_NAME} (scoped user) — link already proven by PING"

@@ -2,11 +2,8 @@
 # =============================================================================
 # Geodineum Deploy Orchestrator
 # =============================================================================
-# Thin cron script that pulls all ecosystem repos and runs per-repo deploy
-# hooks defined in geodeploy.yaml descriptors.
-#
-# Replaces the monolithic auto-deploy.sh with a ~80-line orchestrator that
-# delegates all logic to lib/geodeploy.sh and per-repo geodeploy.yaml files.
+# Cron script that pulls all ecosystem repos and runs the per-repo deploy
+# hooks defined in their geodeploy.yaml descriptors (logic in lib/geodeploy.sh).
 #
 # Crontab:
 #   */5 * * * * /opt/geodineum/Geodineum/scripts/geodeploy-orchestrator
@@ -16,25 +13,16 @@
 
 set -uo pipefail
 
-# Files created by this run (log, heartbeat, lock) must not be
-# world-readable — the deploy log leaks repo names, branch state, and
-# error detail to any local user. 027 = group-read, others-nothing.
+# The deploy log and run artifacts must not be world-readable.
 umask 027
 
-# Source cargo (cron has minimal PATH)
+# Cron has a minimal PATH
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 
-# Resolve script location → Geodineum repo root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GEODINEUM_REPO="$(dirname "$SCRIPT_DIR")"
 
-# Source shared library.
-# Fail-loud: sourcing the lib turns on `set -e` (lib line ~23),
-# so any unguarded failure after this point kills the WHOLE run — which
-# is exactly how the post-merge-wave outage stayed invisible for 2 days
-# (FATAL → stderr → cron mail, log file frozen, no deploys). If the
-# source itself fails (deploy-user resolution), say so in the log the
-# lib couldn't write and exit nonzero.
+# The lib turns on set -e; if sourcing it fails, record that in the log.
 if ! source "${GEODINEUM_REPO}/lib/geodeploy.sh"; then
     mkdir -p /var/log/geodineum/deploy 2>/dev/null || true
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ORCHESTRATOR: lib source FAILED — run aborted before any deploy" \
@@ -42,60 +30,40 @@ if ! source "${GEODINEUM_REPO}/lib/geodeploy.sh"; then
     exit 1
 fi
 
-# Log + run-artifact directory (derived from GEODEPLOY_LOG set by the lib —
-# /var/log/geodineum/deploy). Ensure it exists and is owned by the DEPLOY USER
-# (not root): the orchestrator runs git AS the deploy user with `2>>LOG`
-# redirects, so the dir + log must be deploy-user-writable.
+# Deploy-user-owned: git runs as the deploy user and appends to the log.
 GEODEPLOY_LOG_DIR="$(dirname "$GEODEPLOY_LOG")"
 sudo mkdir -p "$GEODEPLOY_LOG_DIR" 2>/dev/null || true
 sudo chown "${GEODEPLOY_DEPLOY_USER}:geodineum" "$GEODEPLOY_LOG_DIR" 2>/dev/null || true
 sudo chmod 2750 "$GEODEPLOY_LOG_DIR" 2>/dev/null || true
 
-# single-instance lock — a slow cycle (cargo build) must not
-# overlap the next cron firing; overlapping runs corrupt the dedupe
-# logic's single-writer assumption and double-pull repos.
+# Single instance: a slow cycle (cargo build) must not overlap the next cron run.
 exec 9>"${GEODEPLOY_LOG_DIR}/.orchestrator.lock"
 if ! flock -n 9; then
-    # Previous run still active — normal under long builds, not an error.
     exit 0
 fi
 
-# any -e-triggered abort gets ONE log line saying where, so the
-# log always explains a dead run instead of just going quiet.
-# set -E (errtrace): without it the ERR trap does NOT fire for failures
-# inside functions — which is where everything in this script happens.
+# Log where an abort happened; -E makes the ERR trap fire inside functions.
 set -E
 trap 'geodeploy_log "ORCHESTRATOR: aborted at line ${LINENO} (cmd: ${BASH_COMMAND})"' ERR
 
 # =============================================================================
 # Self-update: pull the Geodineum repo FIRST
 # =============================================================================
-# The orchestrator and library live here. Pull before anything else so that
-# all other repos benefit from the latest deploy logic. Safe because:
-#   - The script is already loaded into memory (bash reads the full file)
-#   - lib/geodeploy.sh is already sourced above
-#   - Only the NEXT cron run picks up library/orchestrator changes
+# Changes pulled here take effect on the next cron run.
 geodeploy_set_defaults "bash"
 _GD_DIRTY="stash"
-# Per-repo failures are COLLECTED, not just logged: a cycle with any failed
-# repo must not stamp .last-success (the liveness stamp doubled as a health
-# signal while BAK's fetch silently failed for weeks).
+# A cycle with any failed repo does not stamp .last-success.
 _GD_FAILED_REPOS=()
-# per-repo isolation — one repo failing must not abort the rest
-# of the cycle (the `||` also suppresses the lib's set -e for the call).
+# One failing repo must not abort the cycle (`||` also suspends set -e).
 geodeploy_repo "Geodineum" "main" || { _GD_FAILED_REPOS+=("Geodineum"); geodeploy_log "Geodineum: deploy FAILED (continuing)"; }
 
-# Re-assert the canonical helper-lib install from the freshly-pulled source.
-# The `geodineum` CLI and gNode's scripts/build.sh both source these from
-# /usr/local/lib/geodineum; install.sh installs them but never re-runs, so a
-# host that lost the dir would stay broken until a full reinstall without this.
+# Re-install /usr/local/lib/geodineum helpers (sourced by the CLI and gNode's build).
 geodeploy_ensure_helper_libs || geodeploy_log "ensure_helper_libs: FAILED (continuing)"
 
 # =============================================================================
 # Core ecosystem repos
 # =============================================================================
-# Format: name|branch
-# Remotes are already configured in each repo's .git/config (set by installer)
+# name|branch; remotes come from each repo's .git/config
 
 CORE_REPOS=(
     "gNode|main"
@@ -116,17 +84,14 @@ for entry in "${CORE_REPOS[@]}"; do
     geodeploy_repo "$name" "$branch" || { _GD_FAILED_REPOS+=("$name"); geodeploy_log "${name}: deploy FAILED (continuing)"; }
 done
 
-# Pro components cloned under pro/ (no-op on a host without them).
+# No-op on a host without a pro/ directory.
 geodeploy_deploy_pro || { _GD_FAILED_REPOS+=("pro"); geodeploy_log "pro: deploy FAILED (continuing)"; }
 
 # =============================================================================
 # Site-local repos (opt-in, never shipped)
 # =============================================================================
-# Extra repos of one deployment are listed in an optional host-local file,
-# "name|branch" per line ('#' comments allowed); an entry deploys only if its
-# repo is already cloned under GEODINEUM_ROOT, so nothing new is ever fetched.
+# "name|branch" per line; an entry deploys only if already cloned under GEODINEUM_ROOT.
 SITE_REPOS_FILE="${GEODINEUM_ROOT}/site-repos.conf"
-# Exists but unreadable must be loud (expected root:geodineum 640).
 if [[ -f "$SITE_REPOS_FILE" && ! -r "$SITE_REPOS_FILE" ]]; then
     geodeploy_log "ERROR: ${SITE_REPOS_FILE} exists but is NOT readable by the deploy user — site repos are NOT deploying (fix: chown root:geodineum + chmod 640)"
 fi
@@ -144,69 +109,45 @@ if [[ -r "$SITE_REPOS_FILE" ]]; then
     done < "$SITE_REPOS_FILE"
 fi
 
-# Global: self-heal the dashboard-credential group + membership (www-data reads
-# the read-only dashboard ACL token via geodineum-dash). Runs BEFORE the perm
-# pass so the group exists when fix_config_perms asserts dashboard/ ownership.
-# Restarts the web tier ONLY when membership actually changed.
+# Before the perm pass, so the geodineum-dash group exists for fix_config_perms.
 geodeploy_ensure_dash_members || geodeploy_log "ensure_dash_members: FAILED (continuing)"
 
-# Global: fix /etc/geodineum config permissions + credential ownership
 geodeploy_fix_config_perms "/etc/geodineum" || geodeploy_log "fix_config_perms: FAILED (continuing)"
 geodeploy_fix_all_credentials "/etc/geodineum/credentials" || geodeploy_log "fix_all_credentials: FAILED (continuing)"
 
-# Global: re-assert Geodineum-BAK perms (not a CORE_REPO, so otherwise unswept).
-# Keeps backup-valkey.sh gnode-executable so the valkey-backup timer (User=gnode)
-# doesn't silently die on owner drift (203/EXEC).
+# Geodineum-BAK is not a CORE_REPO, so nothing else sweeps it.
 geodeploy_fix_bak_perms "${GEODINEUM_ROOT}/Geodineum-BAK" || geodeploy_log "fix_bak_perms: FAILED (continuing)"
 
-# COMMS keeps its receipt signing key in /var/lib, not /etc: its unit runs
-# ProtectSystem=strict without /etc in ReadWritePaths, so the components sweep
-# never reaches the key. Assert it here instead.
+# The COMMS signing key lives in /var/lib, outside the /etc/geodineum sweep.
 geodeploy_fix_comms_signing_key || geodeploy_log "fix_comms_signing_key: FAILED (continuing)"
 
-# Global: fix /opt/geodineum root directory.
-# Fail SOFT with a log line, never abort: these run under the lib's set -e,
-# and a sudoers whitelist that predates a mode change (the 750→751 migration)
-# refuses the exact command → password prompt → nonzero → the WHOLE cycle
-# died here every 5 minutes (104 aborts before noticed on one host).
-# A refused perm fixup must degrade to a warning, not take deploys down.
+# A perm fixup refused by sudoers logs a warning and never aborts the cycle.
 sudo chown root:geodineum "${GEODINEUM_ROOT}" 2>/dev/null \
     || geodeploy_log "WARNING: chown root:geodineum ${GEODINEUM_ROOT} refused (sudoers) — continuing"
 sudo chmod 751 "${GEODINEUM_ROOT}" 2>/dev/null \
     || geodeploy_log "WARNING: chmod 751 ${GEODINEUM_ROOT} refused (sudoers rule still 750?) — continuing"  # 751: www-data needs o+x traverse to reach theme symlinks
 
-# gNode: www-data needs traverse-only to reach credential files via .gnode symlink
-# (.gnode -> /etc/geodineum/credentials, files are www-data:www-data 600)
+# www-data traverses gNode to reach credentials via the .gnode symlink.
 sudo chmod 751 "${GEODINEUM_ROOT}/gNode" 2>/dev/null \
     || geodeploy_log "WARNING: chmod 751 ${GEODINEUM_ROOT}/gNode refused (sudoers rule still 750?) — continuing"
 
-# Global: fix centralized log directory at /var/log/geodineum/
 geodeploy_fix_log_perms "/var/log/geodineum" || geodeploy_log "fix_log_perms: FAILED (continuing)"
 
-# Global: harden WordPress site permissions
-# Source: <deploy user>:www-data 640 (read-only for PHP)
-# Uploads: www-data:www-data 750 (writable, PHP exec blocked + immutable .htaccess)
 geodeploy_harden_all_wp "/var/www" || geodeploy_log "harden_all_wp: FAILED (continuing)"
 
-# Guardrail: verify the web tree is still Apache-readable (logs a WARNING on
-# any group/traversal regression — detection, not a routine restart).
 geodeploy_verify_web_readable "${GEODINEUM_ROOT}" || true
 geodeploy_assert_git_guards
 
 # =============================================================================
 # Orchestration coverage — nothing rots unseen
 # =============================================================================
-# Every git repo under GEODINEUM_ROOT is managed (CORE_REPOS or site-repos.conf)
-# or declares itself unmanaged, by `unmanaged: true` in its geodeploy.yaml or by
-# name in ${GEODINEUM_ROOT}/unmanaged-repos.conf; anything else is named in the
-# log once a day, so the capped log keeps its deploy history.
+# Once a day, log every repo that is neither managed nor declared unmanaged.
 _gd_today=$(date '+%Y-%m-%d')
 _gd_cov_stamp="${GEODEPLOY_LOG_DIR}/.coverage-day"
 if [[ "$(cat "$_gd_cov_stamp" 2>/dev/null)" != "$_gd_today" ]]; then
     echo "$_gd_today" > "$_gd_cov_stamp" 2>/dev/null || true
 
-    # Newline-delimited set, matched with a newline on both sides so that
-    # "gNode" never matches "gNode-Client".
+    # Newline-delimited so "gNode" never matches "gNode-Client".
     _gd_managed=$'\n''Geodineum'$'\n'
     for entry in "${CORE_REPOS[@]}"; do
         _gd_managed+="${entry%%|*}"$'\n'
@@ -219,7 +160,6 @@ if [[ "$(cat "$_gd_cov_stamp" 2>/dev/null)" != "$_gd_today" ]]; then
         done < "$SITE_REPOS_FILE"
     fi
 
-    # Host-local declarations, same newline-delimited shape as the managed set.
     _gd_unmanaged=$'\n'
     _GD_UNMANAGED_FILE="${GEODINEUM_ROOT}/unmanaged-repos.conf"
     if [[ -r "$_GD_UNMANAGED_FILE" ]]; then
@@ -237,7 +177,6 @@ if [[ "$(cat "$_gd_cov_stamp" 2>/dev/null)" != "$_gd_today" ]]; then
         if [[ "$_gd_unmanaged" == *$'\n'"${_gd_repo}"$'\n'* ]]; then
             geodeploy_report_unmanaged_behind "$_gd_repo_dir"; continue
         fi
-        # Reads a file directly, so no pipe and no grep -q SIGPIPE hazard.
         if grep -qE '^[[:space:]]*unmanaged:[[:space:]]*true[[:space:]]*$' \
                 "${_gd_repo_dir}geodeploy.yaml" 2>/dev/null; then
             geodeploy_report_unmanaged_behind "$_gd_repo_dir"; continue
@@ -247,26 +186,18 @@ if [[ "$(cat "$_gd_cov_stamp" 2>/dev/null)" != "$_gd_today" ]]; then
     done
 fi
 
-# What the permission sweeps changed this cycle; silence means already converged.
 if (( ${_GD_PERM_FIXES:-0} > 0 )); then
     geodeploy_log "PERMS: ${_GD_PERM_FIXES} path(s) corrected this cycle — e.g. ${_GD_PERM_SAMPLE:-(unsampled)}"
 fi
 
-# liveness heartbeat — a stamp file, NOT a log line (a per-5-min
-# "RUN ok" line would itself be a log storm; alternating start/end lines
-# defeat the repeated-message dedupe). Liveness check:
-#   stat -c %y /var/log/geodineum/deploy/.last-success
-# WITHHELD when any repo failed this cycle: a stale stamp is the alarm.
+# Liveness stamp, withheld on any failure: check with stat -c %y .last-success
 if (( ${#_GD_FAILED_REPOS[@]} )); then
     geodeploy_log "ORCHESTRATOR: ERROR ${#_GD_FAILED_REPOS[@]} repo(s) failed this cycle (${_GD_FAILED_REPOS[*]}) — .last-success WITHHELD"
 else
     date '+%Y-%m-%d %H:%M:%S' > "${GEODEPLOY_LOG_DIR}/.last-success" 2>/dev/null || true
 fi
 
-# Run artifacts owned by the DEPLOY USER (group geodineum for operator read).
-# NOT root: the log is also appended to by git commands run as the deploy user
-# (geodeploy_as_deploy ... 2>>LOG), so a root-owned log would deny those writes
-# — the "/bin/sh: cannot create ...: Permission denied" cron-mail storm.
+# Not root-owned: git commands run as the deploy user append to the log.
 sudo chown "${GEODEPLOY_DEPLOY_USER}:geodineum" \
                      "$GEODEPLOY_LOG" \
                      "${GEODEPLOY_LOG_DIR}/.last-success" \

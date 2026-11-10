@@ -63,13 +63,10 @@ hr() { printf '%s\n' "───────────────────�
 say() { printf '  %s\n' "$*"; }
 die() { printf 'on the laptop: %s\n' "$*" >&2; exit 1; }
 
-# --dry-run writes nothing, so it must not demand root: the point of a dry run
-# is that you can read it before you trust it.
+# --dry-run writes nothing, so it does not demand root.
 [[ $EUID -eq 0 || "$DRY" == "true" ]] || die "this needs sudo (it writes $WG_DIR and brings up an interface)"
 
 # ───────────────────────────────────────────────────────────── verify
-# Separated so it can run alone: after a reboot, after a network change, or to
-# answer "is my laptop still on the mesh" without rewriting anything.
 verify() {
     local rc=0
     hr; echo "on the laptop: is this workstation on the mesh?"
@@ -98,8 +95,7 @@ verify() {
 
     [[ -x "$CLI_LINK" ]] && say "cli                  $CLI_LINK" || { say "cli                  ABSENT"; rc=1; }
 
-    # The credential is never read aloud. Presence, mode and a PING are the whole
-    # report: a token that works is proof, a token that is printed is a leak.
+    # The credential is never printed: presence, mode and a PING are the report.
     local cred
     cred=$(find "$CRED_DIR" -maxdepth 1 -type f -name '*dash*' 2>/dev/null | head -1)
     if [[ -n "$cred" ]]; then
@@ -184,10 +180,7 @@ fi
 
 # ────────────────────────────────────────────────────────── 4. tunnel
 hr; echo "on the laptop: 4. the tunnel"
-# Same shape as `constellation-setup.sh --show-config` with two deliberate
-# differences: no ListenPort, because a roaming client wants an ephemeral source
-# port, and AllowedIPs stays the constellation /24 so only estate traffic is
-# tunnelled — a laptop must not route its whole life through the master.
+# No ListenPort (roaming client); AllowedIPs is the constellation /24 only.
 if [[ "$DRY" == "true" ]]; then
     say "[dry] would write $CONF_FILE for ${VPN_IP}/24 → ${MASTER_ENDPOINT}"
 else

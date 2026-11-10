@@ -4,20 +4,8 @@
 # ==============================
 # One-command installation for the entire Geodineum ecosystem.
 #
-# 10-phase installation:
-#   1. System detection     — find what's already installed
-#   2. Profile selection    — choose components (interactive or --profile)
-#   3. Prerequisite check   — verify/install system requirements
-#   4. ValKey setup         — detect, install, or configure ValKey
-#   5. Component fetch      — git clone/pull in dependency order
-#   6. Build               — cargo (Rust), composer (PHP)
-#   7. Config              — /etc/geodineum/ centralized FHS layout
-#   8. Services            — systemd units, permissions, gnode user
-#   9. Functions           — load Lua libraries into ValKey
-#  10. Verification        — test all connections, show health
-#
 # Usage:
-#   sudo ./install.sh                              # Standard profile (default)
+#   sudo ./install.sh                              # Interactive setup wizard
 #   sudo ./install.sh --profile minimal            # Smaller component set
 #   sudo ./install.sh --components gcore,gcube     # Install specific components
 #   sudo ./install.sh --dry-run                    # Preview without changes
@@ -57,15 +45,8 @@ log_detail()  { echo -e "    ${DIM}$1${NC}"; }
 log_dry()     { echo -e "${YELLOW}[DRY]${NC} Would: $1"; }
 
 # =============================================================================
-# Shared installer primitives 
+# Shared installer primitives
 # =============================================================================
-# Reusable component-installation helpers harvested from the
-# valkey-specific recovery work. New components (gNode extensions, gCore
-# pro managers, future daemons) wire through these instead of reinventing
-# dpkg state recovery, system-user creation, etc.
-#
-# Sourced before any phase code so the valkey-specific wrappers below
-# can delegate to the generic versions.
 if [[ -r "${LIB_DIR}/component-primitives.sh" ]]; then
     # shellcheck source=lib/component-primitives.sh
     source "${LIB_DIR}/component-primitives.sh"
@@ -76,8 +57,7 @@ else
     exit 1
 fi
 
-# Source common.sh early — validate_domain is called in main() before
-# the late-stage source at the bottom of the file.
+# Sourced early: main() calls validate_domain.
 if [[ -r "${LIB_DIR}/common.sh" ]]; then
     source "${LIB_DIR}/common.sh"
 fi
@@ -86,18 +66,10 @@ fi
 # Defaults
 # =============================================================================
 
-# Profile is empty by default so a plain `sudo ./install.sh` enters the
-# interactive wizard. Repeat-install operators who want to skip the
-# prompt pass `--profile standard` (or `--yes`, which implies standard).
-# This previously hard-defaulted to "standard" — that suppressed the
-# wizard for first-time users and made component selection invisible.
+# Empty so a plain `sudo ./install.sh` enters the interactive wizard.
 PROFILE=""
 COMPONENTS=""
-# Geodineum-COMMS (notification daemon) is OPTIONAL even in the standard
-# profile: a node joining an existing constellation often has a dedicated
-# SMTP node, or notifications are served from the constellation master.
-# Default-on (the common solo/master case); --no-comms opts out
-# non-interactively, and the standard wizard prompts.
+# Optional even in the standard profile: a joining node may get notifications from elsewhere.
 WITH_COMMS=true
 COMMS_EXPLICIT=false
 SITE_DOMAIN=""
@@ -117,31 +89,11 @@ CONSTELLATION_REPLICA_PW="" # master's valkey_replica.password, pasted during a 
 CONSTELLATION_NODE_USER=""  # this node's own ValKey ACL user, minted by the master's `expand`
 CONSTELLATION_NODE_PW=""    # its password (empty = fall back to the shared gnode_daemon login)
 GNODE_NODE_ID=""            # this node's unique id / consumer name (default: hostname on a join, "master" otherwise)
-# Clone URLs (docs/GITHUB_AUTH.md):
-#   GEODINEUM_GIT_PROTOCOL=ssh    → git@github.com:owner/repo.git
-#   GEODINEUM_GITHUB_TOKEN=<pat>  → https://x-access-token:<pat>@github.com/...
-#   neither                       → https://github.com/...
+# Clone URL choice: docs/GITHUB_AUTH.md.
 GIT_PROTOCOL="${GEODINEUM_GIT_PROTOCOL:-}"
 GITHUB_TOKEN="${GEODINEUM_GITHUB_TOKEN:-}"
 
-# Branch / ref to check out for every component repo. Resolution order:
-#   1. --branch <ref> on the command line
-#   2. GEODINEUM_BRANCH env var
-# 3. The branch this install.sh script itself is on (the "branch
-#      coherence" — if the operator pulled a feature branch for the
-#      installer, components clone the same branch). Detected via
-#      `git -C $SCRIPT_DIR rev-parse --abbrev-ref HEAD`. Skipped if
-#      we're not running from a git checkout (e.g. installed-to-disk
-#      copy without a .git dir, or HEAD is detached).
-#   4. Empty → origin's default branch (typically `main`).
-#
-# Applies uniformly across all components — every Geodineum repo follows
-# the same branching cadence during pre-launch waves (currently
-# a feature branch). Previously, the branch defaulted to `main` even
-# when running install.sh from a feature branch, which silently cloned
-# stale code (e.g. components predating the CMS-feature flip → cargo
-# panic on first build) — operators saw [FAIL] Build with no obvious
-# explanation since the install.sh THEY ran was up-to-date.
+# Component ref: --branch, then GEODINEUM_BRANCH, then this checkout's branch, else origin's default.
 GEODINEUM_BRANCH="${GEODINEUM_BRANCH:-}"
 if [[ -z "$GEODINEUM_BRANCH" ]] && [[ -d "${SCRIPT_DIR}/.git" ]]; then
     _detected_branch=$(/usr/bin/git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
@@ -183,8 +135,7 @@ CONFIG_EXISTS=false
 # =============================================================================
 
 banner() {
-    # Inner width: 56 cells (between │ markers). Each body row pads to 56
-    # visible columns so the right border lines up with the top/bottom.
+    # Each body row pads to 56 visible columns so the right border lines up.
     echo ""
     echo -e "${YELLOW}    ╔════════════════════════════════════════════════════════╗${NC}"
     echo -e "${YELLOW}    ║${NC}                                                        ${YELLOW}║${NC}"
@@ -296,38 +247,30 @@ confirm() {
 # =============================================================================
 # Install root validation — ensure custom paths are usable
 # =============================================================================
-# Validates: path is absolute, parent is writable (or path itself if existing),
-# filesystem is not mounted noexec, and at least 2GB is available.
-# Logs warnings (non-fatal) when checks are soft, errors (fatal) when blocking.
 
 validate_install_root() {
     local path="$1"
     local required_mb="${2:-2048}"  # 2GB default minimum
 
-    # Absolute path required
     if [[ "${path:0:1}" != "/" ]]; then
         log_error "Install root must be an absolute path: ${path}"
         return 1
     fi
 
-    # Determine check target: existing path or its parent
     local check_target="$path"
     if [[ ! -d "$path" ]]; then
         check_target=$(dirname "$path")
-        # Walk up until we find an existing directory
         while [[ ! -d "$check_target" && "$check_target" != "/" ]]; do
             check_target=$(dirname "$check_target")
         done
     fi
 
-    # Writable check (non-dry-run only)
     if [[ "$DRY_RUN" != "true" ]] && [[ ! -w "$check_target" ]]; then
         log_error "Install root not writable: ${check_target}"
         log_info "Check permissions or run with sudo"
         return 1
     fi
 
-    # noexec check — code in /opt must be executable
     local mount_opts
     mount_opts=$(findmnt -n -o OPTIONS --target "$check_target" 2>/dev/null || echo "")
     if [[ -n "$mount_opts" ]] && echo "$mount_opts" | grep -q "noexec"; then
@@ -336,7 +279,6 @@ validate_install_root() {
         return 1
     fi
 
-    # Disk space check (advisory warning, not fatal)
     local avail_mb
     avail_mb=$(df -Pm "$check_target" 2>/dev/null | awk 'NR==2 {print $4}')
     if [[ -n "$avail_mb" ]] && [[ "$avail_mb" -lt "$required_mb" ]]; then
@@ -348,7 +290,7 @@ validate_install_root() {
 }
 
 # =============================================================================
-# Component Resolution (same topology as before)
+# Component Resolution
 # =============================================================================
 
 get_repo() {
@@ -394,23 +336,12 @@ get_profile_components() {
     case "$1" in
         minimal)    echo "gnode-client gcore gtemplate-wp" ;;
         standard)   echo "gnode-daemon gnode-client gcore gtemplate-wp gcube geodineum-comms geodineum-bak" ;;
-        # No PHP, no web server, no database: a node that reaches the
-        # constellation over the VPN and never faces the internet.
         compute)    echo "gnode-daemon" ;;
         *)          log_error "Unknown profile: $1 (available: minimal, standard, compute)"; exit 1 ;;
     esac
 }
 
-# Map a non-interactive --deploy-tier into the profile + ValKey flags, so a
-# constellation node can be provisioned by a script without the wizard.
-# Mirrors the interactive wizard's tier cases — keep them in sync.
-# Each tier names what the node DOES, along three axes: serves web, runs a
-# daemon, holds ValKey.
-#   web      : serves sites, no daemon, no local ValKey (connects to master)
-#   full     : serves sites + daemon, no local ValKey (daemon talks to master)
-#   compute  : daemon only — no web server, no PHP, no database, never exposed
-#   replica  : serves sites + daemon + local ValKey replica (EXPERIMENTAL)
-# Requires --master-ip (or VALKEY_HOST) so the node knows the master's VPN IP.
+# Maps --deploy-tier to profile + ValKey flags; keep in sync with the wizard's tier cases.
 apply_deploy_tier() {
     [[ -z "$DEPLOY_TIER" ]] && return 0
     case "$DEPLOY_TIER" in
@@ -468,7 +399,6 @@ resolve_dependencies() {
     echo "${resolved[@]}"
 }
 
-# Does the resolved list include gnode-daemon?
 needs_daemon() {
     for comp in "$@"; do
         [[ "$comp" == "gnode-daemon" ]] && return 0
@@ -476,7 +406,6 @@ needs_daemon() {
     return 1
 }
 
-# Does the resolved list include anything requiring PHP?
 needs_php() {
     for comp in "$@"; do
         case "$comp" in
@@ -486,19 +415,17 @@ needs_php() {
     return 1
 }
 
-# Does the resolved list include WordPress themes (needs Apache, MySQL, wp-cli)?
+# True when WordPress (Apache, MySQL, wp-cli) is needed.
 needs_wordpress() {
     for comp in "$@"; do
         case "$comp" in
             gtemplate-wp|gcube) return 0 ;;
         esac
     done
-    # Also if --site was specified
     [[ -n "$SITE_DOMAIN" ]] && return 0
     return 1
 }
 
-# Does the resolved list include gCore (standalone app scaffolding available)?
 has_gcore() {
     for comp in "$@"; do
         [[ "$comp" == "gcore" ]] && return 0
@@ -509,60 +436,33 @@ has_gcore() {
 # =============================================================================
 # PHASE 0: Deploy User Setup
 # =============================================================================
-# Establishes the deploy user identity before anything else runs.
-# The deploy user:
-#   - Owns all source code in /opt/geodineum/ (can git pull)
-#   - Runs the geodeploy orchestrator via cron
-#   - Is a member of groups: geodineum (ecosystem access) + gnode (daemon repo access)
-#   - Has a read-only SSH deploy key for GitHub
-#
-# The installer runs as root (sudo), but all git/cargo operations run as
-# the deploy user via su/sudo -u.
+# The installer runs as root; git and cargo run as the deploy user.
 
-# load deploy key into ssh-agent so per-clone passphrase prompts
-# don't fire 9× (7 components + self-clone + extensions). Idempotent:
-# no-op when key has no passphrase or is already loaded.
-#
-# Sets SSH_AUTH_SOCK + SSH_AGENT_PID in install.sh's environment so
-# subsequent sudo -u $DEPLOY_USER invocations can preserve-env them.
-# The agent runs as the deploy user (socket owned by them) so deploy_user
-# git operations connect cleanly.
-#
-# Returns 0 on success or no-op-skip; non-zero only on a hard failure
-# the operator should know about. Per-clone passphrase prompts remain
-# the fallback in that case.
+# Loads a passphrase-protected deploy key into an ssh-agent once, so clones do not each prompt.
 ensure_ssh_agent_loaded() {
     local key="$1"
     local user="$2"
 
-    # Key file must exist + be readable to test.
     if [[ ! -r "$key" ]]; then
         log_warning "Deploy key ${key} not readable — skipping ssh-agent setup"
         return 0
     fi
 
-    # ssh-keygen -y -P "" extracts the public key with empty passphrase
-    # candidate. Exits 0 if the key is passphrase-free, 1 if encrypted.
-    # Run as the deploy user so file-permission checks (key 600 owned
-    # by deploy_user) succeed.
+    # Succeeds only for a passphrase-free key.
     if sudo -u "$user" ssh-keygen -y -P "" -f "$key" >/dev/null 2>&1; then
         log_detail "Deploy key has no passphrase — ssh-agent not needed"
         return 0
     fi
 
-    # Key is encrypted. Start an agent as the deploy user.
     local user_home
     user_home=$(getent passwd "$user" | cut -d: -f6)
     local agent_env="${user_home}/.ssh/.geodineum-agent.env"
 
-    # Reuse an existing live agent if one is recorded.
     if [[ -r "$agent_env" ]]; then
         # shellcheck source=/dev/null
         source "$agent_env" 2>/dev/null
         if [[ -n "${SSH_AGENT_PID:-}" ]] && kill -0 "$SSH_AGENT_PID" 2>/dev/null \
            && [[ -S "${SSH_AUTH_SOCK:-}" ]]; then
-            # Agent alive. Is the key already loaded? Compare key
-            # fingerprint vs `ssh-add -l` output.
             local key_fp
             key_fp=$(ssh-keygen -lf "$key" 2>/dev/null | awk '{print $2}')
             if [[ -n "$key_fp" ]] && \
@@ -573,21 +473,17 @@ ensure_ssh_agent_loaded() {
                 return 0
             fi
         fi
-        # Stale agent.env — clean up.
         rm -f "$agent_env"
     fi
 
     log_info "Starting ssh-agent for ${user} (deploy key is passphrase-protected)..."
 
-    # Start a fresh agent as the deploy user. Capture SSH_AUTH_SOCK +
-    # SSH_AGENT_PID from its eval-style output.
     local agent_out
     agent_out=$(sudo -u "$user" ssh-agent -s 2>/dev/null) || {
         log_warning "Could not start ssh-agent for ${user} — per-clone passphrase prompts will fire"
         return 1
     }
 
-    # Persist for future install runs + parse into current env.
     install -m 0600 -o "$user" -g "$user" /dev/null "$agent_env"
     printf '%s\n' "$agent_out" > "$agent_env"
     chown "${user}:${user}" "$agent_env"
@@ -599,7 +495,6 @@ ensure_ssh_agent_loaded() {
     log_info "Adding deploy key to agent — you'll be prompted for the passphrase ONCE."
     if ! sudo -u "$user" env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" ssh-add "$key" </dev/tty; then
         log_warning "ssh-add failed — per-clone passphrase prompts will fire"
-        # Clean up so we don't leave a useless agent process running.
         kill "$SSH_AGENT_PID" 2>/dev/null || true
         rm -f "$agent_env"
         unset SSH_AUTH_SOCK SSH_AGENT_PID
@@ -608,21 +503,12 @@ ensure_ssh_agent_loaded() {
 
     log_success "Deploy key loaded in ssh-agent (pid ${SSH_AGENT_PID}); subsequent clones won't prompt"
 
-    # Export so subsequent sudo -u $user invocations can preserve them
-    # via --preserve-env=SSH_AUTH_SOCK,SSH_AGENT_PID or inline env.
     export SSH_AUTH_SOCK SSH_AGENT_PID
 
-    # Tear down at install-end so we don't leak an agent process
-    # indefinitely (the persisted agent.env will be picked up by a
-    # subsequent install run and re-validated).
     trap 'sudo -u '"$user"' kill "$SSH_AGENT_PID" 2>/dev/null || true; rm -f "'"$agent_env"'" 2>/dev/null || true' EXIT
 }
 
-# Helper: run a command as another user, preserving SSH_AUTH_SOCK
-# when an ssh-agent is loaded in our env. Plain `sudo -u <user>` strips
-# the env; subsequent git operations would fall back to per-clone
-# passphrase prompts. With this wrapper, all git invocations connect
-# to the agent loaded in Phase 0.
+# sudo -u that keeps SSH_AUTH_SOCK, so git reaches the loaded ssh-agent.
 sudo_as_user() {
     local target_user="$1"; shift
     if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
@@ -662,7 +548,6 @@ phase_deploy_user() {
 
             DEPLOY_USER="$new_user"
 
-            # Create user if doesn't exist
             if ! id -u "$DEPLOY_USER" &>/dev/null; then
                 log_info "Creating user ${DEPLOY_USER}..."
                 useradd --system --create-home --shell /bin/bash "$DEPLOY_USER"
@@ -680,48 +565,17 @@ phase_deploy_user() {
         exit 1
     fi
 
-    # Narrow-group hardening: per-purpose credential
-    # groups (least privilege). Each group grants access to ONE resource
-    # class — never put high-risk accounts (www-data) into a broad group.
-    #
-    #   gnode               — daemon primary, gnode user ONLY (no operator-
-    #                         account members; tightens blast radius if
-    #                         www-data is RCE-compromised)
-    #   geodineum-creds     — daemon + admin credential readers. Members:
-    #                         gnode user, deploy_user. Used by
-    #                         /etc/geodineum/credentials/.
-    #   geodineum-dash      — dashboard credential readers. Members:
-    #                         gnode user, www-data, deploy_user. Used by
-    #                         /etc/geodineum/dashboard/.
-    #   geodineum-bootstrap — bootstrap.env readers. Members: gnode,
-    #                         www-data, deploy_user and service users.
-    #                         Used by /etc/geodineum/bootstrap.env
-    #                         and PHP component env files. NOTHING ELSE
-    #                         goes in this group — it grants exactly
-    #                         bootstrap.env / php-env read, nothing more.
-    #   geodineum           — group of /opt/geodineum and the operator
-    #                         files. NO untrusted users (especially not
-    #                         www-data).
+    # One group per resource class (least privilege); www-data never joins a broad group.
     getent group gnode               &>/dev/null || groupadd --system gnode
     getent group geodineum           &>/dev/null || groupadd --system geodineum
     getent group geodineum-creds     &>/dev/null || groupadd --system geodineum-creds
     getent group geodineum-dash      &>/dev/null || groupadd --system geodineum-dash
     getent group geodineum-bootstrap &>/dev/null || groupadd --system geodineum-bootstrap
-    # Two single-purpose groups, deliberately NOT conflated:
-    #   geodineum-web  — reads web-site CREDENTIALS only (root:geodineum-web
-    #                    0640). Sole member www-data. A secret group; no
-    #                    source is ever filed here.
-    #   geodineum-code — reads deployed shared SOURCE only (gCore, gNode-Client,
-    #                    themes). Members www-data and every gCore-consuming
-    #                    service. Non-secret source; adding a member leaks no
-    #                    credential.
+    # geodineum-web reads web-site credentials; geodineum-code reads shared source only.
     getent group geodineum-web       &>/dev/null || groupadd --system geodineum-web
     getent group geodineum-code      &>/dev/null || groupadd --system geodineum-code
 
     # Dedicated COMMS identity, so a compromised gateway is not the daemon.
-    # geodineum-comms owns exactly its own
-    # credential (valkey_comms.password via group), its state dir
-    # (/var/lib/geodineum-comms), and bootstrap.env read.
     getent group geodineum-comms     &>/dev/null || groupadd --system geodineum-comms
     if ! getent passwd geodineum-comms &>/dev/null; then
         useradd --system --gid geodineum-comms --no-create-home \
@@ -730,10 +584,6 @@ phase_deploy_user() {
             log_warning "Could not create geodineum-comms user — COMMS will fall back to manual setup"
     fi
 
-    # Deploy user joins operator-side groups. Used for operational reads
-    # (e.g. `geodineum status` showing the dashboard credential location,
-    # or manual `valkey-cli` ACL checks). Deploy user NOT in gnode group
-    # — gnode group is daemon-only.
     usermod -aG geodineum           "$DEPLOY_USER" 2>/dev/null || true
     usermod -aG geodineum-creds     "$DEPLOY_USER" 2>/dev/null || true
     usermod -aG geodineum-dash      "$DEPLOY_USER" 2>/dev/null || true
@@ -742,18 +592,11 @@ phase_deploy_user() {
     usermod -aG systemd-journal     "$DEPLOY_USER" 2>/dev/null || true
     usermod -aG www-data            "$DEPLOY_USER" 2>/dev/null || true
 
-    # Service users joining geodineum-bootstrap (narrow group — grants
-    # bootstrap.env read only). www-data needs read for PHP gCore
-    # bootstrap-loader. gnode needs read for the daemon's ecosystem_config
-    # at startup.
-    # NOTHING ELSE goes in this group — adding a user here MUST be
-    # justified by a documented bootstrap.env read need.
+    # geodineum-bootstrap grants bootstrap.env read only; add a member only for a real read need.
     local _hosts_sites=1
     [[ "${DEPLOY_TIER:-}" == compute || "${DEPLOY_TIER:-}" == replica ]] && _hosts_sites=0
     (( _hosts_sites )) && usermod -aG geodineum-bootstrap www-data 2>/dev/null || true
     usermod -aG geodineum-bootstrap gnode    2>/dev/null || true
-    # COMMS daemon reads bootstrap.env for ecosystem_config at
-    # startup (same justification as gnode).
     if id geodineum-comms >/dev/null 2>&1; then
         usermod -aG geodineum-bootstrap geodineum-comms 2>/dev/null || true
     fi
@@ -761,11 +604,7 @@ phase_deploy_user() {
         usermod -aG geodineum-bootstrap geodine 2>/dev/null || true
     fi
 
-    # www-data reads its web-site creds via geodineum-web and the deployed
-    # shared source via geodineum-code. A gCore-consuming service user joins
-    # geodineum-code only, never www-data or geodineum-web.
-    # Group changes don't apply to a running process — Apache/PHP-FPM MUST be
-    # restarted; the next restart in this install flow picks them up.
+    # Group changes reach Apache/PHP-FPM only after their restart later in the install.
     if (( _hosts_sites )); then
         usermod -aG geodineum-web    www-data 2>/dev/null || true
         usermod -aG geodineum-code   www-data 2>/dev/null || true
@@ -778,13 +617,7 @@ phase_deploy_user() {
     log_info "geodineum-web members:       www-data (web-site creds only)"
     log_info "geodineum-code members:      www-data$(id geodine >/dev/null 2>&1 && echo ', geodine') (shared source only)"
 
-    # Persist DEPLOY_USER + DEPLOY_HOME for geodeploy.sh + cron-driven
-    # geodeploy-orchestrator. The cron context has minimal env (no
-    # SUDO_USER, no $USER from the install session) — without this file
-    # the auto-deploy library would have to guess. /etc/geodineum/deploy.env
-    # makes the deploy identity self-describing on disk and lives
-    # alongside bootstrap.env. /etc/geodineum is root:geodineum 0751: service
-    # users traverse to their own group-readable files without broad groups.
+    # Cron-driven auto-deploy has no SUDO_USER, so the deploy identity is recorded here.
     install -d -m 0751 -o root -g geodineum /etc/geodineum
     cat > /etc/geodineum/deploy.env <<EOF_DEPLOY_ENV
 DEPLOY_USER=${DEPLOY_USER}
@@ -852,11 +685,6 @@ EOF_DEPLOY_ENV
         fi
     fi
 
-    # load the deploy key into ssh-agent once so subsequent
-    # `sudo -u $DEPLOY_USER git clone ...` calls don't prompt for the
-    # passphrase per-repo (7 component clones + 1 self-clone + 1 ext
-    # = 9 prompts on a fresh install without this). Idempotent —
-    # if the key has no passphrase OR is already loaded, no-op.
     ensure_ssh_agent_loaded "$deploy_key" "$DEPLOY_USER"
 
     # --- SSH config for github-deploy host alias ---
@@ -879,9 +707,6 @@ SSHEOF
     fi
 
     # --- Resolve GitHub clone protocol ---
-    # Order: GEODINEUM_GIT_PROTOCOL=ssh with the deploy key; https with a
-    # token; the deploy key (its github-deploy alias is configured above);
-    # the deploy user's own SSH key; plain HTTPS.
     log_info "Resolving GitHub clone protocol..."
     if [[ "$GIT_PROTOCOL" == "ssh" ]] && [[ -f "${deploy_key}" ]]; then
         log_success "SSH (GEODINEUM_GIT_PROTOCOL=ssh + deploy key present)"
@@ -892,18 +717,11 @@ SSHEOF
         GITHUB_CLONE_PREFIX="https://x-access-token:${GITHUB_TOKEN}@github.com/"
         GITHUB_CLONE_SUFFIX=".git"
     elif [[ -f "${deploy_key}" ]] && grep -q "Host github-deploy" "$ssh_config" 2>/dev/null; then
-        # Common path. The deploy key exists and the alias is configured
-        # — this Phase 0 just set them up if they weren't already. No
-        # need to test (the `su -c "ssh -T"` test gives false-negatives
-        # under env-isolation; the actual `git clone` invocation in
-        # Phase 5 uses the same alias and works fine).
+        # Not probed with `ssh -T`: under su it gives false negatives.
         log_success "SSH via github-deploy (deploy key + alias present)"
         GITHUB_CLONE_PREFIX="git@github-deploy:"
         GITHUB_CLONE_SUFFIX=".git"
     elif su - "$DEPLOY_USER" -c "ssh -T git@github.com -o StrictHostKeyChecking=accept-new 2>&1" | grep -qi "successfully authenticated"; then
-        # Edge case: no deploy key present, but the deploy user's own
-        # personal SSH config (e.g. ~/.ssh/id_ed25519) authenticates
-        # against github.com. Use it.
         log_success "Deploy user's own SSH key authenticates to github.com — using that"
         GITHUB_CLONE_PREFIX="git@github.com:"
         GITHUB_CLONE_SUFFIX=".git"
@@ -925,7 +743,6 @@ SSHEOF
 phase_detection() {
     log_step "Phase 1/10: System Detection"
 
-    # git
     if command -v git &>/dev/null; then
         HAS_GIT=true
         log_success "git $(git --version 2>/dev/null | awk '{print $3}')"
@@ -933,17 +750,13 @@ phase_detection() {
         log_warning "git not found"
     fi
 
-    # PHP
     if command -v php &>/dev/null; then
         HAS_PHP=true
         local php_ver
         php_ver=$(timeout 5 php -v 2>/dev/null </dev/null | head -1 | awk '{print $2}')
         log_success "PHP ${php_ver:-unknown}"
-        # Check key extensions (single php -m call, cached)
         local php_modules
         php_modules=$(timeout 5 php -m 2>/dev/null </dev/null || echo "")
-        # yaml added to the required-extensions list. Without it
-        # gTemplate fatals on every request (yaml_parse_file undefined).
         for ext in redis json mbstring mysqli curl xml igbinary yaml; do
             if echo "$php_modules" | grep -qi "^${ext}$"; then
                 log_detail "ext-${ext} loaded"
@@ -955,7 +768,7 @@ phase_detection() {
         log_warning "PHP not found"
     fi
 
-    # Composer (redirect stdin to prevent "Do not run as root" interactive warning)
+    # stdin from /dev/null avoids composer's interactive "Do not run as root" prompt.
     if command -v composer &>/dev/null; then
         HAS_COMPOSER=true
         local comp_ver
@@ -965,12 +778,11 @@ phase_detection() {
         log_warning "Composer not found"
     fi
 
-    # Rust / cargo — check calling user's home too (sudo doesn't inherit PATH)
     local cargo_bin=""
     if command -v cargo &>/dev/null; then
         cargo_bin="cargo"
     else
-        # Under sudo, cargo is in the calling user's home, not root's
+        # Under sudo, cargo is in the calling user's home, not root's.
         local real_user="${SUDO_USER:-}"
         if [[ -n "$real_user" ]]; then
             local real_home
@@ -988,7 +800,6 @@ phase_detection() {
         log_warning "Rust/cargo not found"
     fi
 
-    # systemd
     if command -v systemctl &>/dev/null; then
         HAS_SYSTEMD=true
         log_success "systemd available"
@@ -996,7 +807,6 @@ phase_detection() {
         log_warning "systemd not found (services won't auto-start)"
     fi
 
-    # Apache
     if [[ "$HAS_SYSTEMD" == "true" ]] && systemctl is-active --quiet apache2 2>/dev/null; then
         HAS_APACHE=true
         log_success "Apache2 running"
@@ -1007,7 +817,6 @@ phase_detection() {
         log_detail "Apache2 not installed"
     fi
 
-    # MySQL/MariaDB
     if [[ "$HAS_SYSTEMD" == "true" ]] && (systemctl is-active --quiet mysql 2>/dev/null || systemctl is-active --quiet mariadb 2>/dev/null); then
         HAS_MYSQL=true
         log_success "MySQL/MariaDB running"
@@ -1018,24 +827,20 @@ phase_detection() {
         log_detail "MySQL/MariaDB not installed"
     fi
 
-    # wp-cli
     if command -v wp &>/dev/null; then
         log_success "WP-CLI found"
     else
         log_detail "WP-CLI not installed"
     fi
 
-    # certbot
     if command -v certbot &>/dev/null; then
         log_success "certbot found"
     else
         log_detail "certbot not installed"
     fi
 
-    # ValKey — multi-strategy detection
     detect_valkey
 
-    # gNode
     if [[ -x "${INSTALL_ROOT}/gNode/daemon/target/release/gnode-daemon" ]]; then
         GNODE_INSTALLED=true
         GNODE_SCRIPTS="${INSTALL_ROOT}/gNode/scripts"
@@ -1051,7 +856,6 @@ phase_detection() {
         log_success "gNode daemon running"
     fi
 
-    # Centralized config
     if [[ -d "/etc/geodineum" ]] && [[ -f "/etc/geodineum/bootstrap.env" ]]; then
         CONFIG_EXISTS=true
         log_success "/etc/geodineum/ configured"
@@ -1069,7 +873,6 @@ phase_detection() {
         log_detail "/etc/geodineum/ not yet created"
     fi
 
-    # Install root
     if [[ -d "$INSTALL_ROOT" ]]; then
         local comp_count
         comp_count=$(find "$INSTALL_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
@@ -1080,7 +883,6 @@ phase_detection() {
 }
 
 detect_valkey() {
-    # 1. systemd service (preferred: valkey-gnode on port 47445)
     if [[ "$HAS_SYSTEMD" == "true" ]] && systemctl is-active --quiet valkey-gnode 2>/dev/null; then
         HAS_VALKEY=true
         VALKEY_RUNNING=true
@@ -1088,7 +890,6 @@ detect_valkey() {
         return
     fi
 
-    # 2. Generic valkey-server process
     if pgrep -x valkey-server &>/dev/null; then
         HAS_VALKEY=true
         VALKEY_RUNNING=true
@@ -1096,7 +897,6 @@ detect_valkey() {
         return
     fi
 
-    # 3. Docker container
     if command -v docker &>/dev/null 2>&1; then
         if docker ps --format '{{.Names}}' 2>/dev/null | grep -qi valkey; then
             HAS_VALKEY=true
@@ -1106,14 +906,12 @@ detect_valkey() {
         fi
     fi
 
-    # 4. valkey-server binary available but not running
     if command -v valkey-server &>/dev/null; then
         HAS_VALKEY=true
         log_success "valkey-server binary found (not running)"
         return
     fi
 
-    # 5. Connection test (something might be on port 47445)
     if timeout 2 bash -c "echo PING | nc -q 1 127.0.0.1 47445 2>/dev/null" | grep -q PONG 2>/dev/null; then
         HAS_VALKEY=true
         VALKEY_RUNNING=true
@@ -1124,11 +922,7 @@ detect_valkey() {
     log_warning "ValKey not detected"
 }
 
-# Worker-side WireGuard bootstrap for a join-constellation install.
-# Installs wireguard-tools, generates this node's keypair, prints the public
-# key + public IP + the exact add-peer command for the master, then (when
-# interactive) brings the tunnel up and verifies the master is reachable.
-# Every step is non-fatal — WireGuard can also be finished by hand after.
+# Worker-side WireGuard setup for a join; every step is non-fatal and can be finished by hand.
 wizard_constellation_wireguard_prep() {
     local master_ip="${VALKEY_HOST:-10.66.0.1}"
     local wg_dir="/etc/wireguard"
@@ -1177,9 +971,6 @@ wizard_constellation_wireguard_prep() {
         return 0
     fi
 
-    # Read the worker config pasted directly into THIS install shell (the
-    # operator is already here — no separate file-save step). cat reads the
-    # paste until Ctrl-D; we save it, fill the private key, and bring it up.
     echo -e "  ${BOLD}Then paste that config below${NC} ${DIM}and press Ctrl-D on a blank line${NC}"
     echo -e "  ${DIM}(or just Ctrl-D to skip and finish WireGuard by hand later):${NC}"
     local pasted=""
@@ -1204,13 +995,7 @@ wizard_constellation_wireguard_prep() {
     fi
 }
 
-# Prompt for the master's ValKey credential(s) during a join install, so the
-# operator never has to shell into another window to copy them. Values are
-# captured here (hidden input) and written to /etc/geodineum/credentials/ in
-# phase_config, once the gnode user + creds dir exist. Daemon-bearing tiers
-# (full/compute/replica) need the gnode_daemon password; replica also needs the
-# replication password. The web tier runs no daemon — its per-site client creds
-# are minted at site-registration time on the master, so nothing to paste.
+# Captures the master's ValKey password(s) for daemon tiers; phase_config writes them to disk.
 wizard_constellation_credentials() {
     case "$DEPLOY_TIER" in
         full|compute|replica) ;;
@@ -1253,13 +1038,9 @@ wizard_constellation_credentials() {
     fi
 }
 
-# Apply the bundle `geodineum node add` writes (a path or the base64 line):
-# decode it, write the WireGuard config, and capture the ValKey credential(s)
-# into CONSTELLATION_*_PW (written to disk in phase_config). Returns non-zero
-# if the input isn't a valid bundle so the caller can fall back to manual.
+# Applies a `geodineum node add` bundle (file path or base64 line); non-zero if it is not one.
 wizard_apply_constellation_bundle() {
     local b64="$1"
-    # A path to the file `geodineum node add` wrote, or the bundle line itself.
     [[ -f "$b64" ]] && b64="$(tr -d '[:space:]' < "$b64")"
     local decoded
     decoded="$(printf '%s' "$b64" | base64 -d 2>/dev/null || true)"
@@ -1267,8 +1048,7 @@ wizard_apply_constellation_bundle() {
         log_error "Not a constellation bundle"
         return 1
     fi
-    # The constellations the master serves, its VPN address, this node's id and
-    # tier: a joined node serves what its master serves, under the name it was given.
+    # A joined node serves what its master serves, under the name it was given.
     local _b_name _b_master _b_cs _b_tier
     _b_name="$(printf '%s\n' "$decoded" | sed -n 's/^name=//p' | head -1)"
     _b_master="$(printf '%s\n' "$decoded" | sed -n 's/^master_ip=//p' | head -1)"
@@ -1305,14 +1085,11 @@ wizard_apply_constellation_bundle() {
     chmod 600 "$wg_conf" 2>/dev/null || true
     CONSTELLATION_DAEMON_PW="$(printf '%s\n' "$decoded" \
         | awk '/^---VALKEY_DAEMON_PASSWORD---/{f=1;next} /^---VALKEY_REPLICA_PASSWORD---/{f=0} f' | sed '/^[[:space:]]*$/d' | head -1)"
-    # V2 ends the replica section at the node-identity block; V1 bundles have
-    # no such block and end at ===END===, so both terminators are listed.
+    # The replica section ends at the node-identity block, or at ===END=== when there is none.
     CONSTELLATION_REPLICA_PW="$(printf '%s\n' "$decoded" \
         | awk '/^---VALKEY_REPLICA_PASSWORD---/{f=1;next} /^---VALKEY_NODE_USER---/{f=0} /^===END===/{f=0} f' | sed '/^[[:space:]]*$/d' | head -1)"
 
-    # Per-node ValKey identity (V2+). Absent from a V1 bundle, and absent from
-    # a V2 bundle whose master could not mint one — in both cases the node
-    # falls back to the shared gnode_daemon login and still works.
+    # Optional per-node ValKey identity; without it the node uses the shared gnode_daemon login.
     CONSTELLATION_NODE_USER="$(printf '%s\n' "$decoded" \
         | awk '/^---VALKEY_NODE_USER---/{f=1;next} /^---VALKEY_NODE_PASSWORD---/{f=0} f' | sed '/^[[:space:]]*$/d' | head -1)"
     CONSTELLATION_NODE_PW="$(printf '%s\n' "$decoded" \
@@ -1334,8 +1111,7 @@ wizard_apply_constellation_bundle() {
     return 0
 }
 
-# The constellation's name is its hash tag {<name>}: every topology key, heartbeat and
-# grant carries it, so an existing host keeps the name it has and only a new one asks.
+# The name is the hash tag on every topology key, so an existing host keeps its name.
 ask_constellation_name() {
     local existing=/etc/geodineum/components/gnode-daemon/daemon.env cur=""
     [[ -r "$existing" ]] && cur="$(sed -n 's/^GNODE_CONSTELLATIONS="\{0,1\}\([^",]*\).*/\1/p' "$existing" | sed -n 1p)"
@@ -1359,16 +1135,11 @@ ask_constellation_name() {
     log_info "Constellation name: ${GNODE_TOPOLOGY_NAMESPACE}"
 }
 
-# Worker enrollment entry point: offer the one-paste `expand` bundle; if the
-# operator skips it (or it's invalid), fall back to manual WireGuard +
-# credential entry.
+# Worker enrollment: the `node add` bundle, else manual WireGuard and credential entry.
 wizard_constellation_join() {
     local master_ip="${VALKEY_HOST:-10.66.0.1}"
 
-    # Already enrolled? If the WireGuard interface exists and the master is
-    # reachable over it (e.g. a reinstall — uninstall leaves /etc/wireguard
-    # intact), skip the WireGuard setup entirely and just collect the
-    # credential. Reaching 10.66.0.1 at all proves the tunnel is up.
+    # Uninstall keeps /etc/wireguard, so a reinstall may already have a working tunnel.
     if ip link show wg-geodineum >/dev/null 2>&1 && ping -c1 -W2 "$master_ip" >/dev/null 2>&1; then
         log_success "WireGuard already up — master ${master_ip} reachable; skipping WireGuard setup."
         wizard_constellation_credentials
@@ -1397,7 +1168,6 @@ wizard_constellation_join() {
         fi
     fi
 
-    # Manual fallback: generate key + paste WG config, then paste credential(s).
     wizard_constellation_wireguard_prep
     wizard_constellation_credentials
 }
@@ -1409,8 +1179,6 @@ wizard_constellation_join() {
 phase_selection() {
     log_step "Phase 2/10: Setup Wizard"
 
-    # --yes mode is non-interactive: default profile to standard if the
-    # operator didn't pass --profile/--components explicitly.
     if [[ "$YES_MODE" == "true" ]] && [[ -z "$PROFILE" ]] && [[ -z "$COMPONENTS" ]]; then
         PROFILE="standard"
         log_info "Profile: standard (--yes default)"
@@ -1419,7 +1187,6 @@ phase_selection() {
     fi
 
     if [[ -n "$PROFILE" ]] || [[ -n "$COMPONENTS" ]]; then
-        # Non-interactive: profile/components already set via CLI args
         [[ -n "$PROFILE" ]] && log_info "Profile: ${PROFILE}"
         [[ -n "$COMPONENTS" ]] && log_info "Components: ${COMPONENTS}"
         [[ -z "${MASTER_IP:-}" ]] && ask_constellation_name
@@ -1477,7 +1244,6 @@ phase_selection() {
 
             log_info "Deployment tier: ${DEPLOY_TIER}"
 
-            # Connection details (via WireGuard VPN)
             echo ""
             echo -e "  ${BOLD}Constellation connection${NC}"
             echo -e "  ${DIM}The master runs 'geodineum node add' for this node and provides${NC}"
@@ -1490,15 +1256,9 @@ phase_selection() {
             echo ""
             log_info "Constellation: ${VALKEY_HOST}:${VALKEY_PORT} (via WireGuard VPN)"
 
-            # One implementation of tier → profile + flags, shared with the
-            # non-interactive --deploy-tier path. A second copy here drifted
-            # from it once already.
             apply_deploy_tier
 
-            # Node ID — must be UNIQUE per node: it's the daemon's consumer
-            # name in the shared group, so a worker that reuses the master's
-            # "master" id contends over the same stream entries instead of
-            # load-balancing. Default to this host's name.
+            # Unique per node: it is the daemon's consumer name in the shared group.
             local _def_node; _def_node="$(hostname -s 2>/dev/null || echo worker)"
             if [[ "$YES_MODE" == "true" ]]; then
                 GNODE_NODE_ID="${GNODE_NODE_ID:-$_def_node}"
@@ -1509,10 +1269,6 @@ phase_selection() {
             fi
             log_info "Node ID: ${GNODE_NODE_ID}"
 
-            # Worker enrollment: paste the master's one-shot `expand` bundle
-            # (WireGuard config + credentials in one step), or fall back to
-            # manual WireGuard + credential entry. Everything stays in this
-            # install shell — no second window.
             wizard_constellation_join
             ;;
         *)
@@ -1542,7 +1298,6 @@ phase_selection() {
 
     # ─── Step 2: Component Selection ───────────────────────────
 
-    # Skip component selection if tier already chose a profile
     if [[ -n "$PROFILE" ]]; then
         log_info "Profile: ${PROFILE} (set by deployment tier)"
         return
@@ -1582,7 +1337,6 @@ phase_selection() {
 
     # ─── Child Theme ───────────────────────────────────────────
 
-    # Only ask if we're installing themes and no theme was specified via CLI
     if [[ -z "$SITE_THEME" ]] && [[ "$PROFILE" == "standard" || "$PROFILE" == "minimal" ]]; then
         echo ""
         echo -e "  ${BOLD}Include a child theme?${NC}"
@@ -1602,9 +1356,6 @@ phase_selection() {
     fi
 
     # ─── Notification daemon (optional, even in standard) ──────
-    # Skipped when the operator already chose explicitly via --no-comms /
-    # --with-comms. Default keeps it (the solo/master case); declining
-    # suits a node that uses a dedicated SMTP node or the master's COMMS.
     if [[ "$PROFILE" == "standard" ]] && [[ "$COMMS_EXPLICIT" != "true" ]]; then
         echo ""
         echo -e "  ${BOLD}Include the notification daemon (Geodineum-COMMS)?${NC}"
@@ -1621,7 +1372,6 @@ phase_selection() {
     fi
 }
 
-# Interactive custom component selection
 wizard_custom_selection() {
     echo ""
     echo -e "  ${BOLD}Select components to install:${NC}"
@@ -1679,13 +1429,11 @@ phase_prerequisites() {
 
     log_step "Phase 3/10: Prerequisites"
 
-    # Package manager detection
     local HAS_APT=false
     if command -v apt-get &>/dev/null; then
         HAS_APT=true
     fi
 
-    # Root check
     if [[ "$EUID" -ne 0 ]]; then
         if [[ "$DRY_RUN" == "true" ]]; then
             log_warning "Not running as root (dry-run mode — continuing)"
@@ -1697,7 +1445,6 @@ phase_prerequisites() {
         log_success "Running as root"
     fi
 
-    # Helper: install apt packages if apt is available
     apt_install() {
         local description="$1"; shift
         if [[ "$DRY_RUN" == "true" ]]; then
@@ -1715,7 +1462,6 @@ phase_prerequisites() {
         return 0
     }
 
-    # Track if we already ran apt-get update this session
     local APT_UPDATED=false
     apt_update() {
         if [[ "$APT_UPDATED" != "true" ]] && [[ "$HAS_APT" == "true" ]] && [[ "$DRY_RUN" != "true" ]]; then
@@ -1727,7 +1473,6 @@ phase_prerequisites() {
 
     # ─── Core tools (always needed) ──────────────────────────
 
-    # git
     if [[ "$HAS_GIT" != "true" ]]; then
         log_info "Installing git..."
         apt_update
@@ -1735,14 +1480,13 @@ phase_prerequisites() {
         log_success "git installed"
     fi
 
-    # jq — needed for config seeding (manager-defaults.json parsing)
     if ! command -v jq &>/dev/null; then
         log_info "Installing jq..."
         apt_update
         apt_install "jq" jq || log_warning "jq install failed — config seeding will need manual jq install"
     fi
 
-    # yq — needed for CLI manifest discovery (geodeploy.yaml cli: sections)
+    # yq reads the CLI sections of each component's geodeploy.yaml.
     if ! command -v yq &>/dev/null; then
         log_info "Installing yq..."
         local yq_arch="amd64"
@@ -1759,11 +1503,7 @@ phase_prerequisites() {
         fi
     fi
 
-    # python3-jsonschema — needed for `geodineum validate` (manifest schema checks).
-    # The canonical schema declares $schema=draft/2020-12 and uses $defs (added
-    # in Draft 2019-09), which requires jsonschema >= 4.0. Ubuntu 22.04 LTS
-    # ships python3-jsonschema 3.x via apt; if that's what we end up with we
-    # upgrade to 4.x via pip (with --break-system-packages for PEP 668 hosts).
+    # `geodineum validate` needs Draft 2020-12 (jsonschema >= 4); some distros package 3.x.
     _need_jsonschema_v4=0
     if ! python3 -c 'import jsonschema' &>/dev/null; then
         log_info "Installing python3-jsonschema (apt)..."
@@ -1782,9 +1522,7 @@ phase_prerequisites() {
             apt_install "python3-pip" python3-pip 2>/dev/null || true
         fi
         if command -v pip3 &>/dev/null; then
-            # PEP 668 (Ubuntu 23.04+, Debian 12+) blocks system-wide pip
-            # installs by default; --break-system-packages allows it. Older
-            # systems silently ignore the flag.
+            # PEP 668 hosts need --break-system-packages; older pip rejects it, hence the retry.
             pip3 install --break-system-packages --quiet 'jsonschema>=4.0' 2>/dev/null \
                 || pip3 install --quiet 'jsonschema>=4.0' 2>/dev/null \
                 || log_warning "jsonschema upgrade failed — \`geodineum validate\` will report 'no Draft202012Validator'"
@@ -1797,17 +1535,7 @@ phase_prerequisites() {
     fi
     unset _need_jsonschema_v4
 
-    # python3-redis — the Python ValKey client. Two consumers today: the
-    # receipt-stream verification script and Python services that talk to
-    # ValKey directly.
-    #
-    # The floor is 4.3, and it is not cosmetic: gNode publishes its
-    # capabilities as ValKey FUNCTIONS, and `Redis.fcall()` did not exist
-    # before redis-py 4.3. An older client connects and authenticates
-    # perfectly and then cannot call anything gNode actually exposes — which
-    # presents as a working connection with mysteriously missing features.
-    # Ubuntu 22.04 LTS ships 3.5.3, so apt alone is NOT sufficient there; same
-    # shape as the jsonschema case above, same remedy.
+    # redis-py >= 4.3: gNode's capabilities are ValKey FUNCTIONs and older clients lack fcall().
     _need_redis_43=0
     if ! python3 -c 'import redis' &>/dev/null; then
         log_info "Installing python3-redis (apt)..."
@@ -1816,8 +1544,6 @@ phase_prerequisites() {
         _need_redis_43=1
     fi
     if python3 -c 'import redis' &>/dev/null; then
-        # Probe the capability, not the version string: the attribute is what
-        # callers actually need and it cannot disagree with itself.
         python3 -c 'import redis, sys; sys.exit(0 if hasattr(redis.Redis, "fcall") else 1)' &>/dev/null \
             || _need_redis_43=1
     else
@@ -1841,15 +1567,12 @@ phase_prerequisites() {
     fi
     unset _need_redis_43
 
-    # python3-requests — the pipeline worker template imports it alongside
-    # redis. No version floor; any packaged requests is fine.
     if ! python3 -c 'import requests' &>/dev/null; then
         log_info "Installing python3-requests (apt)..."
         apt_install "python3-requests" python3-requests || \
             log_warning "python3-requests install failed — generated pipeline workers will not start"
     fi
 
-    # curl — needed for Rust install, Composer, downloads
     if ! command -v curl &>/dev/null; then
         log_info "Installing curl..."
         apt_update
@@ -1857,7 +1580,7 @@ phase_prerequisites() {
         log_success "curl installed"
     fi
 
-    # unzip — needed for Composer
+    # Composer needs unzip.
     if ! command -v unzip &>/dev/null; then
         apt_update
         apt_install "unzip" unzip 2>/dev/null || true
@@ -1898,18 +1621,7 @@ phase_prerequisites() {
         fi
     fi
 
-    # system libs that Geodineum's Rust crates link against. Previously,
-    # only the source-build-Valkey path installed pkg-config + build-
-    # essential + libsystemd-dev (Phase 4); Geodineum-COMMS also needs
-    # libssl-dev (`lettre` with feature `tokio1-native-tls` → openssl-sys).
-    # gNode's daemon doesn't need libssl-dev (its redis client uses
-    # tokio-comp only), which is why gNode built fine while COMMS
-    # silently failed with "Could not find OpenSSL development headers".
-    # Operator-facing symptom previously:
-    #   [INFO] Building Geodineum-COMMS notification daemon...
-    #   [WARN] COMMS build failed — notifications will not be available
-    # (the actual cargo error was hidden by 2>/dev/null on the build line;
-    # stderr is surfaced there as well.)
+    # System libraries the Rust crates link against (COMMS needs libssl-dev for openssl-sys).
     if needs_daemon "${resolved[@]}" && [[ "$SKIP_BUILD" != "true" ]] && [[ "$HAS_APT" == "true" ]]; then
         log_info "Installing Rust build dependencies (build-essential, pkg-config, libssl-dev, libsystemd-dev)..."
         apt_update
@@ -1924,21 +1636,16 @@ phase_prerequisites() {
         log_info "PHP needed for gCore/themes"
         apt_update
         if confirm "Install PHP 8.x and required extensions?"; then
-            # php-yaml is required by gTemplate's config loader
-            # (yaml_parse_file in inc/registration.php:124). Without it,
-            # every WordPress request fatals with "Call to undefined
-            # function gTemplate\yaml_parse_file" and the site returns
-            # a 500 before rendering anything.
+            # gTemplate's config loader needs php-yaml.
             apt_install "PHP" php php-cli php-fpm php-redis php-mbstring php-xml \
                 php-curl php-zip php-intl php-igbinary php-yaml php-apcu || exit 1
-            # php-json is bundled in PHP 8.x on some distros
+            # Bundled into PHP 8 on some distros, so failure is fine.
             apt_install "php-json" php-json 2>/dev/null || true
             HAS_PHP=true
             log_success "PHP installed with extensions"
         fi
     fi
 
-    # php-mysql — needed for WordPress database access
     if needs_wordpress "${resolved[@]}" && [[ "$HAS_PHP" == "true" ]]; then
         if ! php -m 2>/dev/null | grep -qi "^mysqli$"; then
             log_info "Installing php-mysql for WordPress..."
@@ -1947,7 +1654,6 @@ phase_prerequisites() {
         fi
     fi
 
-    # Composer
     if needs_php "${resolved[@]}" && [[ "$HAS_COMPOSER" != "true" ]]; then
         log_info "Composer needed for PHP dependencies"
         if [[ "$DRY_RUN" == "true" ]]; then
@@ -1978,12 +1684,9 @@ phase_prerequisites() {
         if confirm "Install Apache2 web server?"; then
             apt_install "Apache2" apache2 || exit 1
 
-            # Enable required modules
             if [[ "$DRY_RUN" != "true" ]]; then
                 a2enmod rewrite headers expires ssl proxy_fcgi setenvif http2 2>/dev/null || true
-                # Bootstrap PHP handler: stock Debian FPM conf until
-                # ensure_php_fpm swaps in the geodineum pool. mod_php is
-                # never installed — it pins prefork and disables HTTP/2.
+                # Stock FPM conf until ensure_php_fpm swaps in the pool; mod_php would pin prefork and disable HTTP/2.
                 local fpm_conf
                 fpm_conf=$(find /etc/apache2/conf-available -name "php*-fpm.conf" 2>/dev/null | head -1)
                 if [[ -n "$fpm_conf" ]]; then
@@ -2041,15 +1744,7 @@ phase_prerequisites() {
             if [[ "$DRY_RUN" == "true" ]]; then
                 log_dry "Download wp-cli.phar to /usr/local/bin/wp"
             else
-                # wp-cli must be world-executable. The site-installer
-                # runs `sudo -u www-data wp ...` (see gTemplate/scripts/
-                # install-geodineum.sh:396) so www-data needs exec on
-                # /usr/local/bin/wp. WP-CLI ships no secrets — it's a
-                # public phar — and standard distribution practice is
-                # 0755 root:root. Previously, we chmod'd 750, which silently
-                # denied www-data and broke `wp core download` with
-                # "sudo: unable to execute /usr/local/bin/wp: Permission
-                # denied".
+                # 0755: the site installer runs `sudo -u www-data wp`; the phar holds no secrets.
                 curl -sS -o /tmp/wp-cli.phar https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && \
                     chmod 0755 /tmp/wp-cli.phar && \
                     mv /tmp/wp-cli.phar /usr/local/bin/wp && \
@@ -2089,17 +1784,10 @@ phase_prerequisites() {
             mkdir -p "$INSTALL_ROOT"
         fi
     fi
-    # Always normalize ownership + permissions on the install root so
-    # Phase 5's `sudo -u ${DEPLOY_USER} git clone ...` can write into it.
-    # Previously the `mkdir + chmod 750` left it root:root, which silently
-    # broke clones (git's "Permission denied" reached stderr but was lost
-    # in the tee pipeline, leaving operators with an opaque "Failed to
-    # fetch <component>" with no underlying cause).
+    # The deploy user clones into the install root, so it must own it.
     if [[ "$DRY_RUN" != "true" ]] && [[ -d "$INSTALL_ROOT" ]]; then
         local _owner="${DEPLOY_USER:-${SUDO_USER:-root}}"
         local _group="geodineum"
-        # Group must exist before chown can use it; if Phase 7 hasn't
-        # created it yet we fall back to the deploy user's primary group.
         if ! /usr/bin/getent group "$_group" >/dev/null 2>&1; then
             _group="$_owner"
         fi
@@ -2113,21 +1801,7 @@ phase_prerequisites() {
 # PHASE 4: ValKey Setup
 # =============================================================================
 
-# Stop + disable + remove any legacy ValKey systemd units so the canonical
-# /etc/systemd/system/valkey-gnode.service is the only ValKey on the box.
-# Targets:
-#   /etc/systemd/system/valkey.service          — pre-rename Geodineum unit
-#   /etc/systemd/system/valkey-server.service   — older Geodineum unit (or
-#                                                 apt's own if it landed in
-#                                                 /etc rather than /lib)
-#   /lib/systemd/system/valkey-server.service   — apt-upstream unit (we
-#                                                 leave the file alone but
-#                                                 mask the unit so systemd
-#                                                 won't start it; this lets
-#                                                 a future apt removal of
-#                                                 valkey-server clean up).
-# Idempotent. Safe to call repeatedly. Pre-launch posture: no backward
-# compatibility for old unit names — one canonical, hard-stop on drift.
+# Keeps valkey-gnode.service the only ValKey unit: other units are removed from /etc or masked.
 purge_legacy_valkey_units() {
     if [[ "$DRY_RUN" == "true" ]]; then
         log_dry "purge legacy valkey units (valkey.service, valkey-server.service)"
@@ -2137,16 +1811,12 @@ purge_legacy_valkey_units() {
     local _purged=0
     local _legacy
     for _legacy in valkey valkey-server; do
-        # Skip if the unit doesn't exist on this host
         systemctl list-unit-files "${_legacy}.service" 2>/dev/null | grep -q "${_legacy}.service" || continue
 
-        # Stop + disable. Both are idempotent; non-existent is fine.
         systemctl stop    "${_legacy}.service" 2>/dev/null || true
         systemctl disable "${_legacy}.service" 2>/dev/null || true
 
-        # Remove the unit file if it lives in /etc/ (operator-managed). The
-        # apt-managed copy in /lib/ stays in place; we mask it instead so
-        # systemd refuses to start it but apt can still uninstall cleanly.
+        # The apt-owned copy in /lib is masked, not deleted, so apt can still remove it.
         if [[ -f "/etc/systemd/system/${_legacy}.service" ]]; then
             rm -f "/etc/systemd/system/${_legacy}.service"
             log_detail "Removed legacy unit /etc/systemd/system/${_legacy}.service"
@@ -2165,12 +1835,7 @@ purge_legacy_valkey_units() {
     return 0
 }
 
-# Ensure /etc/systemd/system/valkey-gnode.service exists with the right
-# ExecStart for the binary that's actually installed. Idempotent — if the
-# unit already exists (typical: source build path wrote it via
-# install_valkey_from_source), this returns success without touching it.
-# Called by the apt install path so apt's upstream valkey-server.service
-# doesn't become the de-facto running unit.
+# Writes valkey-gnode.service for the installed binary unless the unit already exists.
 ensure_canonical_valkey_unit() {
     local unit_path="/etc/systemd/system/valkey-gnode.service"
 
@@ -2183,7 +1848,6 @@ ensure_canonical_valkey_unit() {
         return 0  # already canonical
     fi
 
-    # Detect the binary path. Source build → /usr/local/bin; apt → /usr/bin.
     local valkey_bin="" valkey_cli_bin=""
     local _cand
     for _cand in /usr/local/bin/valkey-server /usr/bin/valkey-server; do
@@ -2233,9 +1897,7 @@ UNIT_EOF
     return 0
 }
 
-# ValKey CLI without a local server. Join/full-node tiers use the master's
-# ValKey over VPN, but bootstrap-loader.sh and onboarding still shell out to
-# a local valkey-cli — the remote-skip path never installed one.
+# valkey-cli without a local server: nodes using a remote ValKey still shell out to it.
 ensure_valkey_cli() {
     /usr/bin/command -v valkey-cli >/dev/null 2>&1 && return 0
     log_info "Installing valkey-cli (client only — server stays remote)"
@@ -2266,17 +1928,7 @@ ensure_valkey_cli() {
     return 1
 }
 
-# Build Valkey from source. Used on Ubuntu 22.04 and older Debian where
-# the `valkey-server` package isn't in apt yet. Pinned to a known-good
-# release tag; can be overridden with GEODINEUM_VALKEY_VERSION.
-#
-# Sets up /usr/local/bin/{valkey-server,valkey-cli}, /etc/valkey/valkey.conf,
-# /var/lib/valkey, /var/log/valkey, the `valkey` system user, and the
-# canonical Geodineum systemd unit at /etc/systemd/system/valkey-gnode.service
-# (project-distinguished name; avoids collision with apt's upstream
-# valkey-server.service which is purged by purge_legacy_valkey_units()).
-# Downstream phases use `systemctl ... valkey-gnode` like they would
-# for the apt-installed package.
+# For distros without a valkey-server package; version via GEODINEUM_VALKEY_VERSION.
 install_valkey_from_source() {
     local valkey_ver="${GEODINEUM_VALKEY_VERSION:-8.0.2}"
     log_info "Installing build dependencies (build-essential, pkg-config, libsystemd-dev)..."
@@ -2302,27 +1954,16 @@ install_valkey_from_source() {
         tar xzf valkey.tar.gz
         cd "valkey-${valkey_ver}"
         log_info "Compiling Valkey ${valkey_ver} (this takes ~30-60 seconds)..."
-        # USE_SYSTEMD=yes lets the unit use Type=notify; BUILD_TLS=no
-        # keeps the dep set lean (we don't terminate TLS at the daemon
-        # for Geodineum's intra-host topology).
+        # USE_SYSTEMD=yes lets the unit use Type=notify.
         if ! make USE_SYSTEMD=yes BUILD_TLS=no -j"$(nproc)" >/dev/null 2>&1; then
             return 1
         fi
 
         install -m 0755 src/valkey-server /usr/local/bin/valkey-server
         install -m 0755 src/valkey-cli    /usr/local/bin/valkey-cli
-        # redis-cli compat shim — many ecosystem scripts + ops habits
-        # type `redis-cli`; this lets them keep working post-source-build.
         ln -sf /usr/local/bin/valkey-cli /usr/local/bin/redis-cli
 
-        # System user + group for the daemon (no shell, no home). The
-        # uninstaller removes the user but leaves the group (per its
-        # "preserved if it has members" gate); a subsequent install run
-        # then hits `useradd: group valkey exists - if you want to add
-        # this user to that group, use -g.` and fails to create the
-        # user. Then `install -o valkey` fails with "invalid user
-        # 'valkey'", /var/lib/valkey isn't created, and the daemon
-        # can't start. Be explicit about the group binding.
+        # The group can outlive an uninstall, so the user is bound to it explicitly.
         if ! getent group valkey >/dev/null 2>&1; then
             groupadd --system valkey
         fi
@@ -2395,11 +2036,7 @@ VALKEY_UNIT_EOF
     return "$rc"
 }
 
-# thin wrappers over the generic primitives in lib/component-primitives.sh.
-# The valkey-specific recovery patterns (statoverride cleanup, system-user
-# creation, half-configured-package recovery) generalize to any apt-installed
-# system daemon; the generic versions can be re-used for future components
-# (gNode extensions, gCore pro managers, etc.).
+# Wrappers over lib/component-primitives.sh.
 clear_orphaned_valkey_statoverrides() {
     clear_orphaned_statoverrides valkey redis
 }
@@ -2408,54 +2045,19 @@ ensure_valkey_system_user() {
     ensure_system_user valkey /var/lib/valkey "Valkey Server"
 }
 
-# thin wrapper. Two-layer dpkg recovery (missing /etc/<pkg>/ dir,
-# missing conffile) is generic — see ensure_package_configured in
-# lib/component-primitives.sh.
 ensure_valkey_package_configured() {
     ensure_package_configured valkey-server /etc/valkey /etc/valkey/valkey.conf
 }
 
-# thin wrapper. valkey.conf's `dir /var/lib/valkey` directive +
-# the systemd unit's ReadWritePaths require these two dirs; an earlier
-# `apt purge` cycle wipes them. /run/valkey is recreated each boot by
-# RuntimeDirectory=valkey so we only touch the persistent paths.
+# `apt purge` removes these; /run/valkey comes from RuntimeDirectory= at each start.
 ensure_valkey_data_dirs() {
     ensure_data_dirs valkey valkey 0750 /var/lib/valkey /var/log/valkey
 }
 
-# Generate (or recover) the ValKey admin password and ensure requirepass
-# is set in /etc/valkey/valkey.conf.
-#
-# Idempotent: if /etc/geodineum/credentials/valkey.password
-# exists with content, we re-use it (and align requirepass to it).
-# Otherwise we generate fresh via `openssl rand -base64 32`.
-#
-# Must be called BEFORE the first `systemctl start valkey-server` so the
-# server comes up authenticated. Phase 6's ensure_bootstrap_env_written
-# normally creates the credentials/ dir; we create it here too because
-# Phase 4 runs before Phase 6.
-#
-# Permissions: credentials dir 0750 root:geodineum, password file 0640
-# ${DEPLOY_USER}:geodineum (per invariant F — file-path secrets only).
-# configure aclfile in valkey.conf so ACL SETUSER + ACL SAVE actually
-# persist across valkey restarts. Without this, the ACL users we provision
-# (gnode_daemon, geodineum_dashboard, gnode_client_*) live in memory only.
-# `ACL SAVE` silently no-ops (its error is swallowed by `|| true` in
-# provision_daemon_acl), so any restart — boot, logrotate, manual — wipes
-# the ACL and the next auth attempt fails with WRONGPASS.
-#
-# Must be called BEFORE the restart that picks up requirepass, so both
-# the password and aclfile take effect together.
+# ACL SAVE needs an aclfile to persist users; call after the admin password, before the restart.
 ensure_valkey_aclfile_configured() {
     local conf_file="/etc/valkey/valkey.conf"
-    # aclfile lives under the valkey data dir, NOT /etc/valkey. The
-    # systemd unit runs valkey-server with ProtectSystem=strict, which makes
-    # /etc read-only TO THE DAEMON regardless of file ownership. With the
-    # aclfile in /etc, every `ACL SAVE` failed with "Read-only file system",
-    # so daemon/dashboard/per-site ACL users never persisted and the next
-    # restart reloaded a default-only file → WRONGPASS for all of them +
-    # a crashed daemon. /var/lib/valkey is in the unit's ReadWritePaths,
-    # so the daemon can actually rewrite the aclfile there.
+    # ProtectSystem=strict makes /etc read-only to the daemon; /var/lib/valkey is writable.
     local acl_file="/var/lib/valkey/users.acl"
     local admin_pwfile="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}/valkey.password"
 
@@ -2463,12 +2065,7 @@ ensure_valkey_aclfile_configured() {
         return 0
     fi
 
-    # users.acl must define the default user with the admin
-    # password BEFORE the restart that enables aclfile mode. Once aclfile
-    # is set, default is governed by users.acl, not requirepass — an
-    # empty file causes valkey to reset default to nopass.
-    # Valkey 8.0.2 rejects comment lines too: every line must start with
-    # the 'user' keyword.
+    # In aclfile mode users.acl, not requirepass, governs the default user; no comment lines allowed.
     local admin_password=""
     if [[ -s "$admin_pwfile" ]]; then
         admin_password="$(cat "$admin_pwfile")"
@@ -2500,6 +2097,7 @@ ensure_valkey_aclfile_configured() {
     return 0
 }
 
+# Generates or reuses the ValKey admin password and sets requirepass to it.
 ensure_valkey_admin_password_set() {
     local cred_dir="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}"
     local pwfile="${cred_dir}/valkey.password"
@@ -2510,18 +2108,7 @@ ensure_valkey_admin_password_set() {
         return 0
     fi
 
-    # Enforce dir perms on EVERY install, not just creation.
-    # dir root:geodineum-creds 0751. o+x allows traversal so www-data
-    # (which is NOT in geodineum-creds) can reach valkey_client_<site>.password
-    # files (owned gnode:www-data). Listing is still group-only (no o+r),
-    # and per-file modes still hide the admin/daemon passwords from www-data.
-    # Previously,: 0750 blocked traversal entirely, making client ACL passwords
-    # unreachable from PHP and breaking gCore's bootstrap-loader with "no
-    # readable ValKey password under /etc/geodineum/credentials".
-    # --keep-data preserves this dir across reinstall, so a stale 0750
-    # would survive and silently force every site into free-tier. install -d
-    # is idempotent — it re-applies mode+ownership to an existing dir — so
-    # we run it unconditionally rather than only when the dir is absent.
+    # 0751 on every run: www-data traverses to its own client password; per-file modes hide the rest.
     if getent group geodineum-creds >/dev/null 2>&1; then
         install -d -m 0751 -o root -g geodineum-creds "$cred_dir"
     else
@@ -2537,15 +2124,10 @@ ensure_valkey_admin_password_set() {
         umask 077
         printf '%s' "$password" > "$pwfile"
         chmod 0640 "$pwfile" 2>/dev/null || true
-        # admin password owned root:geodineum-creds. Root writes
-        # initial value; geodineum-creds group readers (gnode daemon +
-        # deploy_user) can read for ACL operations. www-data CANNOT
-        # read (not in geodineum-creds group).
         chown "root:geodineum-creds" "$pwfile" 2>/dev/null || true
         log_success "Generated ValKey admin password at ${pwfile}"
     fi
 
-    # Idempotent requirepass: replace if present, append if absent.
     if grep -qE '^[[:space:]]*requirepass[[:space:]]' "$conf_file"; then
         sed -i "s|^[[:space:]]*requirepass[[:space:]].*|requirepass ${password}|" "$conf_file"
         log_detail "ValKey requirepass updated in ${conf_file}"
@@ -2558,9 +2140,6 @@ ensure_valkey_admin_password_set() {
     return 0
 }
 
-# Verify the admin password authenticates against running ValKey.
-# Allows ~5s for valkey-server to bind/accept after restart. Soft-fail:
-# returns non-zero on failure but does not exit (caller decides).
 verify_valkey_admin_auth() {
     local cred_dir="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}"
     local pwfile="${cred_dir}/valkey.password"
@@ -2590,7 +2169,6 @@ verify_valkey_admin_auth() {
 phase_valkey() {
     local resolved=($@)
 
-    # Only needed if profile includes daemon or client
     local needs_valkey=false
     for comp in "${resolved[@]}"; do
         case "$comp" in
@@ -2613,38 +2191,21 @@ phase_valkey() {
 
     log_step "Phase 4/10: ValKey Setup"
 
-    # When Phase 1 detected an already-running valkey-server, we still
-    # need to enforce Geodineum's auth contract: requirepass set in the
-    # conf, admin password file at /etc/geodineum/credentials/valkey.password,
-    # and authenticated PING on the canonical port. Pre-fix this branch
-    # short-circuited the entire phase — leaving downstream phases (7, 8,
-    # 9, Verification) to fail when the existing valkey was running on
-    # the default port or without auth.
+    # A running ValKey still has to meet the auth contract: requirepass, admin password, authenticated PING.
     if [[ "$VALKEY_RUNNING" == "true" ]]; then
         log_info "ValKey already running — verifying Geodineum auth contract"
         ensure_valkey_data_dirs
-        # admin_password_set MUST run before aclfile_configured so
-        # the latter can read the password and seed users.acl's default
-        # user before the restart enables aclfile mode.
         ensure_valkey_admin_password_set
         ensure_valkey_aclfile_configured
 
-        # Apply requirepass — valkey-server only honors a new requirepass
-        # after restart (or CONFIG SET REWRITE, but we don't have admin
-        # auth yet for that). Restart is the simpler invariant.
+        # Without admin auth there is no CONFIG SET, so a restart applies requirepass.
         if [[ -f /etc/valkey/valkey.conf ]]; then
             systemctl restart valkey-gnode 2>/dev/null || true
         fi
 
         if verify_valkey_admin_auth; then
             log_success "ValKey running and authenticated"
-            # the resume path above rewrote users.acl (default user only) and
-            # restarted ValKey, which drops the runtime-provisioned SERVICE ACL users.
-            # The fresh path re-provisions them at the end of this phase; on the resume
-            # path we must do it here too, before the early return — otherwise any
-            # reinstall/resume leaves gnode_daemon/COMMS/dashboard unable to auth
-            # (WRONGPASS → daemon won't start, Lua load + onboarding fail). Idempotent:
-            # each provision_*_acl recovers the existing password from its cred file.
+            # users.acl was rewritten with the default user only, so the service users are provisioned again.
             if [[ "$VALKEY_REPLICA" != "true" ]]; then
                 provision_daemon_acl
                 provision_comms_acl
@@ -2656,7 +2217,6 @@ phase_valkey() {
 
         log_warning "ValKey is running but Geodineum auth not yet satisfied"
         log_info "Falling through to full Phase 4 setup (port + ACLs + restart)"
-        # Reset the flag so the path below treats this as an install case.
         VALKEY_RUNNING=false
     fi
 
@@ -2665,7 +2225,6 @@ phase_valkey() {
         return
     fi
 
-    # Delegate to gNode's smart setup script if available
     local smart_setup=""
     for candidate in \
         "${INSTALL_ROOT}/gNode/scripts/setup-valkey-smart.sh" \
@@ -2682,12 +2241,10 @@ phase_valkey() {
         "$smart_setup" || {
             log_warning "Smart setup had issues — see output above"
         }
-        # Re-detect after setup
         detect_valkey
         return
     fi
 
-    # Fallback: manual ValKey installation
     echo ""
     echo "  ${BOLD}ValKey installation method:${NC}"
     echo ""
@@ -2704,12 +2261,6 @@ phase_valkey() {
         echo ""
     fi
 
-    # validate input. Pre-fix the case statement silently fell
-    # through on any non-1/2/3 keystroke (operator muscle-memory hitting
-    # `y` after a sequence of yes/no prompts is a natural failure mode).
-    # No installation occurred → Phase 7 failed (no admin password) →
-    # Phase 8/9 cascaded → [FAIL] ValKey Setup at Phase 10. Validate up
-    # front and snap to the documented default.
     if [[ ! "${valkey_choice:-1}" =~ ^[123]$ ]]; then
         log_warning "Invalid choice '${valkey_choice}' — defaulting to (1) native"
         valkey_choice="1"
@@ -2719,26 +2270,10 @@ phase_valkey() {
         1)
             log_info "Installing Valkey..."
 
-            # Purge any legacy unit names BEFORE installing. Idempotent;
-            # ensures the canonical valkey-gnode.service is the only ValKey
-            # systemd unit. See purge_legacy_valkey_units() docstring for
-            # the rename rationale.
             purge_legacy_valkey_units
 
             # ── dpkg pre-flight ────────────────────────────────────────────
-            # Self-heal corruption a previously uninstall (or any broken
-            # install cycle) could have left behind: orphaned statoverride
-            # records pointing at a deleted 'valkey' user, missing system
-            # user, missing /etc/valkey/ directory, missing conffile, or
-            # half-configured valkey-server stuck in 'iF'. Without this,
-            # `apt-get install valkey-server` fails at postinst and EVERY
-            # subsequent apt op fails the same way (dpkg keeps re-
-            # attempting the failed configure). Ordering matters:
-            # statoverrides cleared first (so adduser doesn't conflict),
-            # then user created, then ensure_valkey_package_configured
-            # creates /etc/valkey/, runs `dpkg --configure -a`, and if the
-            # conffile is still missing escalates to a --force-confmiss
-            # reinstall.
+            # Repairs state an earlier uninstall can leave, which would fail every later apt run; order matters.
             clear_orphaned_valkey_statoverrides
             ensure_valkey_system_user
             if ! ensure_valkey_package_configured; then
@@ -2751,13 +2286,7 @@ phase_valkey() {
                 return 1
             fi
 
-            # Resolution path:
-            #   1. Try `valkey-server` from native apt (Ubuntu 24.04+, Debian 13+).
-            #   2. Try `valkey` (alias the PPA might use).
-            #   3. Build Valkey from source — works on any Ubuntu/Debian.
-            # If redis-server is already installed from a previous run,
-            # stop + purge it first (operator-confirmed: actual Valkey, not
-            # the redis-server fallback).
+            # apt valkey-server, then apt valkey, then a source build; an installed redis-server is replaced.
             if dpkg -l redis-server 2>/dev/null | grep -q "^ii"; then
                 log_info "redis-server detected — switching to Valkey (per operator preference)"
                 systemctl stop redis-server 2>/dev/null || true
@@ -2788,13 +2317,7 @@ phase_valkey() {
             fi
             export VALKEY_PKG="$valkey_pkg"
 
-            # Recover from a half-purged install: when valkey-server has been
-            # `apt purge`-d in the past, dpkg marks /etc/valkey/valkey.conf
-            # as obsolete and skips re-extracting it on a plain reinstall —
-            # leaving the package "installed" but conffile-less, while the
-            # systemd unit hard-codes that exact path in ExecStart. Detect +
-            # repair with --force-confmiss; otherwise valkey-server fails on
-            # boot and ensure_valkey_admin_password_set silently bails.
+            # After an earlier purge, a plain reinstall does not restore the conffile.
             if [[ "$valkey_pkg" =~ ^valkey(-server)?$ ]] \
                     && [[ ! -f /etc/valkey/valkey.conf ]] \
                     && dpkg -L "$valkey_pkg" 2>/dev/null | grep -qx /etc/valkey/valkey.conf; then
@@ -2810,13 +2333,7 @@ phase_valkey() {
                 fi
             fi
 
-            # Per-package config + service identity. Source build sets up
-            # both /etc/valkey/valkey.conf and the systemd unit itself
-            # already, so the apt-installed paths are the only ones we
-            # rewrite here. The canonical systemd unit name is
-            # `valkey-gnode.service` regardless of install path — the apt
-            # path's upstream valkey-server.service is purged + replaced
-            # by ensure_canonical_valkey_unit().
+            # The source build writes its own conf and unit; only the apt paths are adjusted here.
             local conf_file="/etc/valkey/valkey.conf"
             local svc_name="valkey-gnode"
 
@@ -2824,42 +2341,20 @@ phase_valkey() {
                 sed -i "s/^port .*/port 47445/" "$conf_file"
                 log_detail "Configured ${svc_name} port 47445 (in ${conf_file})"
 
-                # Apt path: re-purge (apt re-installed valkey-server.service
-                # behind our back) + write our canonical valkey-gnode.service
-                # pointing at the apt-installed binary.
+                # The apt install brings back valkey-server.service.
                 purge_legacy_valkey_units
                 ensure_canonical_valkey_unit
             fi
 
-            # Ensure /var/lib/valkey + /var/log/valkey exist with valkey:valkey
-            # ownership. An earlier `apt purge` cycle may have wiped them;
-            # valkey.conf's `dir /var/lib/valkey` (line 507) would then make
-            # the daemon exit 1 on startup with "No such file or directory".
             ensure_valkey_data_dirs
 
-            # Generate the admin password + inject requirepass BEFORE the
-            # first start so valkey-server comes up authenticated.
-            # ensure_valkey_admin_password_set is idempotent.
+            # Both before the first start, so ValKey comes up authenticated.
             ensure_valkey_admin_password_set
-
-            # Configure aclfile + seed users.acl with the
-            # default user. MUST run after admin_password_set (needs the
-            # password) and BEFORE the restart (so default user retains
-            # password across the aclfile takeover).
             ensure_valkey_aclfile_configured
 
             systemctl enable "${svc_name}" 2>/dev/null || true
             systemctl restart "${svc_name}" 2>/dev/null || systemctl start "${svc_name}" 2>/dev/null || true
 
-            # Validate that valkey-server is actually accepting auth on
-            # the canonical port BEFORE claiming success. Pre-fix this
-            # block unconditionally set VALKEY_RUNNING=true and
-            # log_success'd "Valkey running" — even when the daemon
-            # had failed to start (e.g. /var/lib/valkey wasn't created
-            # because the valkey user creation failed; the daemon
-            # exited on first AOF write). Phase 7 + Phase 9 then hit
-            # "Connection refused" while the install summary reported
-            # 10/10 OK: the phase tracker must reflect ground truth.
             if verify_valkey_admin_auth; then
                 VALKEY_RUNNING=true
                 HAS_VALKEY=true
@@ -2871,9 +2366,7 @@ phase_valkey() {
                 log_info "Inspect: sudo systemctl status ${svc_name} --no-pager"
                 log_info "Inspect: sudo journalctl -u ${svc_name} --no-pager -n 80"
                 log_info "Subsequent Phase 7 + Phase 9 + dashboard ACL will skip"
-                # Don't exit — let downstream phases skip cleanly with
-                # their existing VALKEY_RUNNING checks. The summary will
-                # show [FAIL] ValKey Setup via the return-non-zero below.
+                # Later phases skip on VALKEY_RUNNING; the summary shows this phase failed.
                 return 1
             fi
             ;;
@@ -2903,52 +2396,29 @@ phase_valkey() {
             ;;
     esac
 
-    # Replica configuration: if user chose "replica" tier, set up replication
-    # to the constellation master. Local ValKey acts as a read replica.
     if [[ "$VALKEY_REPLICA" == "true" ]]; then
         configure_valkey_replica
     fi
 
-    # gnode-daemon ACL user — primary runtime auth for the daemon itself.
-    # gNode/scripts/load-valkey-functions.sh (Phase 9) and gNode/scripts/
-    # install-gnode-service.sh (Phase 8) both expect the daemon-tier
-    # password at well-known paths; without this provisioning step they
-    # fail with WRONGPASS / "ValKey password file not found" while Phase 4
-    # itself reports OK. Master-only, same as
-    # provision_dashboard_acl.
+    # ACL users are provisioned on the master only: a replica receives them by replication.
     if [[ "$VALKEY_RUNNING" == "true" ]] && [[ "$VALKEY_REPLICA" != "true" ]]; then
         provision_daemon_acl
     fi
 
-    # COMMS ACL user. Master-only, same rationale as provision_daemon_acl.
     if [[ "$VALKEY_RUNNING" == "true" ]] && [[ "$VALKEY_REPLICA" != "true" ]]; then
         provision_comms_acl
     fi
 
-    # Dashboard ACL user — read-only across all keys, narrow xadd to the
-    # operator audit-log stream. Idempotent. Master-only:
-    # replicas inherit the ACL via replication, and ACL SETUSER would fail
-    # on a read-only replica (and would generate a divergent local password
-    # file that doesn't match the master's). On replicas the operator
-    # copies /etc/geodineum/dashboard/geodineum-dashboard.txt from the
-    # master after `geodineum constellation join-replica` completes.
     if [[ "$VALKEY_RUNNING" == "true" ]] && [[ "$VALKEY_REPLICA" != "true" ]]; then
         provision_dashboard_acl
     fi
 
-    # Replication ACL user — lets constellation workers attach as read
-    # replicas without exposing the admin password or weakening
-    # gnode_daemon (which is -@dangerous and therefore cannot PSYNC).
-    # Master-only; the worker copies valkey_replica.password and authes
-    # as masteruser gnode_replica.
     if [[ "$VALKEY_RUNNING" == "true" ]] && [[ "$VALKEY_REPLICA" != "true" ]]; then
         provision_replica_acl
     fi
 }
 
-# valkey-cli exits 0 even when the SERVER rejects the command — it prints
-# "ERR ..." and reports success. Every `if ! valkey-cli ...` guard around an
-# ACL write is therefore a guard that never fires. Check the reply instead.
+# valkey-cli exits 0 when the server rejects a command, so the reply is checked instead.
 valkey_admin_ok() {
     local pwfile="$1" port="$2"; shift 2
     local out
@@ -2961,27 +2431,7 @@ valkey_admin_ok() {
     return 1
 }
 
-# Provision the gnode_daemon ACL user (closes Phase 8 + Phase 9 gap).
-#
-# The gnode-daemon binary, install-gnode-service.sh, and load-valkey-
-# functions.sh all auth as the ACL user `gnode_daemon`. Previously, nothing
-# created that user — Phase 8 service install aborted with "ValKey
-# password file not found", Phase 9 Lua-load aborted with WRONGPASS.
-# Phase 4 reported [OK] because the admin auth verify (provision_dashboard_acl
-# uses admin) succeeded.
-#
-# ACL grants: full read/write across all keys (~*) since the daemon is
-# the canonical writer for every Geodineum key shape; +function-load for
-# Lua-library installation; -@dangerous to block flushall/shutdown/debug.
-# Per ACL_MODEL invariant: the daemon has its own user, distinct from
-# admin (admin only used by the installer + operator).
-#
-# Credential at /etc/geodineum/credentials/valkey_daemon.password (the
-# canonical path load-valkey-functions.sh reads) AND symlinked at
-# /opt/geodineum/gNode/.gnode/valkey_daemon.password (where install-
-# gnode-service.sh looks). Mode 0640 ${DEPLOY_USER}:gnode.
-#
-# Idempotent: re-runs reuse existing password.
+# The daemon's own ValKey user (gnode_daemon), distinct from admin; re-runs reuse its password.
 provision_daemon_acl() {
     local cred_dir="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}"
     local cred_file="${cred_dir}/valkey_daemon.password"
@@ -3005,7 +2455,6 @@ provision_daemon_acl() {
         return
     fi
 
-    # Generate or recover the daemon password.
     local password
     if [[ -s "$cred_file" ]]; then
         password="$(cat "$cred_file")"
@@ -3014,36 +2463,11 @@ provision_daemon_acl() {
         umask 077
         printf '%s' "$password" > "$cred_file"
         chmod 0640 "$cred_file" 2>/dev/null || true
-        # daemon credential owned gnode:geodineum-creds. Daemon
-        # (gnode user) owns and reads; deploy_user reads via group for
-        # `geodineum` CLI operations. www-data CANNOT read.
         chown "gnode:geodineum-creds" "$cred_file" 2>/dev/null || true
         log_success "Generated gnode_daemon credential at ${cred_file}"
     fi
 
-    # Apply the ACL — broad grants for the daemon itself, dangerous-band
-    # disallowed (still leaves @all so KEYS is technically allowed but
-    # the cluster-safety invariant requires SCAN — runtime-side
-    # discipline; ACL is permissive at the daemon tier).
-    #
-    # FUNCTION is NOT in @dangerous — verified on a live instance, both by
-    # `ACL CAT dangerous` and by `ACL DRYRUN gnode_daemon FUNCTION FLUSH`
-    # returning OK. So -@dangerous never protected the shared Lua library
-    # namespace, and the `+function +xinfo` that used to sit here re-granted
-    # something that was never removed; ValKey compacted both away as no-ops.
-    # Deny the two destructive subcommands explicitly instead. Nothing uses
-    # them: the loader needs LOAD/DELETE/LIST and the daemon needs LOAD to
-    # sync libraries, all of which survive this.
-    #
-    # This is the backstop that does not depend on daemon code being correct.
-    # Without it the only thing preventing a repeat of the extension-library
-    # wipe is a single code path.
-    #
-    # The daemon-tier grant, defined ONCE. `geodineum node add` mints a
-    # per-node user of this same tier on the master, and must not carry its
-    # own copy of the rule — two definitions of a privilege boundary drift,
-    # and the drift is silent until something is over- or under-permitted.
-    # Every future node inherits this backstop for free.
+    # FUNCTION is not in @dangerous, so FLUSH and RESTORE are denied explicitly; defined only here.
     local acl_rule_file="/etc/geodineum/components/gnode-daemon/acl-daemon-tier.rule"
     local acl_daemon_tier=(
         on
@@ -3071,36 +2495,13 @@ provision_daemon_acl() {
 
     REDISCLI_AUTH="$(cat "$admin_pwfile")" valkey-cli -p "$valkey_port" ACL SAVE >/dev/null 2>&1 || true
 
-    # Mirror the credential into gNode's expected lookup path.
-    # install-gnode-service.sh reads $PROJECT_ROOT/.gnode/valkey_daemon.password;
-    # the systemd unit's User=gnode reads from /etc/geodineum/credentials/
-    # at runtime via bootstrap-loader. Two paths, same content — symlink
-    # avoids drift. The .gnode/ dir itself needs to exist + be traversable
-    # by the gnode runtime user.
-    # Best-effort early symlink: when phase_valkey runs in Phase 4,
-    # /opt/geodineum/gNode/ doesn't exist yet (cloned in Phase 5), so
-    # this no-ops on first install. ensure_daemon_credential_symlink
-    # is also called from phase_services right before
-    # install-gnode-service.sh, where the gNode tree is guaranteed
-    # to exist. Idempotent.
+    # A no-op on first install (gNode is not cloned yet); phase_services repeats it.
     ensure_daemon_credential_symlink
 
     log_success "ACL user gnode_daemon provisioned (full grants, @dangerous denied)"
 }
 
-# Provision the gnode_replica ACL user (constellation read-replica auth).
-#
-# Replication (PSYNC/REPLCONF/SYNC) lives in the @dangerous category, so the
-# daemon user — granted -@dangerous — cannot drive it. Rather than hand the
-# admin password to every worker, the master mints a minimal-privilege
-# replication user: no keys, no channels, only the three replication-protocol
-# commands. A worker copies valkey_replica.password and sets
-# `masteruser gnode_replica` (setup-valkey-replica.sh does this).
-#
-# Idempotent: re-runs reuse the existing password. Credential at
-# /etc/geodineum/credentials/valkey_replica.password (gnode:geodineum-creds
-# 0640) — same shape as the daemon credential so the operator copies it the
-# same way.
+# Replication-only ACL user for read replicas: replication commands are @dangerous, which the daemon user lacks.
 provision_replica_acl() {
     local cred_dir="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}"
     local cred_file="${cred_dir}/valkey_replica.password"
@@ -3134,9 +2535,6 @@ provision_replica_acl() {
         log_success "Generated gnode_replica credential at ${cred_file}"
     fi
 
-    # Minimal replication user: no key/channel access, only the
-    # replication-protocol commands. +ping lets the replica health-check
-    # the link; +psync/+replconf are the PSYNC handshake.
     if ! valkey_admin_ok "$admin_pwfile" "$valkey_port" \
         ACL SETUSER gnode_replica \
         on \
@@ -3153,8 +2551,7 @@ provision_replica_acl() {
     log_success "ACL user gnode_replica provisioned (replication-only; copy ${cred_file} to workers)"
 }
 
-# The geodineum_comms ACL user and its credential (root:geodineum-comms 0640,
-# recovered rather than rotated on a rerun).
+# The geodineum_comms ACL user; a rerun keeps its existing password.
 provision_comms_acl() {
     local cred_dir="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}"
     local cred_file="${cred_dir}/valkey_comms.password"
@@ -3176,7 +2573,6 @@ provision_comms_acl() {
         return
     fi
 
-    # Generate or recover the COMMS password.
     local password
     if [[ -s "$cred_file" ]]; then
         password="$(cat "$cred_file")"
@@ -3189,8 +2585,7 @@ provision_comms_acl() {
     chmod 0640 "$cred_file" 2>/dev/null || true
     chown "root:geodineum-comms" "$cred_file" 2>/dev/null || true
 
-    # Least privilege: an allowlist of commands (a denylist would grant every
-    # command added later) over its own namespaces plus the shared ones it reads.
+    # An allowlist, because a denylist would grant every command ValKey adds later.
     local acl_comms_commands=(
         -@all
         # Streams: consume its work queue, ack it, and write receipts.
@@ -3209,10 +2604,7 @@ provision_comms_acl() {
         +sadd +smembers +sismember +srem +scard +sscan
         # Introspection it genuinely needs.
         +scan +type +object +ping +echo +time +auth +select
-        # KEYS is O(N) over the whole keyspace and is never acceptable from a
-        # service; DEBUG and CLIENT are operator tools. Four CLIENT subcommands
-        # are restored because connection naming aids diagnosis and grants
-        # nothing.
+        # KEYS is O(N); DEBUG and CLIENT are operator tools, except harmless connection naming.
         -keys -debug -client
         "+client|id" "+client|getname" "+client|setname" "+client|setinfo"
     )
@@ -3248,35 +2640,7 @@ provision_comms_acl() {
     log_success "ACL user geodineum_comms provisioned (allowlisted commands and keys)"
 }
 
-# ensure /opt/geodineum/gNode/.gnode IS a symlink to the
-# centralized credential store /etc/geodineum/credentials/.
-#
-# Previously `.gnode/` was a directory containing one
-# per-file symlink (valkey_daemon.password → centralized). New
-# credentials (e.g. site-specific) would each need their own symlink.
-#
-# Now (validator-aligned): `.gnode` itself is a symlink to the
-# centralized store. Any file under /etc/geodineum/credentials/
-# becomes automatically accessible at /opt/geodineum/gNode/.gnode/<name>
-# — no per-file work, scales for site credentials and future ACL users.
-#
-# install-gnode-service.sh's chmod/chown operations on .gnode/*.password
-# follow the symlink and act on the centralized file, which is exactly
-# what we want (the centralized file's mode/owner is the canonical
-# truth; .gnode/ is just a view onto it).
-#
-# Idempotent:
-#   - if .gnode is already the correct symlink → no-op
-# - if .gnode is a directory (legacy state) → remove
-#     it before symlinking (we re-create as symlink; existing per-file
-#     symlinks inside are no longer needed since the parent is now the
-#     symlink)
-#   - if .gnode is a stale symlink to somewhere else → replace
-#
-# Called twice: once from provision_daemon_acl (Phase 4, best-effort
-# early; no-ops on fresh install since gNode isn't cloned yet), once
-# from phase_services (Phase 8, canonical site — gNode tree is
-# guaranteed to exist).
+# Make gNode/.gnode a symlink to the credential store, so every credential there is visible to the daemon.
 ensure_daemon_credential_symlink() {
     local cred_dir="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}"
     local gnode_root="${INSTALL_ROOT:-/opt/geodineum}/gNode"
@@ -3285,49 +2649,25 @@ ensure_daemon_credential_symlink() {
     [[ -d "$gnode_root" ]] || return 0
     [[ -d "$cred_dir" ]]   || return 0
 
-    # Already the correct symlink → no-op
     if [[ -L "$link_path" ]] && [[ "$(readlink "$link_path")" == "$cred_dir" ]]; then
         return 0
     fi
 
-    # Stale directory (legacy layout) or wrong symlink → remove cleanly
     if [[ -L "$link_path" ]]; then
         rm -f "$link_path"
     elif [[ -d "$link_path" ]]; then
-        # The dir may contain per-file symlinks or local password
-        # files (legacy dev installs). Remove only if it has no
-        # non-symlink content beyond what install-gnode-service.sh
-        # would have placed there.
         rm -rf "$link_path"
     fi
 
     ln -s "$cred_dir" "$link_path"
-    # Symlink ownership matters for some installers' chown -R; set it
-    # to gnode:gnode for consistency. chown -h doesn't follow symlinks
-    # (changes the link itself, not the target).
     chown -h gnode:gnode "$link_path" 2>/dev/null || true
     log_detail "Daemon credential view: ${link_path} → ${cred_dir}"
 }
 
-# Provision the geodineum_dashboard ACL user.
-#
-# Creates a read-only ACL user the wp-admin dashboard uses to
-# query ValKey. The user has:
-#   - +@read across all keys (%R~*) — covers get/hgetall/scan/pfcount/xread etc.
-#   - +xadd narrowed to geodineum:audit-log:operator-actions (%W, the operator audit log)
-#   - @write/@admin/@dangerous explicitly disallowed (no xreadgroup — the
-#     consumer live-tails via read-only XREAD, never consumer groups)
-#
-# Credential at /etc/geodineum/dashboard/geodineum-dashboard.txt
-# (mode 0640, deploy_user:gnode) per invariant F (file-path secrets only).
-#
-# Idempotent: re-runs leave existing credentials/ACL alone unless the file is
-# missing or empty, in which case a fresh password is generated and written.
+# Read-only ACL user for the wp-admin dashboard, plus append to the operator audit log.
 provision_dashboard_acl() {
     local creds_dir="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}"
-    # dashboard credential lives in its own dir, NOT in
-    # credentials/. This is the security boundary — /etc/geodineum/
-    # dashboard/ is the ONLY credential location www-data can reach.
+    # Its own directory: the only credential location www-data can reach.
     local dash_dir="/etc/geodineum/dashboard"
     local cred_file="${dash_dir}/geodineum-dashboard.txt"
     local admin_pwfile="${creds_dir}/valkey.password"
@@ -3338,13 +2678,7 @@ provision_dashboard_acl() {
         return
     fi
 
-    # ensure dashboard/ exists. Phase 4 runs before Phase 7's
-    # canonical directory creation, so on first install this dir
-    # wouldn't exist yet — provision skipped with a "re-run install.sh"
-    # hint, leaving the dashboard credential ungenerated until a
-    # second install pass. Idempotent helper-style: create if absent
-    # with the canonical perms; Phase 7's later install -d on the same
-    # path is a no-op.
+    # Phase 7 creates this directory too, but this runs earlier.
     if [[ ! -d "$dash_dir" ]]; then
         if getent group geodineum-dash >/dev/null 2>&1; then
             install -d -m 0750 -o root -g geodineum-dash "$dash_dir"
@@ -3360,7 +2694,6 @@ provision_dashboard_acl() {
         return
     fi
 
-    # Generate or recover the password.
     local password
     if [[ -s "$cred_file" ]]; then
         password="$(cat "$cred_file")"
@@ -3369,31 +2702,14 @@ provision_dashboard_acl() {
         umask 077
         printf '%s' "$password" > "$cred_file"
         chmod 0640 "$cred_file" 2>/dev/null || true
-        # dashboard credential owned gnode:geodineum-dash 0640.
-        # gnode user is the canonical writer (runtime rotation);
-        # geodineum-dash group readers include www-data (gCore PHP),
-        # gnode, and deploy_user. www-data reads via direct group
-        # membership; can traverse /etc/geodineum/dashboard/ via the
-        # same group on the parent dir.
         chown "gnode:geodineum-dash" "$cred_file" 2>/dev/null || true
         log_success "Generated geodineum_dashboard credential at ${cred_file}"
     fi
 
-    # Apply the ACL. resetpass clears any previous password before assigning the
-    # current one (idempotent).
     local admin_password
     admin_password="$(cat "$admin_pwfile")"
 
-    # Read-only everywhere + append-only to the operator audit log, via
-    # ValKey 7+/8 key selectors:
-    #   %R~*                                    → read ANY key
-    #   %W~geodineum:audit-log:operator-actions → write ONLY the audit log
-    # The prior form (`~*` allkeys, then a scoped `~pattern`, then `-@write`
-    # AFTER `+xadd`) errored on two counts — a pattern can't follow allkeys,
-    # and -@write stripped the xadd right back off — so the SETUSER aborted
-    # and the password was never set (every dashboard reader got WRONGPASS).
-    # +xadd is re-granted LAST so it survives the -@write removal; the %W
-    # selector is what actually confines writes to the single audit key.
+    # +xadd comes after -@write so it survives; the %W selector confines writes to the audit key.
     if ! REDISCLI_AUTH="$admin_password" valkey-cli -p "$valkey_port" \
         ACL SETUSER geodineum_dashboard \
         on \
@@ -3410,15 +2726,11 @@ provision_dashboard_acl() {
         return
     fi
 
-    # Persist the ACL so it survives ValKey restarts.
     REDISCLI_AUTH="$admin_password" valkey-cli -p "$valkey_port" ACL SAVE >/dev/null 2>&1 || true
 
     log_success "ACL user geodineum_dashboard provisioned (read-only + audit-log xadd)"
 }
 
-# Configure local ValKey as a replica of the constellation master.
-# Prompts for master IP/credentials and writes the replica directives
-# via setup-valkey-replica.sh.
 configure_valkey_replica() {
     log_step "Phase 4b/10: ValKey Replica Configuration"
 
@@ -3429,7 +2741,6 @@ configure_valkey_replica() {
         return
     fi
 
-    # Master IP defaults to constellation VPN gateway
     local master_ip="${CONSTELLATION_MASTER_IP:-10.66.0.1}"
     local master_port="${CONSTELLATION_MASTER_PORT:-47445}"
     local master_pass_file="${CONSTELLATION_MASTER_PASSWORD_FILE:-/etc/geodineum/credentials/valkey_constellation.password}"
@@ -3478,8 +2789,6 @@ configure_valkey_replica() {
 # PHASE 5: Component Fetch
 # =============================================================================
 
-# Verify GitHub auth works before any clone is attempted. Tests against
-# geodineum/Geodineum (the installer repo itself, which we know exists).
 preflight_github_auth() {
     local test_repo="geodineum/Geodineum"
     local test_url="${GITHUB_CLONE_PREFIX}${test_repo}${GITHUB_CLONE_SUFFIX}"
@@ -3497,7 +2806,6 @@ preflight_github_auth() {
         return 0
     fi
 
-    # Failed — give actionable error
     log_error "Cannot reach ${test_repo} via ${GITHUB_CLONE_PREFIX}"
     echo ""
     echo -e "  Check that this host reaches github.com. For private forks, use either:"
@@ -3527,7 +2835,6 @@ phase_fetch() {
 
     log_step "Phase 5/10: Fetching Components"
 
-    # Preflight: confirm GitHub access before attempting any clone.
     preflight_github_auth || {
         log_error "GitHub authentication check failed — see docs/GITHUB_AUTH.md"
         exit 1
@@ -3540,20 +2847,9 @@ phase_fetch() {
         }
     done
 
-    # Deploy the installer repo to /opt/geodineum/Geodineum so the
-    # geodeploy infra (lib/geodeploy.sh, scripts/geodeploy-orchestrator,
-    # geodineum CLI binary) is reachable at the canonical FHS-style
-    # location. Operators run install.sh from a clone of this repo;
-    # without this step, /opt/geodineum/Geodineum never
-    # exists and Phase 8/9/post-install hooks all hit "not found"
-    # warnings.
+    # Later phases run geodeploy and the CLI from the installed copy, not from this clone.
     install_self_to_opt
 
-    # Clone gNode-CMS into /opt/geodineum/pro/gNode/ — the canonical
-    # signed-extension location. CMS is the default-shipped extension;
-    # additional extensions land alongside it under pro/gNode/. To skip
-    # cloning CMS (lean gNode build without any extensions), set
-    # GEODINEUM_SKIP_CMS=true.
     if [[ "${GEODINEUM_SKIP_CMS:-false}" != "true" ]]; then
         fetch_extension "gnode-cms" "geodineum/gNode-CMS" || {
             log_warning "Failed to clone gNode-CMS — daemon will build WITHOUT CMS handlers"
@@ -3564,15 +2860,12 @@ phase_fetch() {
         log_info "GEODINEUM_SKIP_CMS=true — skipping gNode-CMS clone (lean build)"
     fi
 
-    # Update GNODE_SCRIPTS now that gNode may be fetched
     if [[ -d "${INSTALL_ROOT}/gNode/scripts" ]]; then
         GNODE_SCRIPTS="${INSTALL_ROOT}/gNode/scripts"
     fi
 }
 
-# Clone a signed extension into /opt/geodineum/pro/gNode/<name>/.
-# Mirrors fetch_component but writes to the extension dir rather than
-# the standard component dir. Idempotent (pull if .git exists).
+# Clone or update a signed gNode extension under ${INSTALL_ROOT}/pro/gNode/.
 fetch_extension() {
     local ext_name="$1"           # e.g. "gnode-cms"
     local ext_repo="$2"           # e.g. "geodineum/gNode-CMS"
@@ -3582,8 +2875,6 @@ fetch_extension() {
     local branch="${GEODINEUM_BRANCH:-}"
     local branch_label="${branch:-<default>}"
 
-    # Ensure the parent extension dir exists. gnode user owns it
-    # (group model: gnode is the extension steward).
     install -d -m 0755 -o "${DEPLOY_USER:-root}" -g gnode "$ext_parent" 2>/dev/null \
         || install -d -m 0755 "$ext_parent"
 
@@ -3632,20 +2923,7 @@ fetch_extension() {
     log_success "${ext_dir_name} cloned"
 }
 
-# Mirror the installer repo (the one running this script) into
-# ${INSTALL_ROOT}/Geodineum so that paths like
-#   /opt/geodineum/Geodineum/lib/geodeploy.sh
-#   /opt/geodineum/Geodineum/scripts/geodeploy-orchestrator
-#   /opt/geodineum/Geodineum/geodineum  (CLI binary)
-# resolve at runtime.
-#
-# Strategy:
-#   * If the source is a git clone with origin set, do a fresh `git clone`
-#     of origin into the canonical path (matches the other components'
-#     deploy pattern; auto-deploy cron can pull updates).
-#   * If the source is a tarball / non-git checkout, fall back to rsync.
-#   * Idempotent: existing /opt/geodineum/Geodineum gets `git pull`'d
-#     instead of re-cloned.
+# Install this installer repo at ${INSTALL_ROOT}/Geodineum: a git clone of origin when there is one, else rsync.
 install_self_to_opt() {
     local target="${INSTALL_ROOT}/Geodineum"
     local source="${SCRIPT_DIR}"
@@ -3655,8 +2933,6 @@ install_self_to_opt() {
         return 0
     fi
 
-    # Source has a git origin → do a real clone (matches the other 7
-    # components' deploy pattern).
     if [[ -d "${source}/.git" ]]; then
         local origin_url
         origin_url=$(cd "$source" && git remote get-url origin 2>/dev/null || echo "")
@@ -3694,7 +2970,6 @@ install_self_to_opt() {
         fi
     fi
 
-    # No git origin → rsync the source tree.
     install_self_via_rsync "$source" "$target"
 }
 
@@ -3725,8 +3000,7 @@ fetch_component() {
         return 1
     fi
 
-    # Branch resolution: --branch / GEODINEUM_BRANCH overrides per-repo default.
-    # Empty value falls back to remote HEAD (typically `main`).
+    # Empty means the remote's default branch.
     local branch="${GEODINEUM_BRANCH:-}"
     local branch_label="${branch:-<default>}"
 
@@ -3741,13 +3015,10 @@ fetch_component() {
             return 0
         fi
         cd "$install_dir"
-        # Pull as calling user (SSH keys are theirs)
+        # Pull as the user whose SSH keys can reach the repos.
         local pull_user="${DEPLOY_USER:-${SUDO_USER:-$(whoami)}}"
-        # Surface git's own error on failure.
         local git_err
         if [[ -n "$branch" ]]; then
-            # Explicit branch — fetch + checkout + ff-only pull. Detached or
-            # mismatched checkouts get aligned with origin/<branch>.
             if ! git_err="$(sudo_as_user "$pull_user" git fetch origin 2>&1 >/dev/null)"; then
                 log_warning "git fetch failed for ${name} — using existing tree"
                 log_warning "  git: $(tail -n1 <<<"$git_err")"
@@ -3785,30 +3056,10 @@ fetch_component() {
             return 0
         fi
         mkdir -p "$(dirname "$install_dir")"
-        # Clone as the deploy user (SSH deploy key lives in
-        # ${DEPLOY_HOME}/.ssh/id_ed25519_geodeploy per phase_deploy_user).
-        # Pre-fix: clone used $SUDO_USER, which on a fresh install where the
-        # operator runs `sudo ./install.sh` from a different user account
-        # than the chosen deploy user (e.g., personal admin user with sudo
-        # invoking install for a deploy_user system account) would leave
-        # all subsequent /opt/geodineum/<repo> trees owned by SUDO_USER
-        # instead of DEPLOY_USER. Phase 8's geodeploy_fix_perms would later
-        # try to chown to DEPLOY_USER, but `sudo -u SUDO_USER git pull`
-        # update path used DEPLOY_USER fallback — divergent ownership
-        # between clone-time and update-time created git "dubious
-        # ownership" failures on subsequent runs. Now uniform on
-        # DEPLOY_USER (matching the update path's pattern at line 2019).
+        # Clone as the same user as the update path, so the tree has one owner (git refuses "dubious ownership").
         local clone_branch_arg=""
         [[ -n "$branch" ]] && clone_branch_arg="--branch ${branch}"
         local clone_cmd="git clone ${clone_branch_arg} ${GITHUB_CLONE_PREFIX}${repo}${GITHUB_CLONE_SUFFIX} ${install_dir}"
-        # Let git write progress + errors to the terminal directly. No
-        # capture, no /dev/null. The previous version's `$(cmd 2>&1 >/dev/null)`
-        # construct interacted badly with `set -euo pipefail` — even when
-        # git clone exited 0, the assignment-with-redirect-and-errexit chain
-        # propagated a non-zero status to the function, making
-        # log_success run AND the outer caller see "Failed to fetch".
-        # Simpler is better here: if clone fails, git's own error message
-        # is already printed to the terminal, no pattern-matching needed.
         local clone_user="${DEPLOY_USER:-${SUDO_USER:-$(whoami)}}"
         local clone_rc=0
         if [[ -n "$clone_user" ]] && [[ "$clone_user" != "root" ]]; then
@@ -3835,15 +3086,7 @@ fetch_component() {
 # PHASE 6: Build
 # =============================================================================
 
-# Read cargo-style build output on stdin; render a progress bar to
-# /dev/tty against TOTAL "Compiling X" lines; pass errors, warnings,
-# Finished, and unrecognised lines through to stdout (which install.sh
-# tees to the log file). Cargo chatter (Locking/Downloading/Downloaded/
-# Fresh/Adding) is absorbed silently. The bar overwrites itself via \r,
-# so the terminal stays clean.
-#
-# Caller is responsible for has-TTY gating; this function assumes
-# /dev/tty is writable.
+# Draw a progress bar on /dev/tty from cargo output on stdin; pass errors, warnings and other lines to stdout.
 _render_cargo_progress() {
     local label="$1" total="${2:-250}"
     local bar_full='████████████████████████████████████████'
@@ -3879,18 +3122,12 @@ _render_cargo_progress() {
     printf "\n" >/dev/tty 2>/dev/null || true
 }
 
-# Probe controlling TTY independent of stdout redirection. Returns 0
-# if /dev/tty is usable (i.e. we can render a progress bar to it).
-# install.sh redirects stdout to a tee at startup, so `[[ -t 1 ]]`
-# always returns false inside the script — has to probe /dev/tty
-# directly.
+# Probes /dev/tty because stdout is a tee to the log, so `[[ -t 1 ]]` is always false.
 _has_controlling_tty() {
     [[ "${NO_BUILD_PROGRESS:-}" != "1" ]] && ( exec 3>/dev/tty ) 2>/dev/null
 }
 
-# Count crates that a `cargo build` would compile. Pre-build estimate
-# used as the denominator for the progress bar. Cheap — cargo tree
-# reads Cargo.lock without compiling.
+# Estimate the crate count for the progress bar from `cargo tree`, which does not compile.
 _count_cargo_crates() {
     local cargo_dir="$1" build_user="$2"
     shift 2
@@ -3904,18 +3141,8 @@ _count_cargo_crates() {
     echo "$total"
 }
 
-# Run an arbitrary build command and render its output via the
-# cargo-progress filter. The command must emit cargo-style "Compiling
-# X" / "Finished" lines (anything that wraps `cargo build` qualifies —
-# e.g. a project's own scripts/build.sh).
-#
-# CARGO_DIR is used for the pre-count via `cargo tree`; it must contain
-# a Cargo.toml. BUILD_CMD is passed to `bash -c`, run via sudo as
-# BUILD_USER, in the CARGO_DIR (override with `cd` in BUILD_CMD if
-# needed).
-#
-# Usage:
-#   build_cmd_with_progress LABEL CARGO_DIR BUILD_USER BUILD_CMD [ENV_KV ...]
+# Run BUILD_CMD (anything wrapping `cargo build`) as BUILD_USER in CARGO_DIR behind the progress bar.
+# Usage: build_cmd_with_progress LABEL CARGO_DIR BUILD_USER BUILD_CMD [ENV_KV ...]
 build_cmd_with_progress() {
     local label="$1" cargo_dir="$2" build_user="$3" build_cmd="$4"
     shift 4
@@ -3945,8 +3172,6 @@ build_cmd_with_progress() {
     return "$rc"
 }
 
-# Backwards-compatible thin wrapper: run `cargo build --release` with
-# the standard cargo-env-sourcing prelude.
 cargo_build_with_progress() {
     local label="$1" cargo_dir="$2" build_user="$3"
     shift 3
@@ -3960,20 +3185,10 @@ phase_build() {
 
     log_step "Phase 6/10: Building Components"
 
-    # gNode's scripts/build.sh expects /usr/local/lib/geodineum/bootstrap-loader.sh
-    # (canonical FHS path) AND /etc/geodineum/bootstrap.env to exist. Both
-    # are normally written by phase_config (Phase 7), but Phase 6 runs
-    # first — so we lay them down here before any compile step. Both calls
-    # are idempotent: phase_config's later writes are no-ops when files
-    # already exist with the right content.
+    # gNode's build.sh needs the bootstrap loader and env, which Phase 7 would write too late.
     ensure_bootstrap_loader_installed
     ensure_bootstrap_env_written
 
-    # Aggregate per-component build failures. Without this, a cargo panic
-    # in build_component would print [ERR] but phase_build would still
-    # return 0 (for-loop's last exit), so PHASE_RESULTS["Build"] got
-    # recorded as OK while the daemon binary was missing: the phase
-    # tracker must reflect ground truth.
     local rc=0
     for comp in "${resolved[@]}"; do
         build_component "$comp" || rc=$?
@@ -3981,11 +3196,7 @@ phase_build() {
     return $rc
 }
 
-# Install canonical helper libs to /usr/local/lib/geodineum/. Idempotent.
-# Originally only deployed bootstrap-loader.sh ; now also deploys the
-# manifest libs + cli-helpers so any consumer (handler scripts, register,
-# orchestrator) can resolve them via the one canonical search path instead
-# of relying on /opt/geodineum/Geodineum/lib being on disk.
+# Install the shared helper libs to /usr/local/lib/geodineum/, the one path their consumers search.
 ensure_bootstrap_loader_installed() {
     if [[ "$DRY_RUN" == "true" ]]; then
         log_dry "install ${LIB_DIR}/{bootstrap-loader,common,cli-helpers,manifest-registry,manifest-policy,manifest-install,assert-env-readable}.sh → /usr/local/lib/geodineum/"
@@ -3997,13 +3208,10 @@ ensure_bootstrap_loader_installed() {
     fi
     install -d -m 0755 -o root -g root /usr/local/lib/geodineum
 
-    # Required core: bootstrap-loader
     install -m 0755 -o root -g root \
         "${LIB_DIR}/bootstrap-loader.sh" \
         /usr/local/lib/geodineum/bootstrap-loader.sh
 
-    # Optional helpers — present in source for new installs, may be absent on
-    # older source trees (we don't fatal). Each handler library is independent.
     local _helper
     for _helper in common.sh cli-helpers.sh manifest-registry.sh manifest-policy.sh manifest-install.sh assert-env-readable.sh; do
         if [[ -f "${LIB_DIR}/${_helper}" ]]; then
@@ -4016,13 +3224,7 @@ ensure_bootstrap_loader_installed() {
     log_success "Helper libs available at /usr/local/lib/geodineum/"
 }
 
-# Write /etc/geodineum/bootstrap.env with the minimal 3-key surface that
-# bootstrap-loader.sh's load_bootstrap_disk_tier requires. Called from
-# phase_build BEFORE any compile step because gNode's scripts/build.sh
-# sources bootstrap-loader.sh + calls load_ecosystem_config + that
-# requires bootstrap.env to exist. Phase 7's phase_config still writes
-# the same file later (idempotent — same defaults, same path, same
-# permissions). Fast path: if the file already exists, no-op.
+# Write /etc/geodineum/bootstrap.env with exactly the three keys the bootstrap loader accepts.
 ensure_bootstrap_env_written() {
     local env_file="/etc/geodineum/bootstrap.env"
     if [[ "$DRY_RUN" == "true" ]]; then
@@ -4030,8 +3232,7 @@ ensure_bootstrap_env_written() {
         return 0
     fi
     if [[ -s "$env_file" ]]; then
-        # Any key outside the whitelist makes the daemon FATAL: back the file
-        # up and rewrite the canonical 3-key shape.
+        # Any other key makes the daemon refuse to start.
         local extra_keys
         extra_keys=$(grep -E "^[A-Z_]+=" "$env_file" 2>/dev/null \
             | grep -vE "^(VALKEY_HOST|VALKEY_PORT|VALKEY_CREDS_PATH)=" \
@@ -4047,8 +3248,7 @@ ensure_bootstrap_env_written() {
         log_warning "VALKEY_PORT, VALKEY_CREDS_PATH}, so the gnode-daemon would FATAL."
         log_warning "Backing up drifted file to ${env_file}.archived-$(date +%Y%m%d-%H%M%S)"
         cp "$env_file" "${env_file}.archived-$(date +%Y%m%d-%H%M%S)"
-        # Preserve the VALKEY values from the drifted file rather than
-        # use install-script defaults (operator may have customized).
+        # Keep the operator's ValKey values over the defaults.
         local _host _port _creds
         _host=$(grep -E '^VALKEY_HOST=' "$env_file" | tail -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
         _port=$(grep -E '^VALKEY_PORT=' "$env_file" | tail -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
@@ -4056,29 +3256,21 @@ ensure_bootstrap_env_written() {
         [[ -n "$_host" ]]  && VALKEY_HOST="$_host"
         [[ -n "$_port" ]]  && VALKEY_PORT="$_port"
         [[ -n "$_creds" ]] && VALKEY_CREDS_PATH="$_creds"
-        # Fall through to the canonical 3-key write below.
     fi
-    # root:geodineum 0751 — o+x traverse required by service users for
-    # their group-readable files; matches
-    # lib/geodeploy.sh fix_config_perms (one authority, one mode).
+    # o+x lets service users reach their group-readable files; same mode as lib/geodeploy.sh fix_config_perms.
     install -d -m 0751 -o root -g geodineum /etc/geodineum 2>/dev/null \
         || install -d -m 0751 /etc/geodineum
     local host="${VALKEY_HOST:-127.0.0.1}"
     local port="${VALKEY_PORT:-47445}"
     local creds="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}"
     install -d -m 0750 -o root -g root "$creds" 2>/dev/null || true
-    # Three whitelisted keys ONLY — the bootstrap-loader rejects anything
-    # outside the {VALKEY_HOST, VALKEY_PORT, VALKEY_CREDS_PATH} set with
-    # a "key not whitelisted" FATAL. Mirror exactly what
-    # lib/bootstrap-loader.sh::write_disk_bootstrap produces.
+    # Same shape as lib/bootstrap-loader.sh write_disk_bootstrap.
     cat > "$env_file" << EOF_BOOTSTRAP_ENV
 VALKEY_HOST=${host}
 VALKEY_PORT=${port}
 VALKEY_CREDS_PATH=${creds}
 EOF_BOOTSTRAP_ENV
-    # root:geodineum-bootstrap 0640: only the narrow group reads it. If this runs in a fresh-install phase
-    # BEFORE phase_users_groups created the group, fall back to root:root
-    # 0600 (strictly tighter; daemon's strict-deny check also accepts 0600).
+    # Before the group exists, 0600 root:root is tighter and the daemon accepts it.
     if getent group geodineum-bootstrap >/dev/null 2>&1; then
         chown root:geodineum-bootstrap "$env_file"
         chmod 0640 "$env_file"
@@ -4120,10 +3312,7 @@ build_component() {
 
             log_info "Building gNode daemon (this takes a few minutes on first build)..."
 
-            # Signed-extension discovery dir. If gNode-CMS (and
-            # any future Pro extensions) was cloned in Phase 5, point
-            # build.rs at it. With no GNODE_EXT_DIR, gNode builds lean
-            # core (no extensions registered).
+            # Without GNODE_EXT_DIR the daemon builds with no extensions.
             local ext_dir="${INSTALL_ROOT}/pro/gNode"
             local ext_dir_arg=""
             if [[ -d "$ext_dir" ]] && [[ -n "$(ls -A "$ext_dir" 2>/dev/null)" ]]; then
@@ -4131,20 +3320,12 @@ build_component() {
                 log_detail "Building with signed extensions from ${ext_dir}/"
             fi
 
-            # Use gNode's own build script if available (handles optional extensions)
-            # Build as calling user (cargo/rustup are in their home, not root's)
+            # cargo and rustup live in the build user's home, not root's.
             local build_user="${DEPLOY_USER:-${SUDO_USER:-$(whoami)}}"
             local env_kv=()
             [[ -n "$ext_dir_arg" ]] && env_kv+=("$ext_dir_arg")
 
             if [[ -x "${install_dir}/scripts/build.sh" ]]; then
-                # build.sh ultimately wraps `cargo build --release`, so
-                # its stdout is the same shape as a direct cargo invocation
-                # (a few extra "Building gNode daemon..." lines around the
-                # cargo output, which pass through the filter unchanged).
-                # Use cargo_dir = install_dir/daemon for the cargo-tree
-                # pre-count; build_cmd cds into install_dir before invoking
-                # the script.
                 if ! build_cmd_with_progress "gNode daemon" \
                         "${install_dir}/daemon" "$build_user" \
                         "cd ${install_dir} && bash scripts/build.sh" \
@@ -4153,9 +3334,6 @@ build_component() {
                     return 1
                 fi
             else
-                # Fallback when gNode/scripts/build.sh isn't present.
-                # source $HOME/.cargo/env so cargo is on PATH under
-                # `sudo -u`.
                 if ! cargo_build_with_progress "gNode daemon" \
                         "${install_dir}/daemon" "$build_user" "${env_kv[@]}"; then
                     log_error "Cargo build failed"
@@ -4184,11 +3362,6 @@ build_component() {
             ;;
 
         gnode-client)
-            # gNode-Client ships a composer.json (it's a PHP library
-            # gCore depends on). Previously, the build phase skipped it
-            # entirely, leaving no vendor/ directory — validate-geodineum-
-            # config.sh flagged it as "gNode-Client: composer install
-            # needed" in every install summary.
             if [[ -f "${install_dir}/composer.json" ]] && [[ "$HAS_COMPOSER" == "true" ]]; then
                 log_info "Installing gNode-Client PHP dependencies..."
                 cd "$install_dir"
@@ -4233,7 +3406,7 @@ build_component() {
         geodineum-bak)
             log_info "Setting up backup and log rotation infrastructure..."
 
-            # Create backup directories (gnode-owned — the backup service runs as gnode)
+            # The backup service runs as gnode.
             track_path_if_new "${install_dir}/backups"
             track_path_if_new "${install_dir}/backups/valkey"
             track_path_if_new "${install_dir}/logs"
@@ -4242,7 +3415,6 @@ build_component() {
             chown -R gnode:gnode "${install_dir}/backups" "${install_dir}/logs" 2>/dev/null || true
             chmod 750 "${install_dir}/backups" "${install_dir}/backups/valkey" "${install_dir}/logs" 2>/dev/null || true
 
-            # Install logrotate configs
             if [[ -d "${install_dir}/config/logrotate" ]]; then
                 for conf in "${install_dir}/config/logrotate"/*; do
                     [[ -f "$conf" ]] || continue
@@ -4254,7 +3426,6 @@ build_component() {
                 done
             fi
 
-            # Install ValKey backup timer + service
             cat > /etc/systemd/system/valkey-backup.service << BAKSVC
 [Unit]
 Description=ValKey RDB Backup for Geodineum
@@ -4306,11 +3477,6 @@ BAKTMR
                 log_warning "Could not enable backup timer"
             systemctl start valkey-backup.timer 2>/dev/null || true
 
-            # Install the logrotate config. The old setup-log-rotation.sh was
-            # retired in the BAK restructure; the canonical conf now ships in
-            # the repo and is installed directly to /etc/logrotate.d/. (Without
-            # this, log rotation was silently never configured and the success
-            # line below was misleading.)
             _bak_lr_conf="${install_dir}/config/logrotate/logrotate-geodineum.conf"
             if [[ -f "$_bak_lr_conf" ]]; then
                 install -m 0644 -o root -g root "$_bak_lr_conf" /etc/logrotate.d/geodineum 2>/dev/null && \
@@ -4358,36 +3524,22 @@ phase_config() {
         /usr/local/lib/geodineum/bootstrap-loader.sh
     log_success "Installed bootstrap-loader.sh to /usr/local/lib/geodineum/"
 
-    # ── 2. Source the loader (use just-installed prod copy) ──────────────
+    # ── 2. Source the loader ──────────────────────────────────────────────
     # shellcheck source=/usr/local/lib/geodineum/bootstrap-loader.sh
     source /usr/local/lib/geodineum/bootstrap-loader.sh
 
     # ── 3. Create directory structure ──────────────────────────────────────
-    # Each track_path_if_new is a NO-OP when the path already exists,
-    # so on a multi-site host where /etc/geodineum already has
-    # site_a/credentials from a prior install, a failing site_b install
-    # rolls back without touching site_a's state (UX-S2.01).
+    # Only paths that did not exist are tracked, so a rollback leaves earlier installs alone.
     track_path_if_new /etc/geodineum
     track_path_if_new /etc/geodineum/components
     track_path_if_new /etc/geodineum/components/gnode-daemon
     track_path_if_new /etc/geodineum/components/gnode-daemon/nodes
-    # gCore config + the per-site credential dir it reads are web-tier
-    # artifacts. A compute node runs no gCore and hosts no sites.
     if has_gcore "${resolved[@]}"; then
         track_path_if_new /etc/geodineum/components/gCore
         track_path_if_new /etc/geodineum/sites
     fi
 
-    # ── 3a. Create gnode user + geodineum group BEFORE any chown-using
-    # install -d (phase-ordering fix). Previously the install -d
-    #       commands below ran first and hit "install: invalid user 'gnode'"
-    #       because the gnode system user didn't exist yet — Phase 7's
-    #       creation block was AFTER the install -d batch. Directories
-    #       failed to be created at all, and Phase 7 cascaded:
-    #       /etc/geodineum/components/gCore/ was missing when the
-    #       gcore.env write tried to land. Phase 10 validator then
-    #       reported "Layer 1: STRUCTURE 0.50 DEGRADED" because the
-    #       expected directory tree wasn't there.
+    # ── 3a. gnode user and geodineum group, before any install -d that chowns to them
     if ! id -u gnode &>/dev/null; then
         getent group gnode &>/dev/null || groupadd --system gnode
         useradd --system --gid gnode --home-dir /opt/geodineum \
@@ -4405,14 +3557,11 @@ phase_config() {
         log_success "Created geodineum group"
     fi
 
-    # ── 3b. Directory creation with proper ownership.
-    # The gnode user now exists, so install -d -o gnode succeeds.
+    # ── 3b. Directories with ownership
     install -d -m 0751 -o root  -g geodineum /etc/geodineum
     install -d -m 0750 -o gnode -g "$(_components_group)"    /etc/geodineum/components
     install -d -m 0750 -o gnode -g "$(_components_group)"    /etc/geodineum/components/gnode-daemon
     install -d -m 0750 -o gnode -g "$(_components_group)"    /etc/geodineum/components/gnode-daemon/nodes
-    # www-data owns the read side of both: gCore's env file and the per-site
-    # ValKey client credentials it loads. Neither exists without a web tier.
     if has_gcore "${resolved[@]}"; then
         install -d -m 0750 -o gnode -g "$(_components_group)"    /etc/geodineum/components/gCore
         install -d -m 0750 -o gnode -g www-data /etc/geodineum/sites
@@ -4420,33 +3569,15 @@ phase_config() {
 
     local deploy_user="${SUDO_USER:-$(whoami)}"
 
-    # credential group memberships (replaces the broad-gnode
-    # approach which let www-data into gnode group → catastrophic blast
-    # radius on PHP/WP RCE). New scoped model:
-    #
-    #   gnode group         → gnode user ONLY (no operator accounts).
-    #                         Tight: daemon-only privileged access to
-    #                         /opt/geodineum/{gNode,COMMS,BAK} + daemon
-    #                         credential.
-    #   geodineum-creds     → gnode + deploy_user (read credentials/).
-    #                         www-data NOT a member — RCE on PHP can't
-    #                         read admin or daemon credentials.
-    #   geodineum-dash      → gnode + www-data + deploy_user (read
-    #                         dashboard/). www-data here is intentional
-    #                         and surgical: ONLY the dashboard token,
-    #                         which has +@read across ValKey.
-    #   geodineum           → group of /opt/geodineum.
+    # www-data joins only geodineum-dash: PHP can read the read-only dashboard token, never other credentials.
     id -u gnode    &>/dev/null && true   # gnode in gnode primary only
     [[ "${DEPLOY_TIER:-}" == compute || "${DEPLOY_TIER:-}" == replica ]] || { id -u www-data &>/dev/null && usermod -aG geodineum-dash www-data 2>/dev/null || true; }
     id -u "$deploy_user" &>/dev/null && usermod -aG geodineum-creds "$deploy_user" 2>/dev/null || true
     id -u "$deploy_user" &>/dev/null && usermod -aG geodineum-dash  "$deploy_user" 2>/dev/null || true
-    # gnode user reads its own daemon credential via gnode group
-    # ownership; also needs to read admin credential for ACL ops, so
-    # add to geodineum-creds. Add to geodineum-dash so the daemon can
-    # rotate the dashboard token at runtime (gnode owns the file).
+    # gnode reads the admin credential for ACL work and rotates the dashboard token.
     id -u gnode &>/dev/null && usermod -aG geodineum-creds gnode 2>/dev/null || true
     id -u gnode &>/dev/null && usermod -aG geodineum-dash  gnode 2>/dev/null || true
-    # gnode→geodineum-bootstrap: daemon reads bootstrap.env(0640)@start; here not Phase 0 (gnode user absent then → no-op)
+    # The daemon reads bootstrap.env at start; the gnode user only exists from this phase on.
     id -u gnode &>/dev/null && usermod -aG geodineum-bootstrap gnode 2>/dev/null || true
     log_success "Group memberships:"
     log_detail "  gnode:           gnode (daemon-only)"
@@ -4455,17 +3586,9 @@ phase_config() {
     log_detail "  geodineum-bootstrap: gnode (reads bootstrap.env at daemon start)"
 
     track_path_if_new /etc/geodineum/credentials
-    # credentials/ owner root:geodineum-creds 0750. Root writes
-    # initial credentials at install time; geodineum-creds group reads.
-    # www-data is NOT in geodineum-creds → cannot traverse this dir at
-    # all. Daemon + admin credentials are unreadable from any PHP/
-    # www-data attack surface.
     install -d -m 0750 -o root -g geodineum-creds /etc/geodineum/credentials
 
-    # Write any master ValKey credentials pasted during a join install
-    # (wizard_constellation_credentials). gnode:geodineum-creds 0640 — the
-    # daemon (gnode) reads them; www-data cannot. On a worker nothing else
-    # provisions these (the ACL users live on the master), so they persist.
+    # Master ValKey credentials pasted during a join install; on a worker nothing else writes them.
     if [[ -n "${CONSTELLATION_DAEMON_PW:-}" ]]; then
         printf '%s' "$CONSTELLATION_DAEMON_PW" > /etc/geodineum/credentials/valkey_daemon.password
         chown gnode:geodineum-creds /etc/geodineum/credentials/valkey_daemon.password 2>/dev/null || true
@@ -4478,13 +3601,7 @@ phase_config() {
         chmod 0640 /etc/geodineum/credentials/valkey_replica.password
         log_success "Wrote master replica credential (from join wizard)"
     fi
-    # This node's own ValKey identity, minted by the master's `expand`. Stored
-    # under its own name rather than overwriting valkey_daemon.password: the
-    # shared daemon login is still what everything authenticates as today, and
-    # a credential file whose contents no longer match its name is how silent
-    # auth failures start. Switching the daemon over to this identity is a
-    # separate change — see the node-identity section of the constellation
-    # contract.
+    # This node's own ValKey identity from the master's `expand`, kept apart from the shared daemon login.
     if [[ -n "${CONSTELLATION_NODE_USER:-}" ]] && [[ -n "${CONSTELLATION_NODE_PW:-}" ]]; then
         printf '%s' "$CONSTELLATION_NODE_PW" > /etc/geodineum/credentials/valkey_node.password
         chown gnode:geodineum-creds /etc/geodineum/credentials/valkey_node.password 2>/dev/null || true
@@ -4497,11 +3614,7 @@ phase_config() {
     fi
 
     track_path_if_new /etc/geodineum/dashboard
-    # dashboard/ owner root:geodineum-dash 0750. Dedicated dir
-    # for credentials gCore PHP must read at runtime (just the dashboard
-    # token currently; future: any www-data-readable ACL credentials).
-    # Separating these from credentials/ means PHP RCE can read AT MOST
-    # the dashboard ACL credentials, which are bounded to +@read.
+    # The only credentials www-data can read live here, apart from credentials/.
     install -d -m 0750 -o root -g geodineum-dash /etc/geodineum/dashboard
 
     # ── 5. Resolve operator-supplied config values ────────────────────────
@@ -4509,11 +3622,11 @@ phase_config() {
     local cfg_valkey_port="${VALKEY_PORT:-47445}"
     local cfg_valkey_creds_path="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}"
 
-    # ── 6. Tier 1 — write disk-minimal bootstrap.env (3 keys, root:root 644) ─
+    # ── 6. Tier 1: bootstrap.env on disk ──────────────────────────────────
     write_disk_bootstrap "$cfg_valkey_host" "$cfg_valkey_port" "$cfg_valkey_creds_path"
     log_success "Wrote /etc/geodineum/bootstrap.env (root:geodineum-bootstrap 0640, 3 strict keys)"
 
-    # ── 7. Tier 2 — populate ValKey-resident config ────────────────────────
+    # ── 7. Tier 2: config in ValKey ────────────────────────────────────────
     if [[ ! "${GNODE_TOPOLOGY_NAMESPACE:-geodineum}" =~ ^[a-z][a-z0-9_]{1,31}$ ]]; then
         log_error "Constellation name '${GNODE_TOPOLOGY_NAMESPACE}' is invalid: lowercase letter first, then a-z, 0-9, _ (2-32 characters)"
         exit 1
@@ -4549,8 +3662,6 @@ EOF
             log_warning "ValKey tier population failed — re-run install.sh after ACL setup completes"
         fi
     elif [[ "$SKIP_LOCAL_VALKEY" == "true" ]]; then
-        # Worker node: the admin credential stays on the master by design,
-        # and the master's install already populated the shared tier.
         log_info "Worker node (remote ValKey) — tier population already done on the master; skipping"
     else
         log_warning "Admin ValKey password not yet readable at ${cfg_valkey_creds_path}/valkey.password"
@@ -4582,28 +3693,10 @@ GCEOF
 }
 
 # =============================================================================
-# Apache hardening (called from phase_services when Apache is the SAPI host)
+# Apache hardening
 # =============================================================================
 
-# enable mod_security2 + OWASP Core Rule Set, harden information-leak
-# defaults, set sensible request limits. Idempotent.
-#
-# Why each piece:
-#   - libapache2-mod-security2: WAF that blocks common attack patterns
-#     (SQL injection, XSS, traversal, scanner signatures) at the Apache layer
-#     BEFORE PHP sees the request. Acts on static + PHP paths uniformly,
-#     unlike gCore's PHP-emitted security headers which only protect
-#     dynamic responses.
-#   - modsecurity-crs: OWASP Core Rule Set, the maintained default rule
-#     pack. We enable it in DetectionOnly mode initially (logs but doesn't
-#     block) so legit traffic isn't broken by overly-strict default rules.
-#     Operator can flip to On after reviewing the audit log.
-#   - ServerTokens Prod / ServerSignature Off / TraceEnable Off: kills the
-#     "Server: Apache/2.4.52 (Ubuntu)" + module-version disclosure on
-# every response/error page. Previously, we leaked OS + Apache version
-#     in plain text headers (seen on the curl output earlier).
-#   - LimitRequestBody / Timeout: caps to prevent slow-loris and very-large-
-#     POST denial-of-service. WordPress media uploads still work (10 MB cap).
+# mod_security2 with the OWASP Core Rule Set, no version disclosure, request limits.
 ensure_apache_hardened() {
     if ! /usr/bin/command -v apache2 >/dev/null 2>&1; then
         return 0  # No Apache, nothing to harden
@@ -4611,7 +3704,6 @@ ensure_apache_hardened() {
 
     log_info "Hardening Apache (mod_security2 + information-leak defaults)"
 
-    # 1. Install mod_security2 + OWASP CRS (apt; idempotent)
     if ! /usr/bin/dpkg-query -W -f='${db:Status-Abbrev}' libapache2-mod-security2 2>/dev/null | grep -q '^ii'; then
         log_detail "Installing libapache2-mod-security2 + modsecurity-crs"
         /usr/bin/apt-get install -y -qq libapache2-mod-security2 modsecurity-crs >/dev/null 2>&1 \
@@ -4620,20 +3712,15 @@ ensure_apache_hardened() {
         log_detail "mod_security2 already installed"
     fi
 
-    # 2. Activate mod_security2's recommended config (Ubuntu ships
-    # modsecurity.conf-recommended; rename to modsecurity.conf if needed).
     if [[ -f /etc/modsecurity/modsecurity.conf-recommended ]] && [[ ! -f /etc/modsecurity/modsecurity.conf ]]; then
         /usr/bin/cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf
-        # Start in DetectionOnly so existing traffic isn't broken; operator
-        # reviews /var/log/apache2/modsec_audit.log then flips to On.
+        # DetectionOnly until the operator has reviewed /var/log/apache2/modsec_audit.log.
         /usr/bin/sed -i 's|^SecRuleEngine DetectionOnly|SecRuleEngine DetectionOnly|;
                          s|^SecRuleEngine On|SecRuleEngine DetectionOnly|' \
                          /etc/modsecurity/modsecurity.conf
         log_detail "Initialized modsecurity.conf (SecRuleEngine DetectionOnly — review then flip to On)"
     fi
 
-    # 3. Information-leak hardening — drop into conf-available so it's
-    # easy to disable for debugging.
     cat > /etc/apache2/conf-available/geodineum-harden.conf <<'HARDEN_EOF'
 # Geodineum Apache hardening 
 # Information-leak suppression + request limits.
@@ -4661,13 +3748,7 @@ KeepAliveTimeout 5
 </Directory>
 HARDEN_EOF
 
-    # 3b. WordPress admin CRS exclusions. The OWASP CRS WordPress package
-    # (REQUEST-903.9002, enabled via crs-setup) does NOT cover the protocol
-    # false-positives that block the Classic-Editor save POST to
-    # /wp-admin/post.php: 921110 (HTTP smuggling) and 932130 (shell expr) fire
-    # on legitimate post-body content, pushing the inbound anomaly score past
-    # the threshold so 949110 returns 403 (SQLI/XSS/RCE all score 0). Scope the
-    # removals to the auth-gated /wp-admin/ path so blocking stays on elsewhere.
+    # CRS rules 921110 and 932130 fire on legitimate wp-admin saves; the CRS WordPress package does not exclude them.
     cat > /etc/apache2/conf-available/modsecurity-wp-exclusions.conf <<'WPEXCL_EOF'
 # ModSecurity OWASP CRS exclusions for the authenticated WordPress admin.
 # Scoped to /wp-admin/ (auth-gated) so the CMS editor can save content without
@@ -4687,13 +3768,7 @@ HARDEN_EOF
 </LocationMatch>
 WPEXCL_EOF
 
-    # 3c. mod_evasive thresholds for the HTTP/2 era. One multiplexed h2
-    # pageload fires dozens of same-second requests, so the package-era
-    # defaults (5 same-page / 50 same-site per second, 600s block) read a
-    # wp-admin visit as a DoS and lock the operator out for 10 minutes.
-    # conf-enabled loads after mods-enabled, so these override the module's
-    # own conf without touching the package conffile. Inert without the
-    # module; flood protection stays real (60s rolling blocks past 30/300 rps).
+    # The package's mod_evasive defaults read one HTTP/2 page load as a DoS; conf-enabled overrides them.
     cat > /etc/apache2/conf-available/geodineum-evasive.conf <<'EVASIVE_EOF'
 <IfModule mod_evasive20.c>
     DOSPageCount        30
@@ -4711,8 +3786,6 @@ EVASIVE_EOF
     /usr/sbin/a2enconf geodineum-evasive >/dev/null 2>&1 || true
     /usr/sbin/a2enmod security2 >/dev/null 2>&1 || true
 
-    # 4. Reload Apache to pick up the new config. Use reload (not restart)
-    # so existing connections aren't dropped.
     if /usr/sbin/apachectl configtest >/dev/null 2>&1; then
         /usr/bin/systemctl reload apache2 >/dev/null 2>&1
         log_success "Apache hardened (mod_security2 in DetectionOnly + info-leak suppression)"
@@ -4723,13 +3796,8 @@ EVASIVE_EOF
     fi
 }
 
-# PHP-FPM + mpm_event. mod_php pins Apache to prefork: one process per
-# connection, so a single hung backend call holds a whole worker hostage
-# and HTTP/2 is off entirely. FPM makes a hung request cost one pool slot
-# with a hard kill at request_terminate_timeout, and the pool opcache/APCu
-# become shared across workers instead of per-process.
-# Idempotent. Rollback: a2dismod mpm_event && a2enmod mpm_prefork &&
-# systemctl restart apache2 (FPM keeps serving PHP under prefork too).
+# Serve PHP from a dedicated FPM pool under mpm_event with HTTP/2; mod_php would pin Apache to prefork.
+# Undo: a2dismod mpm_event && a2enmod mpm_prefork && systemctl restart apache2
 ensure_php_fpm() {
     /usr/bin/command -v apache2 >/dev/null 2>&1 || return 0
 
@@ -4752,8 +3820,6 @@ ensure_php_fpm() {
     /usr/bin/apt-get install -y -qq "php${phpv}-opcache" php-apcu >/dev/null 2>&1 || true
     /usr/sbin/phpenmod -v "$phpv" -s fpm opcache apcu 2>/dev/null || true
 
-    # Dedicated pool. The stock www pool is retired at the end of the flip;
-    # dpkg keeps deleted conffiles deleted, so it stays gone across upgrades.
     local slowlog="/var/log/php${phpv}-fpm-geodineum-slow.log"
     [[ -f "$slowlog" ]] || /usr/bin/install -m 0640 -o root -g adm /dev/null "$slowlog" 2>/dev/null || true
     cat > "/etc/php/${phpv}/fpm/pool.d/geodineum.conf" <<POOL_EOF
@@ -4788,8 +3854,7 @@ opcache.jit_buffer_size=0
 apc.shm_size=128M
 FPMINI_EOF
 
-    # Route .php to the pool. ProxySet timeout must outlive
-    # request_terminate_timeout so FPM's kill fires first.
+    # ProxySet timeout outlives request_terminate_timeout so FPM's kill fires first.
     cat > /etc/apache2/conf-available/geodineum-php-fpm.conf <<'FPMCONF_EOF'
 <IfModule proxy_fcgi_module>
     <IfModule setenvif_module>
@@ -4810,8 +3875,7 @@ FPMINI_EOF
 </IfModule>
 FPMCONF_EOF
 
-    # Event sizing + HTTP/2. conf-enabled loads after mods-enabled, so this
-    # overrides stock mpm_event.conf without touching the package conffile.
+    # Overrides the package's mpm_event.conf without editing it.
     cat > /etc/apache2/conf-available/geodineum-mpm.conf <<'MPM_EOF'
 <IfModule mpm_event_module>
     StartServers            3
@@ -4830,15 +3894,14 @@ MPM_EOF
 
     /usr/sbin/a2enmod proxy proxy_fcgi setenvif http2 >/dev/null 2>&1 || true
     /usr/sbin/a2enconf geodineum-php-fpm geodineum-mpm >/dev/null 2>&1 || true
-    # Stock Debian handler confs target the www pool and would win the
-    # handler merge (conf-enabled is alphabetical) — disable every version.
+    # The stock handler confs target the www pool and would win the handler merge.
     local stock_conf
     for stock_conf in /etc/apache2/conf-enabled/php*-fpm.conf; do
         [[ -e "$stock_conf" ]] || continue
         /usr/sbin/a2disconf "$(basename "$stock_conf" .conf)" >/dev/null 2>&1 || true
     done
 
-    # Both pools stay up through the Apache flip (zero-downtime ordering).
+    # Both pools stay up through the Apache switch.
     if ! "/usr/sbin/php-fpm${phpv}" -t >/dev/null 2>&1; then
         log_warning "php-fpm config test FAILED — removing geodineum pool, keeping stock handler"
         rm -f "/etc/php/${phpv}/fpm/pool.d/geodineum.conf"
@@ -4849,7 +3912,6 @@ MPM_EOF
     systemctl enable "php${phpv}-fpm" >/dev/null 2>&1 || true
     systemctl restart "php${phpv}-fpm" >/dev/null 2>&1 || true
 
-    # mod_php is what pins prefork; event needs it gone before the MPM swap.
     local mod
     for mod in /etc/apache2/mods-enabled/php*.load; do
         [[ -e "$mod" ]] || continue
@@ -4862,7 +3924,7 @@ MPM_EOF
 
     if /usr/sbin/apachectl configtest >/dev/null 2>&1; then
         systemctl restart apache2 >/dev/null 2>&1 || true
-        # Retire the stock www pool only after Apache stopped referencing it.
+        # Only now has Apache stopped using the stock www pool.
         if [[ -f "/etc/php/${phpv}/fpm/pool.d/www.conf" ]]; then
             mv "/etc/php/${phpv}/fpm/pool.d/www.conf" \
                "/etc/php/${phpv}/fpm/pool.d/www.conf.disabled-by-geodineum" 2>/dev/null || true
@@ -4905,7 +3967,7 @@ phase_services() {
         return
     fi
 
-    # Source geodeploy library — single authority for all permissions
+    # geodeploy.sh is the single authority for permissions.
     local geodeploy_lib="${INSTALL_ROOT}/Geodineum/lib/geodeploy.sh"
     if [[ -f "$geodeploy_lib" ]]; then
         GEODEPLOY_DEPLOY_USER="${DEPLOY_USER}"
@@ -4915,35 +3977,15 @@ phase_services() {
         log_warning "geodeploy.sh not found at ${geodeploy_lib} — using inline fallback"
     fi
 
-    # Set ownership per the narrow-group model.
-    #   gNode/BAK                  → deploy_user:gnode            (daemon-side)
-    #   Geodineum-COMMS/           → deploy_user:geodineum-comms  (isolation)
-    #   Geodineum/                 → deploy_user:geodineum        (operator + CLI access via group)
-    #   web/theme components       → deploy_user:geodineum-code   (shared source; www-data + services read via group)
-    #
-    # Fallback (when geodeploy_fix_perms isn't loaded) MUST distinguish
-    # executable files from regular files — otherwise the blanket
-    # chmod 640 strips the execute bit on:
-    #   - target/release/<binary>     (the Rust binaries — gnode-daemon,
-    #                                   geodineum-comms, ...)
-    #   - *.sh / *.bash / *.py        (shell + python scripts)
-    # A blanket 640 leaves binaries unreadable to systemd's service-user
-    # exec (status=126). Each fallback below applies 0640 to regular
-    # files THEN 0750 to executables.
     log_info "Setting permissions per narrow-group model"
 
-    # Helper: blanket chmod 0640 then promote executables to 0750.
-    # Defined inline so the fallback works even when lib/geodeploy.sh
-    # isn't sourced (very-fresh install with no deploy harness yet).
+    # Fallback without geodeploy.sh: files 0640, scripts, binaries and shebang files 0750.
     __chmod_files_by_kind() {
         local root="$1"
-        # Regular files
         find "$root" -type f \( -name "*.sh" -o -name "*.bash" -o -name "*.py" \) -prune -o \
                      -type f -print0 2>/dev/null | xargs -0 chmod 0640 2>/dev/null
-        # Shell + Python scripts → executable
         find "$root" -type f \( -name "*.sh" -o -name "*.bash" -o -name "*.py" \) \
                      -exec chmod 0750 {} \; 2>/dev/null
-        # Rust binaries (target/release top level — not the deps/ subdir)
         if [[ -d "$root/daemon/target/release" ]]; then
             find "$root/daemon/target/release" -maxdepth 1 -type f -executable \
                  -exec chmod 0750 {} \; 2>/dev/null
@@ -4952,14 +3994,11 @@ phase_services() {
             find "$root/target/release" -maxdepth 1 -type f -executable \
                  -exec chmod 0750 {} \; 2>/dev/null
         fi
-        # Shebang detection — anything with a #! and no extension still
-        # needs +x (e.g. installer-generated wrappers).
         find "$root" -type f -not -name "*.sh" -not -name "*.bash" -not -name "*.py" \
              -not -path "*/.git/*" -not -path "*/target/*" \
              -exec sh -c 'head -c 2 "$1" 2>/dev/null | grep -q "^#!" && chmod 0750 "$1"' _ {} \; 2>/dev/null
     }
 
-    # Infrastructure repos: deploy_user:gnode
     for repo_dir in gNode Geodineum-BAK; do
         if [[ -d "${INSTALL_ROOT}/${repo_dir}" ]]; then
             if type geodeploy_fix_perms &>/dev/null; then
@@ -4973,11 +4012,7 @@ phase_services() {
         fi
     done
 
-    # Geodineum-COMMS gets its own narrow group so the COMMS
-    # daemon (geodineum-comms user) reads its tree without gnode-group
-    # membership. Runtime-writable subdirs (.gnode/, logs/ — the unit's
-    # ReadWritePaths) are owned BY the runtime user; everything else is
-    # deploy-owned, group-readable.
+    # COMMS has its own group; only its runtime-writable dirs belong to the service user.
     if [[ -d "${INSTALL_ROOT}/Geodineum-COMMS" ]]; then
         if type geodeploy_fix_perms &>/dev/null; then
             geodeploy_fix_perms "${INSTALL_ROOT}/Geodineum-COMMS" "${DEPLOY_USER}" "geodineum-comms"
@@ -4994,7 +4029,6 @@ phase_services() {
         done
     fi
 
-    # Geodineum repo itself: deploy_user:geodineum (operator + CLI access via group)
     if [[ -d "${INSTALL_ROOT}/Geodineum" ]]; then
         if type geodeploy_fix_perms &>/dev/null; then
             geodeploy_fix_perms "${INSTALL_ROOT}/Geodineum" "${DEPLOY_USER}" "geodineum"
@@ -5005,19 +4039,7 @@ phase_services() {
         fi
     fi
 
-    # Shared SOURCE (gCore framework + themes that WP `require_once`s). Group =
-    # geodineum-code, the single source-read class. NOT www-data: filing the
-    # framework under the web server's primary group would force service users into
-    # www-data to use the library — exposing the whole web tier to a service
-    # compromise. geodineum-code is a SUPPLEMENTARY group for www-data, so a
-    # php-fpm/apache worker forked before www-data joined it cannot read these
-    # files until re-exec (the "(13)Permission denied: pcfg_openfile" 500s).
-    # The mitigation is the MANDATORY apache2 + php-fpm restart after group
-    # setup (group membership is added above; this install flow restarts both).
-    # Matches the manifests (group: geodineum-code) + geodeploy.sh — one model.
-    # The set is DISCOVERED from each component's manifest group rather than
-    # hardcoded, so comprehensive installs cover their additional web/theme
-    # components without this shared source having to enumerate them.
+    # Shared PHP source is group geodineum-code, not www-data, so services read it without joining the web tier.
     local -a wp_dirs=(gCore gTemplate gCube gNode-Client)
     local _cd _cn
     for _cd in "${INSTALL_ROOT}"/*/; do
@@ -5041,11 +4063,8 @@ phase_services() {
     unset -f __chmod_files_by_kind
     log_success "Component permissions set per narrow-group model"
 
-    # Centralized log directory: /var/log/geodineum/
     log_info "Setting up centralized logs at /var/log/geodineum/..."
     track_path_if_new /var/log/geodineum
-    # `deploy` holds the orchestrator's auto-deploy.log (was wrongly under
-    # /opt/geodineum/logs); geodeploy_fix_log_perms owns it <deploy_user>:geodineum.
     for log_dir in gnode comms gcore gcore/sites apache wordpress themes valkey bak deploy; do
         track_path_if_new "/var/log/geodineum/${log_dir}"
         mkdir -p "/var/log/geodineum/${log_dir}"
@@ -5055,34 +4074,18 @@ phase_services() {
     fi
     log_success "Log directories created with correct ownership"
 
-    # Fix credential ownership
     if type geodeploy_fix_all_credentials &>/dev/null; then
         geodeploy_fix_all_credentials "/etc/geodineum/credentials"
         log_success "Credential ownership set (<runtime_user>:<runtime_user> 600)"
     fi
 
-    # Make sure the daemon credential symlink exists at the gNode-side
-    # path BEFORE install-gnode-service.sh runs. provision_daemon_acl
-    # called the same helper in Phase 4 best-effort, but at that point
-    # /opt/geodineum/gNode/ doesn't exist yet (Phase 5 clones it). Now
-    # the gNode tree is on disk; the symlink can be created.
+    # On a fresh install the gNode tree did not exist yet when Phase 4 tried this.
     ensure_daemon_credential_symlink
 
-    # Install systemd service via gNode's script. Track rc and
-    # return it at end so run_phase records [FAIL] Services. Previously,
-    # this set PHASE_RESULTS["Services"]="FAIL" mid-function but
-    # run_phase overwrote it back to OK based on the function's
-    # implicit return-0.
     local service_script="${GNODE_SCRIPTS}/install-gnode-service.sh"
     if [[ -x "$service_script" ]]; then
         log_info "Installing gNode systemd service..."
-        # Pass the node id through so install-gnode-service.sh writes it into
-        # daemon.env (the unit's --node-id reads GNODE_NODE_ID). Default is the
-        # short hostname on EVERY path — master included. "master" is a ROLE,
-        # modeled at node_role (constellation schema dim 0); a role in an
-        # identity slot renames the node when its role changes, and the id is
-        # also the consumer name and the heartbeat's node segment, so it must
-        # be unique per node and stable across role changes.
+        # The node id must be unique and survive role changes, so it is never a role like "master".
         if [[ -z "$GNODE_NODE_ID" ]]; then
             GNODE_NODE_ID="$(hostname -s 2>/dev/null || echo unknown-node)"
             log_info "Node ID defaulted to ${GNODE_NODE_ID} (short hostname)"
@@ -5098,16 +4101,10 @@ phase_services() {
         rc=1
     fi
 
-    # Install COMMS systemd service if COMMS was installed
     if [[ -x "${INSTALL_ROOT}/Geodineum-COMMS/target/release/geodineum-comms" ]]; then
         local comms_service="/etc/systemd/system/geodineum-comms.service"
 
-        # Runtime state + per-component env dirs owned by the
-        # dedicated COMMS user. /var/lib/geodineum-comms holds the
-        # per-site SQLite persistence (unit ReadWritePaths); the
-        # components dir holds operator-created secrets (env file read
-        # at start via EnvironmentFile, never written by the daemon —
-        # root-owned, group-read).
+        # The daemon writes /var/lib/geodineum-comms; it only reads its root-owned env files.
         mkdir -p /var/lib/geodineum-comms 2>/dev/null || true
         chown -R geodineum-comms:geodineum-comms /var/lib/geodineum-comms 2>/dev/null || true
         chmod 0750 /var/lib/geodineum-comms 2>/dev/null || true
@@ -5129,8 +4126,6 @@ phase_services() {
         fi
     fi
 
-    # Apache hardening (mod_security2 + info-leak suppression).
-    # Idempotent; safe to re-run. Only fires if Apache is installed.
     if [[ "$HAS_APACHE" == "true" ]] && [[ "$DRY_RUN" != "true" ]]; then
         ensure_apache_hardened
         ensure_php_fpm
@@ -5154,12 +4149,8 @@ phase_functions() {
         return
     fi
 
-    # Ordered before the dry-run branch so a dry run reports the same decision
-    # a real run would take, rather than claiming a load that never happens.
+    # Before the dry-run branch, so a dry run reports what a real run would do.
     if [[ "$SKIP_LOCAL_VALKEY" == "true" ]]; then
-        # Constellation worker: the function libraries live in the MASTER's
-        # ValKey, which owns that namespace. The worker's daemon verifies them
-        # read-only at startup and never writes them.
         log_info "Remote ValKey (constellation worker) — function libraries are managed on the master"
         return
     fi
@@ -5172,14 +4163,9 @@ phase_functions() {
     if [[ "$VALKEY_RUNNING" != "true" ]]; then
         log_warning "ValKey not running — cannot load Lua functions now"
         log_info "Load later: ${GNODE_SCRIPTS}/load-valkey-functions.sh"
-        # ValKey-not-running is itself a soft-fail at this point —
-        # surface it via rc so the phase tracker reflects it.
         return 1
     fi
 
-    # Track rc + return at end. Setting PHASE_RESULTS
-    # mid-function gets overwritten by run_phase based on the implicit
-    # return-0; only the function's actual exit status counts.
     local lua_script="${GNODE_SCRIPTS}/load-valkey-functions.sh"
     if [[ -x "$lua_script" ]]; then
         log_info "Loading Lua function libraries..."
@@ -5193,24 +4179,7 @@ phase_functions() {
         rc=1
     fi
 
-    # Register ecosystem tools in the tool topology (dependency pyramid).
-    # Surface stderr AND get the flag
-    # positions right.
-    #
-    # gnode-daemon's clap layout puts ValKey-connection flags
-    # (--redis-user, --redis-port, --redis-auth-file, --redis-auth) on
-    # the top-level Cli struct, NOT on the RegisterTools subcommand.
-    # Top-level flags must precede the subcommand:
-    #
-    #   gnode-daemon --redis-user X --redis-auth-file Y register-tools --tier tool
-    #
-    # Previously, we passed them after `register-tools`, which clap
-    # rejected with "Found argument '--redis-user' which wasn't expected,
-    # or isn't valid in this context". The env-var equivalents
-    # (GNODE_REDIS_AUTH_FILE, VALKEY_USER, VALKEY_PORT) are already
-    # honoured by the same flags' clap declarations, so passing via
-    # env keeps the call site cleaner and avoids any ordering
-    # subtlety.
+    # Connection settings go by environment: as flags they would have to precede the subcommand.
     local daemon_bin="${INSTALL_ROOT}/gNode/daemon/target/release/gnode-daemon"
     if [[ -x "$daemon_bin" ]]; then
         log_info "Registering ecosystem tools in tool topology..."
@@ -5223,8 +4192,6 @@ phase_functions() {
                 log_success "Ecosystem components registered on the one topology (shape 2)"
             else
                 log_warning "Tool registration had issues (see stderr above) — register later: VALKEY_USER=gnode_daemon GNODE_REDIS_AUTH_FILE=${daemon_pass_file} gnode-daemon register-tools --tier tool"
-                # Non-fatal — the daemon can
-                # self-register on first start.
             fi
         else
             log_warning "Daemon password file not found ($daemon_pass_file) — skipping tool registration"
@@ -5252,7 +4219,6 @@ phase_verify() {
     local pass=0
     local fail=0
 
-    # Check each installed component
     for comp in "${resolved[@]}"; do
         local dir="${INSTALL_ROOT}/$(get_install_dir "$comp")"
         if [[ -d "$dir" ]]; then
@@ -5264,10 +4230,7 @@ phase_verify() {
         fi
     done
 
-    # Check daemon binary. If absent, also downgrade PHASE_RESULTS["Build"]
-    # to FAIL so the post-install summary reflects ground truth: a
-    # missing binary means the build phase did not produce a working
-    # artefact, even if cargo's stderr got swallowed somewhere upstream.
+    # A missing binary fails the Build phase in the summary, whatever the build reported.
     if needs_daemon "${resolved[@]}"; then
         if [[ -x "${INSTALL_ROOT}/gNode/daemon/target/release/gnode-daemon" ]]; then
             log_success "gNode daemon binary executable"
@@ -5279,7 +4242,6 @@ phase_verify() {
         fi
     fi
 
-    # Check config
     if [[ -f "/etc/geodineum/bootstrap.env" ]]; then
         log_success "/etc/geodineum/bootstrap.env exists"
         ((pass++))
@@ -5288,17 +4250,9 @@ phase_verify() {
         ((fail++))
     fi
 
-    # Check ValKey connection. Re-PING live rather than trusting the
-    # cached VALKEY_RUNNING flag — Phase 4 sets the flag based on a
-    # post-restart auth verify, but state can drift between phases
-    # (e.g., daemon crashed mid-Phase-6 build, OOM killer, manual
-    # systemctl stop). Phase 10's job is to assert the runtime
-    # invariant, not echo back what we believed in Phase 4.
+    # PING live rather than trust VALKEY_RUNNING from Phase 4.
     if needs_daemon "${resolved[@]}"; then
-        # Credential fallback: workers have no admin password by design —
-        # verify with the daemon ACL credential instead. Also target
-        # VALKEY_HOST (remote on workers), not the implicit localhost:
-        # both gaps made this check a guaranteed false FAIL on every join.
+        # Workers have no admin password and a remote ValKey: use the daemon credential and VALKEY_HOST.
         local pwfile_v="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}/valkey.password"
         local vk_user_v=""
         if [[ ! -r "$pwfile_v" ]]; then
@@ -5320,7 +4274,6 @@ phase_verify() {
         fi
     fi
 
-    # Check daemon service
     if needs_daemon "${resolved[@]}" && [[ "$HAS_SYSTEMD" == "true" ]]; then
         if systemctl is-enabled --quiet gnode-daemon 2>/dev/null; then
             log_success "gnode-daemon service enabled"
@@ -5330,12 +4283,6 @@ phase_verify() {
         fi
     fi
 
-    # Run validation script if available. surface output (decision
-    # W). Pre-fix the call was `--quiet 2>/dev/null` which gave the
-    # operator a content-free `[WARN] Configuration validation found
-    # issues` line with no path forward — same shape as the other phases.
-    # Now run without --quiet so the validator prints its findings
-    # inline; the trailing exit code still drives pass/fail.
     local validate="${GNODE_SCRIPTS}/validate-geodineum-config.sh"
     if [[ -x "$validate" ]] && [[ "$CONFIG_EXISTS" == "true" ]]; then
         log_info "Running configuration validation..."
@@ -5356,23 +4303,11 @@ phase_verify() {
 # Summary
 # =============================================================================
 
-# Cog-load status table. Best-effort query of ValKey for
-# the per-extension config_schema entries the daemon publishes at
-# startup. When ValKey
-# isn't reachable yet (e.g. daemon not started, or running under a
-# different ACL than the one the wizard can read), the table degrades
-# gracefully: shows scanned filesystem state with status "pending".
+# Extension load status from the schemas the daemon publishes; falls back to what is on disk.
 print_cog_load_status() {
     local cms_path="${GNODE_EXT_CMS_PATH:-/opt/geodineum/pro/gNode/gNode-CMS}"
     local schemas=""
 
-    # use valkey-cli (the canonical CLI for the source-build
-    # ValKey we ship). redis-cli works because Phase 4 installs a
-    # symlink at /usr/local/bin/redis-cli → valkey-cli for compat with
-    # legacy scripts + muscle memory, but the canonical tool name is
-    # valkey-cli — the install summary shouldn't reinforce the wrong
-    # name. Prefer valkey-cli; fall back to redis-cli for hosts that
-    # don't have the compat symlink yet.
     local _cli=""
     if command -v valkey-cli >/dev/null 2>&1; then
         _cli="valkey-cli"
@@ -5380,9 +4315,6 @@ print_cog_load_status() {
         _cli="redis-cli"
     fi
     if [[ -n "$_cli" ]]; then
-        # No-auth-warning: best-effort read; if ACL rejects, fall back
-        # to filesystem detection. SCAN-via-SMEMBERS preferred over
-        # KEYS (COMMS_KEYS_FORBIDDEN).
         schemas=$("$_cli" --no-auth-warning SMEMBERS geodineum:config_schema:_index 2>/dev/null || echo "")
     fi
 
@@ -5392,7 +4324,6 @@ print_cog_load_status() {
     echo -e "    ${DIM}│${NC} ${BOLD}Extension${NC}   ${DIM}│${NC} ${BOLD}Status${NC}   ${DIM}│${NC} ${BOLD}Notes${NC}                            ${DIM}│${NC}"
     echo -e "    ${DIM}├─────────────┼──────────┼──────────────────────────────────┤${NC}"
 
-    # gNode-CMS — the extension shipped by default
     if echo "$schemas" | grep -q '^gnode-cms$\|^cms$'; then
         printf "    ${DIM}│${NC} %-11s ${DIM}│${NC} ${GREEN}%-8s${NC} ${DIM}│${NC} %-32s ${DIM}│${NC}\n" "gNode-CMS" "LOADED" "via daemon config_schema discovery"
     elif [[ -d "$cms_path" ]]; then
@@ -5452,7 +4383,6 @@ print_summary() {
         echo "    Site ID:     ${site_id}"
         echo "    Environment: ${SITE_ENV:-testing}"
 
-        # Show viewkey if available
         local config_file="/var/www/${SITE_DOMAIN}/wp-config-geodineum.yaml"
         if [[ -r "$config_file" ]] && command -v grep &>/dev/null; then
             local viewkey
@@ -5463,7 +4393,6 @@ print_summary() {
             fi
         fi
 
-        # Show WP admin credentials if available
         local wp_root="/var/www/${SITE_DOMAIN}"
         if [[ -r "${wp_root}/wp-config.php" ]] && command -v wp &>/dev/null; then
             local admin_user
@@ -5474,7 +4403,6 @@ print_summary() {
             fi
         fi
 
-        # Show ValKey credentials
         local pw_file="/etc/geodineum/credentials/valkey_client_${site_id}.password"
         if [[ -r "$pw_file" ]]; then
             echo "    ValKey user:  gnode_client_${site_id}"
@@ -5497,7 +4425,6 @@ print_summary() {
     fi
     echo "    - Documentation: https://github.com/geodineum"
 
-    # Phase results
     if [[ ${#PHASE_RESULTS[@]} -gt 0 ]]; then
         echo ""
         echo "  ${BOLD}Phase results:${NC}"
@@ -5513,10 +4440,8 @@ print_summary() {
         done
     fi
 
-    # Cog-load status
     print_cog_load_status
 
-    # Log file location
     if [[ -n "${LOG_FILE:-}" ]] && [[ -f "${LOG_FILE:-}" ]]; then
         echo ""
         echo -e "  ${DIM}Full log: ${LOG_FILE}${NC}"
@@ -5536,10 +4461,7 @@ reconcile_site_credentials() {
     [[ -x "$cli" ]] || cli="$(command -v geodineum 2>/dev/null || true)"
     [[ -n "$cli" ]] || return 0
 
-    # Enforce 0751 on the credentials dir. reconcile runs late,
-    # so this is a belt-and-suspenders fix for a --keep-data-preserved dir that
-    # predates the unconditional install -d — 0750 there blocks www-data
-    # traversal and silently forces every site into free-tier.
+    # A preserved credentials dir may be 0750, which blocks www-data from its site credentials.
     [[ -d "$cred_dir" ]] && chmod 0751 "$cred_dir" 2>/dev/null || true
 
     local reconciled=0
@@ -5551,17 +4473,14 @@ reconcile_site_credentials() {
         domain="$(basename "$site_dir")"
         site_id="$(echo "$domain" | sed 's/\./_/g')"
 
-        # Only touch Geodineum-managed sites — identified by the deployer's
-        # site YAML, a .geodineum/ marker, or an existing per-site credential.
-        # Skips unrelated WordPress installs that happen to live under /var/www.
+        # Skip WordPress installs Geodineum does not manage.
         if [[ ! -f "${site_dir}/wp-config-geodineum.yaml" ]] \
            && [[ ! -d "${site_dir}/.geodineum" ]] \
            && [[ ! -f "${cred_dir}/valkey_client_${site_id}.password" ]]; then
             continue
         fi
 
-        # Registering again (INTEGRATE) is idempotent: it keeps the credential,
-        # recomposes the grants from the manifest and refreshes the topology.
+        # Registering again keeps the credential and recomposes the grants from the manifest.
         local env=""
         [[ -f "${site_dir}/.geodineum/gnode_services.yaml" ]] && env="$(yq eval '.environment // ""' "${site_dir}/.geodineum/gnode_services.yaml" 2>/dev/null)"
         if [[ -z "$env" || "$env" == null ]]; then
@@ -5583,11 +4502,10 @@ reconcile_site_credentials() {
 }
 
 # =============================================================================
-# Site deployment for --site: the one route, geodineum register (website-wp).
+# Site deployment for --site
 # =============================================================================
 
-# A site keeps the environment it is registered under: --env, else what the constellation (or the site's own
-# config) records, else a new site starts gated in testing. An --env that contradicts the record stops the run.
+# A site keeps its recorded environment; a new one starts gated in testing. A contradicting --env stops the run.
 _resolve_site_env() {
     local site_id recorded="" f pw="${CREDENTIALS_DIR:-/etc/geodineum/credentials}/valkey.password"
     site_id=$(echo "$SITE_DOMAIN" | sed 's/[.-]/_/g')
@@ -5639,11 +4557,10 @@ deploy_site_if_requested() {
 }
 
 # =============================================================================
-# Post-install: hand over to `geodineum register`, the one route that brings a
-# service on (it asks NEW or INTEGRATE, then the type).
+# Post-install: hand over to `geodineum register`
 # =============================================================================
 
-# Resolve the geodineum CLI path into _CLI (empty if not found).
+# Sets _CLI to the geodineum CLI path, empty if not found.
 _resolve_cli() {
     _CLI="${INSTALL_ROOT}/Geodineum/geodineum"
     [[ -x "$_CLI" ]] || _CLI="$(command -v geodineum 2>/dev/null || true)"
@@ -5671,16 +4588,13 @@ main() {
     parse_args "$@"
     banner
 
-    # Validate install root (from --install-root flag or env — wizard validates its own input)
     if ! validate_install_root "$INSTALL_ROOT"; then
         log_error "Invalid install root: ${INSTALL_ROOT}"
         exit 1
     fi
 
     # ── Installation logging ──────────────────────────────────
-    # All output tee'd to log file. No sensitive data (passwords, tokens)
-    # reaches stdout — individual phases handle credential isolation.
-
+    # Everything on stdout lands in the log, so phases never print secrets.
     local LOG_DIR="/var/log/geodineum"
     local LOG_FILE="${LOG_DIR}/install-$(date +%Y%m%d-%H%M%S).log"
     mkdir -p "$LOG_DIR" 2>/dev/null || true
@@ -5690,7 +4604,6 @@ main() {
         log_info "Logging to: ${LOG_FILE}"
     fi
 
-    # Phase result tracking
     declare -A PHASE_RESULTS=()
 
     run_phase() {
@@ -5711,14 +4624,10 @@ main() {
         fi
     }
 
-    # Phase 0: Deploy user
     run_phase "Deploy User" phase_deploy_user true
-
-    # Phase 1: Detection
     run_phase "Detection" phase_detection true
 
-    # --join: the bundle from `geodineum node add` sets the tunnel, credentials,
-    # constellations, node id, master address and (if given there) the tier.
+    # The bundle from `geodineum node add` carries tunnel, credentials, constellations, node id and master.
     if [[ -n "$JOIN_BUNDLE" ]]; then
         [[ -r "$JOIN_BUNDLE" ]] || { log_error "--join: cannot read ${JOIN_BUNDLE}"; exit 1; }
         wizard_apply_constellation_bundle "$JOIN_BUNDLE" || { log_error "--join: could not apply ${JOIN_BUNDLE} (see above)"; exit 1; }
@@ -5731,22 +4640,18 @@ main() {
         log_info "Bundle applied and removed from this node"
     fi
 
-    # Non-interactive constellation join: --deploy-tier maps to profile + flags
-    # (and sets PROFILE, so the interactive wizard below is skipped).
+    # Sets PROFILE from --deploy-tier, which skips the selection wizard.
     apply_deploy_tier
 
-    # Phase 2: Selection (interactive if no --profile/--components)
     if [[ -z "$PROFILE" ]] && [[ -z "$COMPONENTS" ]] && [[ -z "$SITE_DOMAIN" ]]; then
         phase_selection
     fi
 
-    # --site without --profile implies standard profile
     if [[ -n "$SITE_DOMAIN" ]] && [[ -z "$PROFILE" ]] && [[ -z "$COMPONENTS" ]]; then
         PROFILE="standard"
         log_info "Site deployment requested — using standard profile"
     fi
 
-    # Resolve component list
     local component_list=()
     if [[ -n "$PROFILE" ]]; then
         component_list=($(get_profile_components "$PROFILE"))
@@ -5759,9 +4664,6 @@ main() {
         component_list+=("$SITE_THEME")
     fi
 
-    # COMMS opt-out (flag or wizard): strip it from the resolved set. The
-    # COMMS service-install, ACL provisioning, and ownership passes are all
-    # already guarded on the binary's presence, so absence is clean.
     if [[ "$WITH_COMMS" != "true" ]]; then
         local _filtered=()
         for _c in "${component_list[@]}"; do
@@ -5780,7 +4682,6 @@ main() {
         exit 1
     fi
 
-    # Show installation plan
     log_step "Installation Plan"
     echo ""
     printf "  ${BOLD}%-22s %-32s %s${NC}\n" "COMPONENT" "REPOSITORY" "STATUS"
@@ -5796,7 +4697,6 @@ main() {
     done
     echo ""
 
-    # ValKey needed?
     local valkey_note=""
     for comp in "${resolved[@]}"; do
         case "$comp" in
@@ -5819,7 +4719,6 @@ main() {
         echo ""
     fi
 
-    # Confirm
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "Dry run mode — showing what would happen"
         echo ""
@@ -5829,24 +4728,12 @@ main() {
     fi
 
     # ── Rollback on fatal failure ────────────────────────────
-    # Tracks what this install run created. On fatal error, removes
-    # geodineum artifacts (repos, config, systemd) but keeps prereqs
-    # (apt packages, Rust, PHP) so a retry starts clean.
-    #
-    # Rollback no longer `rm -rf`s
-    # /etc/geodineum. Instead, every phase records paths it NEWLY creates
-    # into INSTALLED_PATHS via track_path_if_new(); rollback reverse-
-    # iterates the array and removes only those paths. Pre-existing
-    # state on multi-site hosts (e.g., /etc/geodineum/credentials/
-    # site_a_creds from a prior install) is preserved.
+    # Removes only what this run created; prerequisites (apt, Rust, PHP) stay for the retry.
     INSTALLED_REPOS=()
     INSTALLED_SERVICES=()
     INSTALLED_PATHS=()
 
-    # Record a path for rollback only if it did not exist before this
-    # install created it. Callers invoke BEFORE their mkdir/install, so
-    # the pre-existence check is accurate. Safe to call on DRY_RUN
-    # (path-creation is skipped; tracking is a no-op side-effect).
+    # Call before creating the path: it is tracked only if it does not exist yet.
     track_path_if_new() {
         local p="$1"
         [[ -z "$p" ]] && return 0
@@ -5860,8 +4747,7 @@ main() {
         log_info "Prerequisites (apt, Rust, PHP) are preserved for retry"
         echo ""
 
-        # 1. Stop + disable + remove tracked services first so they
-        #    release any file handles on paths we're about to delete.
+        # Services first, so they release the paths removed below.
         for svc in "${INSTALLED_SERVICES[@]}"; do
             if systemctl is-enabled "$svc" 2>/dev/null; then
                 log_info "Disabling: ${svc}"
@@ -5872,15 +4758,11 @@ main() {
         done
         [[ ${#INSTALLED_SERVICES[@]} -gt 0 ]] && systemctl daemon-reload 2>/dev/null || true
 
-        # 2. Unregister auto-deploy cron if we installed it. The cron
-        #    line pattern is stable (auto-deploy.sh) — idempotent grep/
-        #    filter preserves any pre-existing unrelated entries.
         if crontab -l 2>/dev/null | grep -q "auto-deploy.sh"; then
             log_info "Removing auto-deploy cron entry"
             crontab -l 2>/dev/null | grep -v "auto-deploy.sh" | crontab - 2>/dev/null || true
         fi
 
-        # 3. Remove cloned repos (only the ones we cloned this run)
         for repo_dir in "${INSTALLED_REPOS[@]}"; do
             if [[ -d "$repo_dir" ]]; then
                 log_info "Removing: ${repo_dir}"
@@ -5888,11 +4770,7 @@ main() {
             fi
         done
 
-        # 4. Remove tracked paths in REVERSE order so files / deeper
-        #    dirs come before their parents. Paths created by a prior
-        #    install (pre-existing when THIS install started) are not
-        #    in the array and survive — preserving site_a_creds while
-        #    rolling back a failed site_b install.
+        # Reverse order: children before their parents.
         local _idx _p
         for (( _idx=${#INSTALLED_PATHS[@]}-1 ; _idx>=0 ; _idx-- )); do
             _p="${INSTALLED_PATHS[$_idx]}"
@@ -5902,7 +4780,6 @@ main() {
             fi
         done
 
-        # 5. CLI symlinks are ours to remove unconditionally.
         rm -f /usr/local/bin/geodineum /usr/local/bin/gcli 2>/dev/null
 
         echo ""
@@ -5912,9 +4789,6 @@ main() {
         fi
     }
 
-    # INT/TERM trap: Ctrl-C or `systemctl stop install.sh`-
-    # style interruption mid-install triggers the same scoped rollback
-    # as a phase failure. Cleared at the end of a successful install.
     rollback_on_interrupt() {
         echo ""
         log_error "Installation interrupted (signal received) — rolling back"
@@ -5940,7 +4814,6 @@ main() {
         return $result
     }
 
-    # Phases 3-9 (rollback on fatal failure)
     if ! run_phase "Prerequisites" phase_prerequisites true "${resolved[@]}"; then
         rollback; exit 1
     fi
@@ -5957,7 +4830,6 @@ main() {
     run_phase "Services" phase_services false "${resolved[@]}"
     run_phase "Lua Functions" phase_functions false "${resolved[@]}"
 
-    # Seed gCore manager defaults into ValKey (idempotent NX mode).
     if printf '%s\n' "${resolved[@]}" | grep -q 'gcore'; then
         if [[ "$DRY_RUN" != "true" ]]; then
             local seed_script="${INSTALL_ROOT}/gCore/scripts/seed-manager-defaults.sh"
@@ -5975,18 +4847,11 @@ main() {
         fi
     fi
 
-    # Deploy site if requested (via --site CLI arg). Post-install prompt
-    # path calls deploy_site_if_requested directly after setting SITE_DOMAIN.
     deploy_site_if_requested
 
-    # Harden WordPress site permissions (defensive ownership model)
     if [[ "$DRY_RUN" != "true" ]] && type geodeploy_harden_all_wp &>/dev/null; then
         log_info "Hardening WordPress site permissions..."
-        # Guarded: WP hardening is best-effort and must never abort the
-        # install. The `|| log_warning` also disables `set -e` for the
-        # whole harden subtree, so an interior chmod/find hiccup on a
-        # foreign /var/www site can't take the installer down before
-        # Phase 10 (the worker-host test failure mode).
+        # Best-effort: under `if`, set -e is off, so one odd site in /var/www cannot abort the install.
         if geodeploy_harden_all_wp "/var/www"; then
             log_success "WordPress sites hardened (source read-only, uploads PHP-blocked)"
         else
@@ -5994,7 +4859,6 @@ main() {
         fi
     fi
 
-    # Install CLI symlinks
     if [[ -f "${INSTALL_ROOT}/Geodineum/geodineum" ]] && [[ "$DRY_RUN" != "true" ]]; then
         ln -sf "${INSTALL_ROOT}/Geodineum/geodineum" /usr/local/bin/geodineum 2>/dev/null && \
             log_success "CLI installed: /usr/local/bin/geodineum"
@@ -6002,7 +4866,6 @@ main() {
             log_success "CLI alias: /usr/local/bin/gcli"
     fi
 
-    # Deploy web-deny hardening rules
     if [[ "$DRY_RUN" != "true" ]]; then
         if [[ -f "${LIB_DIR}/common.sh" ]]; then
             source "${LIB_DIR}/common.sh" 2>/dev/null || true
@@ -6014,13 +4877,11 @@ main() {
         fi
     fi
 
-    # Set up geodeploy orchestrator cron
     if [[ "$DRY_RUN" != "true" ]]; then
         local orchestrator="${INSTALL_ROOT}/Geodineum/scripts/geodeploy-orchestrator"
         if [[ -f "$orchestrator" ]]; then
             local cron_line="*/5 * * * * ${orchestrator}"
             if ! sudo -u "$DEPLOY_USER" crontab -l 2>/dev/null | grep -q "geodeploy-orchestrator"; then
-                # Remove old auto-deploy.sh cron if present
                 local existing
                 existing=$(sudo -u "$DEPLOY_USER" crontab -l 2>/dev/null | grep -v "auto-deploy.sh" || true)
                 echo -e "${existing}\n${cron_line}" | sudo -u "$DEPLOY_USER" crontab - 2>/dev/null && \
@@ -6033,10 +4894,8 @@ main() {
             log_warning "Geodeploy orchestrator not found at ${orchestrator}"
         fi
 
-        # Install scoped sudoers for deploy operations
         local sudoers_tpl="${INSTALL_ROOT}/Geodineum/templates/sudoers-geodeploy.tpl"
         if [[ -f "$sudoers_tpl" ]]; then
-            # Every {{DEPLOY_USER}}, including those inside chown arguments.
             sed "s|{{DEPLOY_USER}}|${DEPLOY_USER}|g" "$sudoers_tpl" > /etc/sudoers.d/geodineum-deploy
             chmod 440 /etc/sudoers.d/geodineum-deploy
             if visudo -cf /etc/sudoers.d/geodineum-deploy &>/dev/null; then
@@ -6048,32 +4907,20 @@ main() {
         fi
     fi
 
-    # Credential reconciliation: re-provision per-site ACL users for any
-    # existing Geodineum WordPress site. NOT gated on CONFIG_EXISTS — that's
-    # false after a --keep-data uninstall (bootstrap.env deleted), which is
-    # exactly the reinstall case that needs reconciliation. The function
-    # self-guards (skips non-Geodineum sites; no-ops on fresh installs).
+    # Not gated on CONFIG_EXISTS: a reinstall after --keep-data has no bootstrap.env yet still needs this.
     if [[ "$DRY_RUN" != "true" ]]; then
         reconcile_site_credentials
     fi
 
-    # Phase 10: Verify
     run_phase "Verification" phase_verify false "${resolved[@]}"
 
-    # Post-install: offer a WordPress site or a standalone gCore app
-    # (gCore is CMS-agnostic — WordPress is one deploy target, not the
-    # only one). Skipped in --yes mode: non-interactive installs use
-    # --site or the geodineum CLI afterwards.
     if [[ -z "$SITE_DOMAIN" ]] && [[ "$DRY_RUN" != "true" ]] && [[ "$YES_MODE" != "true" ]]; then
         prompt_setup_service
     fi
 
-    # Installation succeeded — clear the interrupt trap so a post-install
-    # Ctrl-C (e.g., operator aborting the summary prompt) doesn't trigger
-    # a spurious rollback of a healthy install.
+    # A Ctrl-C from here on must not roll back a finished install.
     trap - INT TERM
 
-    # Summary
     print_summary "${resolved[@]}"
 }
 

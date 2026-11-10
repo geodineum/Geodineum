@@ -4,13 +4,10 @@
 # =============================================================================
 # Proves a running install actually works end to end:
 #   L0  ValKey reachable + every ACL identity authenticates (admin, daemon,
-#       comms, and EACH per-site client key — the "does the client key
-#       connect" check)
+#       comms, each per-site client key)
 #   L1  gNode Lua function libraries loaded + read-only functions callable
-#   L2  daemon command dispatch live — real round-trip through the unified
-#       stream (ping/health/version/echo), then `describe` to enumerate the
-#       live command surface and assert the base command set is present and no
-#       extension commands leaked into a base install
+#   L2  daemon command dispatch round-trips; `describe` shows the base command
+#       set and no extension commands
 #   L3  services active + sites serve HTTP
 #
 # Run:   sudo bash scripts/ecosystem-smoke-test.sh [--site <id>] [--env <env>]
@@ -66,7 +63,7 @@ hdr "L0  ValKey connectivity + ACL auth"
 [[ -n "$DAEMON_PW" ]] && { [[ "$(vk_daemon PING)" == "PONG" ]] && ok "gnode_daemon PING" || no "gnode_daemon PING: $(vk_daemon PING)"; } || no "daemon password unreadable"
 [[ -n "$COMMS_PW" ]] && { out="$(valkey-cli -p "$PORT" --user geodineum_comms --pass "$COMMS_PW" --no-auth-warning PING 2>&1)"; [[ "$out" == "PONG" ]] && ok "geodineum_comms PING" || no "geodineum_comms PING: $out"; } || wn "comms password unreadable (COMMS may not be installed)"
 
-# discover per-site client keys → THE "does the client key connect" test
+# discover per-site client keys
 hdr "L0  per-site client keys connect"
 declare -a SITES=()
 shopt -s nullglob

@@ -1,23 +1,8 @@
 #!/bin/bash
-# Strict mode; sourced libs no longer
-# silent-fail when called from a context that does not pre-set -euo.
 set -euo pipefail
 
-#
-# Geodineum CLI — Service Taxonomy (the NEW branch of geodineum register)
-# ==========================================================
-# The interview asks WHAT IT IS; the requirement matrix decides WHAT RUNS;
-# the paved road (provision → register → heartbeat → mail-verify → verify)
-# is the same for every type. The matrix is DATA — interview, engine, and
-# docs all read the tables below; there is no second copy.
-#
-# Types:
-#   PUBLIC    website-wp | website-static | app-pwa | webapp-gcore
-#   INTERNAL  daemon | gcore-service | custom
-#
-# Requires: common.sh sourced first. site.sh is lazy-loaded for the
-# WordPress delegate row.
-#
+# Service taxonomy for `geodineum register` of a new service: the interview picks a type,
+# the requirement matrix below (the only copy) decides which rows run. Requires common.sh.
 
 # =============================================================================
 # Taxonomy — the requirement matrix as data
@@ -49,7 +34,7 @@ declare -A GEO_TYPE_VISIBILITY=(
     [custom]=internal
 )
 
-# Capability profile: the manifest profile: word the one topology declares by name.
+# The manifest's profile: word.
 declare -A GEO_TYPE_PROFILE=(
     [website-wp]=web
     [website-static]=web
@@ -62,10 +47,7 @@ declare -A GEO_TYPE_PROFILE=(
     [custom]=service
 )
 
-# Credential sidecar model: which group may read the ValKey credential.
-# web    → geodineum-web (sole member www-data — the PHP/web reader)
-# shared → geodineum (internal, www-data must NOT read)
-# own    → the service's own single-member group (created with the user)
+# Group that may read the ValKey credential; OWN is the service's own single-member group.
 declare -A GEO_TYPE_CRED_GROUP=(
     [website-wp]=geodineum-web
     [website-static]=geodineum-web
@@ -78,9 +60,7 @@ declare -A GEO_TYPE_CRED_GROUP=(
     [custom]=geodineum
 )
 
-# Executable rows per type, in order. Each row is an ensure_<row> function
-# below wrapping EXISTING machinery; onboarding is always the last row —
-# every type ends on the same paved road.
+# Rows per type, run in order; each is an ensure_<row> function below.
 declare -A GEO_TYPE_ROWS=(
     [website-wp]="mail wp_stack notify"
     [website-static]="docroot skeleton_static form_endpoint vhost manifest mail onboard web_perms"
@@ -93,8 +73,7 @@ declare -A GEO_TYPE_ROWS=(
     [custom]="manifest mail onboard"
 )
 
-# Delegated provisioning (--node): only the master-side rows run here; the
-# filesystem rows belong to the worker and are printed as a checklist.
+# With --node only these rows run here; the filesystem rows are printed for the worker.
 GEO_DELEGATED_ROWS="manifest mail onboard"
 
 taxonomy_is_type() {
@@ -103,7 +82,6 @@ taxonomy_is_type() {
     return 1
 }
 
-# Print the requirement matrix (docs/help surface reads the same data).
 taxonomy_print_matrix() {
     local t
     echo ""
@@ -117,12 +95,11 @@ taxonomy_print_matrix() {
 }
 
 # =============================================================================
-# Row implementations — thin wrappers over existing machinery
+# Row implementations
 # =============================================================================
-# All rows read the SVC_* globals resolved by register_new / register_integrate and honour
-# SVC_DRY_RUN. A failed row aborts the run (fail-loud, no silent partials).
+# Rows read the SVC_* globals and honour SVC_DRY_RUN; a failed row aborts the run.
 
-# --- website-wp: delegate wholesale to the existing WordPress paved path ----
+# --- website-wp: the WordPress site path ----
 ensure_wp_stack() {
     source "${GEODINEUM_CLI_ROOT}/lib/site.sh"
     local -a args=("$SVC_DOMAIN" --env "$SVC_ENV")
@@ -134,10 +111,7 @@ ensure_wp_stack() {
     cmd_new_site "${args[@]}"
 }
 
-# --- notify: wire the COMMS email channel after the WP paved path ----------
-# The WordPress delegate onboards without --notify-email; a second onboarding
-# pass is idempotent (identity/streams skip) and adds the channel + the
-# dispatch-verification probe.
+# --- notify: a second, idempotent onboarding pass adds the COMMS email channel ---
 ensure_notify() {
     [[ -n "$SVC_NOTIFY_EMAIL" ]] || { log_info "Notify: skipped (no --notify-email)"; return 0; }
     local onboard="${GNODE_SCRIPTS}/onboard-service.sh"
@@ -159,8 +133,7 @@ ensure_docroot() {
     chown root:www-data "$root" "${root}/public_html"
     chown www-data:www-data "${root}/uploads"
     chmod 750 "$root" "${root}/public_html" "${root}/uploads"
-    # DTAP tier as a root-owned file: staging/production flips are an operator
-    # action, never a code edit. The form endpoint fails safe without it.
+    # Root-owned environment tier: changing it is an operator action; the form endpoint fails safe without it.
     ledger_file "$SVC_NAME" data "${root}/.env-tier"
     printf '%s\n' "$SVC_ENV" > "${root}/.env-tier"
     chown root:www-data "${root}/.env-tier"
@@ -188,8 +161,7 @@ ensure_skeleton_static() {
     ensure_visit_beacon
 }
 
-# Cookieless analytics endpoint — every public type gets one; the counters
-# land in the site's own {site}:* keyspace and surface in `geodineum status --visitors`.
+# Cookieless visit counter in the site's own keyspace, shown by `geodineum status --visitors`.
 ensure_visit_beacon() {
     local docroot="${GEODINEUM_WEB_ROOT}/${SVC_DOMAIN}/public_html"
     if [[ -f "${docroot}/g/hit.php" ]]; then
@@ -205,11 +177,7 @@ ensure_visit_beacon() {
     log_success "Visitor beacon: g/hit.php → GNODE_ANALYTICS_HIT ({${SVC_NAME}}:visits/pagecounts/...)"
 }
 
-# --- web code group: www-data must read the shared gCore source ------------
-# A public gCore app runs as www-data and reads /opt/geodineum/gCore through
-# geodineum-code. Assert the membership instead of assuming it: on a node
-# where the group drifted, onboarding would succeed and the app would fail at
-# runtime looking like a ValKey problem.
+# --- web code group: www-data reads the shared gCore source via geodineum-code ---
 ensure_web_code_group() {
     if [[ "$SVC_DRY_RUN" == "true" ]]; then
         log_dry "Assert www-data ∈ geodineum-code (reads gCore source)"
@@ -226,8 +194,7 @@ ensure_web_code_group() {
     fi
     usermod -aG geodineum-code www-data
     log_success "www-data added to geodineum-code"
-    # Supplementary groups are read at process start: running FPM workers
-    # keep the old set until respawned.
+    # Running FPM workers keep their old groups until reloaded.
     local unit
     for unit in php8.5-fpm php8.4-fpm php8.3-fpm php-fpm; do
         if systemctl is-active --quiet "$unit" 2>/dev/null; then
@@ -238,10 +205,7 @@ ensure_web_code_group() {
     done
 }
 
-# --- gCore web skeleton: front controller in docroot, app code outside -----
-# public_html/index.php is the only PHP the web server can reach; it requires
-# ../src/bootstrap.php (rendered by the gcore_bootstrap row), which boots the
-# framework through gcore-standalone.php. Application code lives in src/.
+# --- gCore web skeleton: index.php is the only reachable PHP; app code lives in ../src ---
 ensure_skeleton_gcore() {
     local root="${GEODINEUM_WEB_ROOT}/${SVC_DOMAIN}"
     local docroot="${root}/public_html"
@@ -441,8 +405,7 @@ ensure_code_group() {
     else
         log_warning "geodineum-code group missing — gCore source may be unreadable for ${SVC_NAME}"
     fi
-    # Cred model for this type is root:geodineum:640 — the runtime user reads
-    # it through geodineum membership (NEVER www-data).
+    # The credential is root:geodineum 640; the runtime user reads it through the group.
     if getent group geodineum >/dev/null 2>&1; then
         usermod -aG geodineum "$SVC_NAME"
     fi
@@ -472,7 +435,7 @@ ensure_gcore_bootstrap() {
         log_warning "bootstrap.php already exists — skipping"
         return 0
     fi
-    # Self-sufficient: the web types have no service_dirs row before this one.
+    # Web types have no service_dirs row before this one.
     ledger_mkdir "$SVC_NAME" data "$(dirname "$out")"
     ledger_file "$SVC_NAME" data "$out"
     SERVICE_NAME="$SVC_NAME" SERVICE_ID="$SVC_NAME" SITE_ID="$SVC_NAME" \
@@ -481,12 +444,11 @@ ensure_gcore_bootstrap() {
     log_success "gCore bootstrap: src/bootstrap.php"
 }
 
-# --- unified onboarding manifest (one schema — profile/env/consumes/produces)
+# --- onboarding manifest -----------------------------------------------------
 ensure_manifest() {
     local dir manifest
     if [[ -n "$SVC_NODE" ]]; then
-        # Delegated: the manifest lives on the master (policy source for the
-        # ACL composition); the service's files live on the worker.
+        # Delegated: the manifest stays on the master, which composes the ACL from it.
         dir="/etc/geodineum/manifests/${SVC_NAME}"
     else
         dir="${SVC_PATH}/.geodineum"
@@ -499,8 +461,7 @@ ensure_manifest() {
     fi
     ledger_mkdir "$SVC_NAME" config "$dir"
     ledger_add "$SVC_NAME" config geodineum-dir "$dir"
-    # finalize_geodineum_dir symlinks the credential into credentials/ after
-    # onboarding — the subdir must exist for every local manifest home.
+    # finalize_geodineum_dir symlinks the credential into credentials/ after onboarding.
     [[ -z "$SVC_NODE" ]] && mkdir -p "${dir}/credentials"
     if [[ -f "$manifest" ]]; then
         log_warning "Manifest already exists — left untouched: ${manifest}"
@@ -538,11 +499,7 @@ MFEOF
     log_success "Manifest: ${manifest} (profile=${SVC_PROFILE}, env=${SVC_ENV})"
 }
 
-# --- runnable skeleton: src/main.<lang> + run, per kind --------------------
-# kind: daemon (long-running, stops on SIGTERM) | app (a tiny HTTP server on
-# SVC_PORT answering /health, so the heartbeat probe has something to probe) |
-# scheduled (does one run and exits). The operator replaces src/main.* with the
-# real code; run stays.
+# --- runnable skeleton: kind daemon | app (answers /health on SVC_PORT) | scheduled ---
 _skeleton_main() {
     local kind="$1" lang="$2" out="$3" port="${SVC_PORT:-8080}"
     case "${lang}:${kind}" in
@@ -762,9 +719,7 @@ TIMEREOF
     fi
 }
 
-# --- heartbeat: the one probe-gated client (scripts/heartbeat) --------------
-# Runs after onboard: the heartbeat runs with the credential's group, which only
-# exists once onboarding has minted the credential.
+# --- heartbeat: runs after onboard, whose credential group it runs under ----
 ensure_heartbeat() {
     local probe="${SVC_PROBE:-}"
     if [[ -z "$probe" ]]; then
@@ -810,7 +765,7 @@ ensure_mail() {
     log_info "Publish the printed DNS records, then verify: geodineum mail records ${SVC_MAIL_DOMAIN}"
 }
 
-# --- the paved road: onboard (identity + streams + register + mail probe) ---
+# --- onboard: identity, streams, registration ---------------------------------
 ensure_onboard() {
     if [[ "$SVC_DRY_RUN" == "true" ]]; then
         log_dry "Onboard: identity gnode_client_${SVC_NAME} (own-namespace grants from the manifest), streams, topology entity ($(profile_to_shape "${SVC_PROFILE:-web}") in {${SVC_CONSTELLATION:-?}}) and its intent"
@@ -843,8 +798,7 @@ ensure_onboard() {
     fi
 }
 
-# Delegated provisioning hand-off: the master minted identity + streams;
-# the worker installs the credential and runs the filesystem rows.
+# Print the hand-off for the worker: install the credential, then run the filesystem rows.
 _print_delegation_bundle() {
     local cred_file="${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${SVC_NAME}.password"
     [[ -r "$cred_file" ]] || { log_error "Credential missing after onboarding: ${cred_file}"; return 1; }
@@ -866,7 +820,7 @@ _print_delegation_bundle() {
     echo ""
 }
 
-# --- locktight perms pass (web types, always last file-touching row) ---------
+# --- permissions pass (web types, last file-touching row) ---------------------
 ensure_web_perms() {
     local root="${GEODINEUM_WEB_ROOT}/${SVC_DOMAIN}"
     if [[ "$SVC_DRY_RUN" == "true" ]]; then
@@ -876,8 +830,7 @@ ensure_web_perms() {
     chown -R root:www-data "${root}/public_html"
     find "${root}/public_html" -type d -exec chmod 750 {} +
     find "${root}/public_html" -type f -exec chmod 640 {} +
-    # App code outside the docroot (webapp-gcore): same lock, never writable
-    # by the runtime user.
+    # App code outside the docroot: never writable by the runtime user.
     if [[ -d "${root}/src" ]]; then
         chown -R root:www-data "${root}/src"
         find "${root}/src" -type d -exec chmod 750 {} +
@@ -892,10 +845,7 @@ ensure_web_perms() {
 # Matrix engine
 # =============================================================================
 
-# Rows run WITHOUT a `||` guard on purpose: guarding the call suppresses
-# errexit inside the row (bash semantics), and a half-applied row that keeps
-# going is exactly the silent partial this design forbids. Any failure kills
-# the run at the failing command, right under the row header.
+# Rows run without a `||` guard: a guard would suppress errexit inside the row.
 taxonomy_apply() {
     local rows="${GEO_TYPE_ROWS[$SVC_TYPE]}"
     [[ -n "$SVC_NODE" ]] && rows="$GEO_DELEGATED_ROWS"
@@ -1174,8 +1124,7 @@ register_new() {
         fi
     fi
 
-    # No `||` guard: it would suppress errexit inside the engine and let a
-    # failed row scroll past (see taxonomy_apply). A failure aborts here.
+    # No `||` guard: it would suppress errexit inside the engine.
     taxonomy_apply
 
     # =================================================================

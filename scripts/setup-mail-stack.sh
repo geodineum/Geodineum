@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Mail-stack provisioning: postfix relay + per-domain DKIM signing, with the
-# DNS records printed at the end. A site that can queue COMMS mail deserves
-# a sender domain that authenticates.
+# DNS records printed at the end.
 #
 #   sudo setup-mail-stack.sh <domain> [--selector geo] [--default noreply@ecosystem-domain]
 #
@@ -73,9 +72,7 @@ systemctl restart opendkim
 systemctl reload postfix
 
 echo "== sender authorization (COMMS sender_policy) =="
-# COMMS only sends AS domains listed here; everything else falls back to
-# GEODINEUM_DEFAULT_FROM with a warning. Registering here is what makes a
-# provisioned domain a first-class sender.
+# COMMS sends only as domains listed here; others fall back to GEODINEUM_DEFAULT_FROM.
 AUTH=/etc/geodineum/mail/authorized-domains
 install -d -m 0750 -o root -g geodineum-comms /etc/geodineum/mail 2>/dev/null     || install -d -m 0750 /etc/geodineum/mail
 touch "$AUTH"

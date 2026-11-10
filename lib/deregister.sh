@@ -1,13 +1,6 @@
 #!/bin/bash
-#
-# Geodineum CLI — Deregister Command
-# ===================================
-# The one route that removes a service: the inverse of `geodineum register`.
-# ValKey (intent, topology, keys, identity) through gNode's deregister-service.sh;
-# this host through the registration ledger (lib/common.sh), newest first.
-#
-# Requires: common.sh sourced first
-#
+# geodineum deregister, the inverse of register: ValKey through gNode's deregister-service.sh,
+# this host through the registration ledger, newest first. Requires common.sh.
 
 usage_deregister() {
     cat <<'EOF'
@@ -97,8 +90,7 @@ _dr_undo() {
         discovery)
             _dr_drop_discovery "$t" ;;
         geodineum-dir)
-            # The registration marker and credential link; the manifest and the
-            # directory itself go only through their own file/dir lines.
+            # Marker and credential link only; the manifest and directory have their own ledger lines.
             [[ "$(basename "$t")" == .geodineum || "$t" == "${GEODINEUM_CONFIG_ROOT}/manifests/"?* ]] || return 1
             rm -f "$t/.registered"
             rm -rf "$t/credentials"

@@ -1,52 +1,24 @@
 #!/usr/bin/env bash
 # =============================================================================
-# component-primitives.sh — installer/uninstaller reusable primitives
+# component-primitives.sh — recovery helpers for apt-installed system daemons
 # =============================================================================
-#
-# Recovery helpers for a system-daemon component installed via apt (or a
-# similar package manager) that registers system users, data dirs and
-# conffiles. Sourced by install.sh and uninstall.sh.
-#
-# Logging contract: callers provide log_info, log_warning, log_error,
-# log_success, log_step. log_detail is optional; this file installs a
-# fallback below if the caller hasn't defined one.
-# =============================================================================
+# Sourced by install.sh and uninstall.sh; callers provide log_info, log_warning, log_error, log_success.
 
-# Avoid sourcing twice — guard against multiple `source` calls.
 if [[ "${_GEODINEUM_COMPONENT_PRIMITIVES_LOADED:-}" == "1" ]]; then
     return 0 2>/dev/null || exit 0
 fi
 _GEODINEUM_COMPONENT_PRIMITIVES_LOADED=1
 
-# Fallback for log_detail — uninstall.sh doesn't define it, install.sh does.
 if ! declare -F log_detail >/dev/null 2>&1; then
     log_detail() { log_info "  $1"; }
 fi
 
-# ─── Primitive 1 ─────────────────────────────────────────────────────────
-# Clear orphaned dpkg-statoverride records — entries that reference a
-# system user/group which no longer exists on this host. Without this,
-# every subsequent `apt install` of ANY package aborts in pre-configure
-# with "unknown system user 'X' in statoverride file".
-#
-# Idempotent: only clears records whose principal is genuinely missing.
-# Skips cleanup entirely if the principal still exists (which means the
-# records are still valid).
-#
-# Arguments: 1+ principal names (users or groups). Both ownership fields
-# of each statoverride record are checked.
-#
-# Returns: number of records cleared is reported via log_info; function
-# exits 0 either way.
-#
-# Example:
-#   clear_orphaned_statoverrides valkey redis
+# Usage: clear_orphaned_statoverrides <user|group>...; a record naming a missing principal makes every apt install abort.
 clear_orphaned_statoverrides() {
     /usr/bin/command -v dpkg-statoverride >/dev/null 2>&1 || return 0
 
     local principal cleared=0
     for principal in "$@"; do
-        # If the principal exists, its records are not orphaned.
         if /usr/bin/getent passwd "$principal" >/dev/null 2>&1 \
                 || /usr/bin/getent group "$principal" >/dev/null 2>&1; then
             continue
@@ -66,24 +38,7 @@ clear_orphaned_statoverrides() {
     return 0
 }
 
-# ─── Primitive 2 ─────────────────────────────────────────────────────────
-# Create a system user idempotently. Same shape as Debian preinst's
-# adduser invocation — a manually-created user is indistinguishable from
-# one created by the package maintainer's preinst script.
-#
-# Use when:
-#   - A package's preinst would normally create this user but didn't run
-#     (e.g. recovery after a half-purged state).
-#   - A component without an apt package needs a dedicated system user
-#     for systemd's User= directive.
-#
-# Arguments:
-#   $1  username (required)
-#   $2  home directory (required — used by --home, no actual dir created)
-#   $3  GECOS string (display name shown by `getent passwd`)
-#   $4  shell (optional, default: /bin/false)
-#
-# Returns 0 on success or if user already exists. 1 if adduser failed.
+# Usage: ensure_system_user <name> <home (not created)> <gecos> [shell]; same shape as a Debian preinst adduser.
 ensure_system_user() {
     local username="$1" home="$2" gecos="$3" shell="${4:-/bin/false}"
     if /usr/bin/getent passwd "$username" >/dev/null 2>&1; then
@@ -100,21 +55,7 @@ ensure_system_user() {
     return 0
 }
 
-# ─── Primitive 3 ─────────────────────────────────────────────────────────
-# Create data directories with consistent ownership/mode. Idempotent: dirs
-# that already exist are left alone (ownership not re-asserted — use a
-# dedicated permission-fix step if that's needed).
-#
-# Use for /var/lib/<component>, /var/log/<component>, etc. The owner must
-# exist before this is called (ensure_system_user first).
-#
-# Arguments:
-#   $1  owner user (required, must exist)
-#   $2  group (required, must exist)
-#   $3  mode (e.g. 0750)
-#   $4+ directory paths
-#
-# Returns 0 normally, 1 if owner doesn't exist.
+# Usage: ensure_data_dirs <owner> <group> <mode> <dir>...; existing dirs are left as they are.
 ensure_data_dirs() {
     local owner="$1" group="$2" mode="$3"
     shift 3
@@ -131,45 +72,20 @@ ensure_data_dirs() {
     done
 }
 
-# ─── Primitive 4 ─────────────────────────────────────────────────────────
-# Recover a half-configured (iF) or unpacked-but-not-configured (iU) apt
-# package. Without recovery, dpkg keeps re-attempting the broken configure
-# step on every apt call, cascading-fail every apt operation on the host.
-#
-# Two layers handled:
-#
-#   1. Missing /etc/<pkg>/ directory. Many packages' postinst run
-#      `find /etc/<pkg> ...`. If the dir was rm -rf'd, find exits 1,
-#      postinst aborts, package stays 'iF'. Fix: create the empty dir
-#      before `dpkg --configure -a`.
-#
-#   2. Missing conffile. dpkg marks conffiles as obsolete after manual
-#      deletion and refuses to re-extract on plain reinstall/configure.
-#      After `--configure -a` succeeds, if the conffile is still absent,
-#      escalate to `apt install --reinstall -o Dpkg::Options::=--force-confmiss`.
-#
-# Arguments:
-#   $1  package name
-#   $2  conffile parent dir (e.g. /etc/valkey) — pass "" to skip Layer 1
-#   $3  expected conffile path (e.g. /etc/valkey/valkey.conf) — pass "" to skip Layer 2
-#
-# Returns 0 if package is now in a configured state (or wasn't broken),
-# 1 if recovery couldn't unstick it.
+# Usage: ensure_package_configured <pkg> [conf_dir] [conf_file]; completes an iF/iU package, which otherwise breaks every apt call.
 ensure_package_configured() {
     local pkg="$1" conf_dir="${2:-}" conf_file="${3:-}"
     local pkg_status
 
     pkg_status=$(/usr/bin/dpkg-query -W -f='${db:Status-Abbrev}' "$pkg" 2>/dev/null || echo "")
 
-    # 'iF' = wanted=install, status=half-configured
-    # 'iU' = wanted=install, status=unpacked (config not yet attempted)
     if [[ ! "$pkg_status" =~ ^i[FU] ]]; then
         return 0
     fi
 
     log_info "${pkg} in ${pkg_status} state — completing configure"
 
-    # Layer 1: ensure conffile parent dir exists.
+    # Many postinst scripts run `find /etc/<pkg>`, which fails when the dir is gone.
     if [[ -n "$conf_dir" && ! -d "$conf_dir" ]]; then
         /usr/bin/install -d -m 0755 "$conf_dir"
         log_detail "Created ${conf_dir} (missing — required by postinst's find)"
@@ -177,7 +93,7 @@ ensure_package_configured() {
 
     /usr/bin/dpkg --configure -a 2>&1 | /usr/bin/grep -vE '^$|deb-systemd-invoke' || true
 
-    # Layer 2: force conffile re-extraction if still absent.
+    # dpkg will not re-extract a deleted conffile without --force-confmiss.
     if [[ -n "$conf_file" && ! -f "$conf_file" ]]; then
         log_info "${conf_file} still missing — forcing re-extraction (--force-confmiss)"
         /usr/bin/apt-get install --reinstall -y -qq \
@@ -200,26 +116,7 @@ ensure_package_configured() {
     return 0
 }
 
-# ─── Primitive 5 ─────────────────────────────────────────────────────────
-# Force a half-configured (iF/iU) package into a state where `apt-get
-# purge` can complete. Counterpart to ensure_package_configured but used
-# by uninstall.sh — for uninstall we'd rather drop the package than fix
-# it, so the fallback is `dpkg --purge --force-all` instead of
-# --force-confmiss reinstall.
-#
-# Without this, `apt purge` on an iF package can fail because purge runs
-# postrm, which may break for the same reasons configure failed (missing
-# user, missing dir).
-#
-# Arguments:
-#   $1  package name
-#   $2  username the package's maintainer scripts expect (pass "" to skip)
-#   $3  conffile parent dir for postrm find (pass "" to skip)
-#   $4  user home dir (used if username needs to be created)
-#   $5  user GECOS (used if username needs to be created)
-#
-# Returns 0 once the package is no longer in iF/iU, even if that was
-# achieved via force-purge.
+# Usage: ensure_package_purgeable <pkg> [user] [conf_dir] [home] [gecos]; restores what postrm needs, else force-purges.
 ensure_package_purgeable() {
     local pkg="$1" username="${2:-}" conf_dir="${3:-}" home="${4:-}" gecos="${5:-}"
     local pkg_status
@@ -229,7 +126,6 @@ ensure_package_purgeable() {
 
     log_info "${pkg} is in '${pkg_status}' state — preparing for clean purge"
 
-    # Restore postrm prerequisites if they're missing.
     if [[ -n "$username" ]] && ! /usr/bin/getent passwd "$username" >/dev/null 2>&1; then
         ensure_system_user "$username" "${home:-/nonexistent}" "${gecos:-${username} service}" \
             2>/dev/null || true
@@ -238,7 +134,6 @@ ensure_package_purgeable() {
         /usr/bin/install -d -m 0755 "$conf_dir"
     fi
 
-    # Best-effort clean configure first.
     /usr/bin/dpkg --configure -a 2>/dev/null || true
 
     pkg_status=$(/usr/bin/dpkg-query -W -f='${db:Status-Abbrev}' "$pkg" 2>/dev/null || echo "")

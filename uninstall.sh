@@ -3,32 +3,9 @@ set -euo pipefail
 # =============================================================================
 # Geodineum Uninstall Script
 # =============================================================================
-#
-# Symmetric inverse of install.sh's 11-phase flow. LIFO action order:
-#   1. systemd unit disable + stop (geodineum-managed units)
-#   2. ValKey / Redis purge (apt packages + source-build artifacts +
-#      config/state/log dirs + valkey system user). Runs BEFORE unit-file
-#      removal so `systemctl stop` can still resolve the units.
-#   3. systemd unit file removal + daemon-reload (sweeps any units left
-#      behind; the daemon-reload picks up the deleted set in one pass)
-#   4. /etc/geodineum/ removal (credentials, bootstrap.env, components/*.env)
-#   5. /var/lib/valkey-gnode (with backup-snapshot-first prompt)
-#   6. /opt/geodineum/ (operator-confirmed; contains all components)
-#   7. /etc/sudoers.d/geodineum drop-in
-#   8. geodineum group + service users (gnode, deploy_user) — operator-confirmed
-#
-# Safety posture:
-# - Commit-by-default : plain `uninstall.sh` actually deletes.
-#     Pass --dry-run to preview without changes.
-#   - Stops active geodineum systemd units first.
-#   - Always offers backup-snapshot-first before deleting ValKey data.
-#   - Idempotent: re-running on a partially uninstalled state proceeds cleanly.
-#
-# Invariants:
-#   - F (SECRETS_VIA_FILE_PATH): never `cat` credential files into logs;
-#     only the path is referenced.
-#   - G (SET_EUO_PIPEFAIL): line 2 `set -euo pipefail` (this script).
-#   - ABSOLUTE_PATH_FOR_PRIVILEGED_TOOLS: /usr/bin/<tool> for sudo-trusted ops.
+# Removes what install.sh created, in reverse order. Deletes by default
+# (--dry-run previews) and is safe to re-run on a partly uninstalled host.
+# Credential files are referenced by path only, never printed.
 #
 # Usage:
 #   sudo ./uninstall.sh [--dry-run] [--keep-data] [--keep-users] [--quiet]
@@ -82,8 +59,6 @@ DRY_RUN="false"       # commit by default; pass --dry-run to preview
 KEEP_DATA="false"     # preserve /var/lib/valkey-gnode
 KEEP_USERS="false"    # preserve geodineum group + service users
 
-# Canonical paths (symmetric inverse of install.sh's track_path_if_new sites).
-# Listed in REVERSE installer order so deletion is LIFO.
 INSTALLER_PATHS=(
     "/usr/local/bin/geodineum"
     "/usr/local/bin/gcli"
@@ -92,13 +67,9 @@ INSTALLER_PATHS=(
     "/var/log/geodineum"
 )
 
-# Optional manifest path. If install.sh persists INSTALLED_PATHS at success
-# (forward-compat from 4.1.a manifest-write commit), prefer the manifest
-# over the hardcoded list — preserves co-located unrelated files.
 MANIFEST_PATH="/etc/geodineum/installed.manifest"
 
-# Systemd units the installer creates.
-# stop+disable in LIFO order (timers before services they trigger).
+# Timers before the services they trigger.
 UNINSTALL_UNITS=(
     "valkey-backup.timer"
     "valkey-backup.service"
@@ -107,7 +78,6 @@ UNINSTALL_UNITS=(
     "valkey-gnode.service"
 )
 
-# Systemd unit file globs to sweep after stop+disable.
 UNIT_FILE_GLOBS=(
     "/etc/systemd/system/geodineum-*.service"
     "/etc/systemd/system/geodineum-*.timer"
@@ -168,7 +138,6 @@ confirm() {
     [[ "${reply,,}" == "y" || "${reply,,}" == "yes" ]]
 }
 
-# Run-or-dry helper: prints what would happen in dry-run; executes in commit.
 do_or_dry() {
     local desc="$1"
     shift
@@ -225,7 +194,6 @@ banner() {
 preflight() {
     log_step "Pre-flight checks"
 
-    # Active geodineum units are stopped automatically.
     local active_units=()
     for unit in "${UNINSTALL_UNITS[@]}"; do
         if /usr/bin/systemctl is-active --quiet "$unit" 2>/dev/null; then
@@ -255,17 +223,13 @@ phase_systemd_stop() {
             do_or_dry "systemctl stop ${unit}"   /usr/bin/systemctl stop "$unit" 2>/dev/null || true
             do_or_dry "systemctl disable ${unit}" /usr/bin/systemctl disable "$unit" 2>/dev/null || true
         fi
-        # Clear any lingering failed state — stop/disable do NOT reset it, so a
-        # unit that died failed would otherwise show as "not-found failed" in
-        # systemctl list-units after its file is removed (untidy, confuses the
-        # post-uninstall verify). Runs unconditionally (unit may already be
-        # removed but still failed in systemd's memory).
+        # stop/disable keep a failed state; clear it even if the file is gone.
         do_or_dry "systemctl reset-failed ${unit}" /usr/bin/systemctl reset-failed "$unit" 2>/dev/null || true
     done
 }
 
 # =============================================================================
-# Phase 2: systemd unit file removal + daemon-reload
+# Phase 3: systemd unit file removal + daemon-reload
 # =============================================================================
 
 phase_systemd_remove() {
@@ -273,7 +237,6 @@ phase_systemd_remove() {
 
     local found_any="false"
     for glob in "${UNIT_FILE_GLOBS[@]}"; do
-        # Use /usr/bin/find for absolute-path safety per ABSOLUTE_PATH invariant.
         local matches
         matches=$(/usr/bin/find /etc/systemd/system/ -maxdepth 1 -name "${glob##*/}" -print 2>/dev/null || true)
         while IFS= read -r unit_file; do
@@ -291,30 +254,9 @@ phase_systemd_remove() {
 }
 
 # =============================================================================
-# Phase 3: ValKey / Redis purge (apt + source-build artifacts)
+# Phase 2: ValKey / Redis purge (apt + source-build artifacts)
 # =============================================================================
-#
-# Removes BOTH the apt-installed redis-server / valkey-server packages AND
-# the source-built Valkey artifacts the installer drops at /usr/local/bin/
-# (added when Ubuntu 22.04 lacks `valkey-server` in apt). Idempotent —
-# re-running on a clean state just no-ops every step.
-#
-# What gets removed:
-#   - apt: redis-server, redis-tools, redis, redis-sentinel
-#   - apt: valkey-server, valkey-tools, valkey
-#   - source-build binaries:
-#       /usr/local/bin/valkey-server
-#       /usr/local/bin/valkey-cli
-#       /usr/local/bin/redis-cli   (compat symlink the installer creates)
-#   - source-build systemd unit:
-#       /etc/systemd/system/valkey-server.service
-#   - config + state dirs:
-#       /etc/valkey, /etc/redis
-#       /var/lib/valkey, /var/lib/redis  (NB: /var/lib/valkey-gnode is the
-#       gNode-managed daemon dir handled separately in phase_valkey_data)
-#       /var/log/valkey, /var/log/redis
-#       /var/run/redis
-#   - the `valkey` system user (created by the source-build path)
+# Runs before unit-file removal so systemctl can still resolve the units.
 
 phase_valkey_redis_purge() {
     log_step "Phase 2/8 — ValKey / Redis purge"
@@ -326,7 +268,6 @@ phase_valkey_redis_purge() {
                      valkey-server.service)
     local source_unit="/etc/systemd/system/valkey-server.service"
 
-    # ------ Stop + disable any running instances ------
     for unit in "${apt_units[@]}" valkey-server.service; do
         if /usr/bin/systemctl list-unit-files "$unit" 2>/dev/null | grep -q "$unit"; then
             do_or_dry "systemctl stop ${unit}"    /usr/bin/systemctl stop "$unit" 2>/dev/null || true
@@ -334,10 +275,7 @@ phase_valkey_redis_purge() {
         fi
     done
 
-    # ------ Unmask any unit gNode's install-gnode-service.sh may
-    # have masked previously. Without this, mask state survives uninstall
-    # and the next install run hits "already masked" → set -e crash.
-    # Symmetric uninstall requirement.
+    # A mask left by gNode's service install would survive into the next install.
     for unit in valkey.service valkey-gnode.service; do
         if /usr/bin/systemctl is-enabled "$unit" 2>/dev/null | grep -q "^masked$"; then
             do_or_dry "systemctl unmask ${unit}" \
@@ -345,20 +283,8 @@ phase_valkey_redis_purge() {
         fi
     done
 
-    # ------ Defensive: kill any orphaned processes whose unit files
-    # have already been removed (covers re-running after a previous
-    # uninstall that did partial work, or a manual `rm` of unit files
-    # leaving the binary running). The binary may have been deleted but
-    # Linux keeps the process + its mmap'd binary until pid exits, so
-    # the process can keep listening on port 47445 indefinitely.
-    #
-    # SIGTERM → 2-second grace → SIGKILL escalation. Why not SIGTERM
-    # alone: with `appendonly yes` in valkey.conf, valkey catches
-    # SIGTERM and tries to flush the AOF file before exit. If the AOF
-    # directory (e.g. /var/lib/valkey) was deleted in a prior partial
-    # uninstall, the flush blocks forever and SIGTERM never completes.
-    # SIGKILL is uncatchable + bypasses the AOF-flush handler so the
-    # port + pid are guaranteed to free.
+    # Orphaned processes whose unit files are gone. SIGKILL follows SIGTERM:
+    # an AOF flush into an already-deleted data dir blocks shutdown forever.
     local _need_kill="false"
     for proc in valkey-server redis-server; do
         if /usr/bin/pgrep -f "^/usr/local/bin/${proc}\b" >/dev/null 2>&1 \
@@ -372,11 +298,7 @@ phase_valkey_redis_purge() {
     done
 
     if [[ "$_need_kill" == "true" ]] && [[ "$DRY_RUN" == "false" ]]; then
-        # 2-second grace for clean shutdown — most processes exit here.
         sleep 2
-        # Anything still listening on 47445 likely caught SIGTERM and is
-        # stuck on a syscall (AOF flush to deleted dir is the typical
-        # case). Escalate to SIGKILL.
         for proc in valkey-server redis-server; do
             if /usr/bin/pgrep -f "^/usr/local/bin/${proc}\b" >/dev/null 2>&1 \
                 || /usr/bin/pgrep -x "${proc}" >/dev/null 2>&1; then
@@ -388,8 +310,7 @@ phase_valkey_redis_purge() {
         sleep 1
     fi
 
-    # ------ pre-purge unstick for half-configured packages ------
-    # Delegated to lib/component-primitives.sh::ensure_package_purgeable.
+    # Half-configured packages must be unstuck before apt can purge them.
     if [[ "$DRY_RUN" != "true" ]]; then
         local pkg
         for pkg in "${apt_pkgs[@]}"; do
@@ -406,10 +327,7 @@ phase_valkey_redis_purge() {
         done
     fi
 
-    # ------ apt purge — config files, state files, package metadata ------
-    # Detection broadened from 'ok installed' (ii only) to any 'i*' state
-    # so half-configured/unpacked packages also qualify. Pre-flight above
-    # will have moved iF/iU packages to ii or fully removed.
+    # Any 'i*' dpkg state counts as installed, not only 'ii'.
     if /usr/bin/command -v apt-get >/dev/null 2>&1; then
         local installed=()
         for pkg in "${apt_pkgs[@]}"; do
@@ -425,28 +343,8 @@ phase_valkey_redis_purge() {
         fi
     fi
 
-    # ------ Clear dpkg-statoverride entries for valkey/redis ------
-    # The valkey-server package's postinst registers statoverride records
-    # for /var/log/valkey, /var/lib/valkey, etc. These records live in
-    # /var/lib/dpkg/statoverride and persist independently of apt purge.
-    # After we remove the valkey system user (below) and `rm -rf` the
-    # owned dirs, those records become orphaned — they point at a user
-    # who no longer exists. The next `apt install` of ANY package then
-    # aborts in pre-configure with:
-    #
-    #   dpkg: unrecoverable fatal error, aborting:
-    #    unknown system user 'valkey' in statoverride file; the system
-    #    user got removed before the override
-    #
-    # Worse, a subsequent `apt install valkey-server` succeeds at the
-    # archive level but the package gets stuck in half-configured state
-    # because postinst's own statoverride calls fail. Symptom on a
-    # downstream operator's box: install.sh fails Phase 4 with
-    # "/etc/valkey/valkey.conf missing despite installed package".
-    #
-    # We clear our package's statoverride entries here, while the valkey
-    # user still exists (so the --remove call is safe), and BEFORE the
-    # `rm -rf` below removes the paths the records reference.
+    # Clear valkey/redis statoverrides while the valkey user still exists: an
+    # override naming a deleted user makes every later apt install abort.
     if /usr/bin/command -v dpkg-statoverride >/dev/null 2>&1; then
         local stale_paths
         stale_paths=$(/usr/bin/dpkg-statoverride --list 2>/dev/null \
@@ -460,7 +358,6 @@ phase_valkey_redis_purge() {
         fi
     fi
 
-    # ------ Source-build Valkey: binaries + symlink + systemd unit ------
     local source_artifacts=(
         "/usr/local/bin/valkey-server"
         "/usr/local/bin/valkey-cli"
@@ -478,11 +375,7 @@ phase_valkey_redis_purge() {
         do_or_dry "systemctl daemon-reload" /usr/bin/systemctl daemon-reload
     fi
 
-    # ------ Config + log dirs ------
-    # NOTE: /var/lib/valkey (the persistent data dir + relocated aclfile) is
-    # intentionally NOT purged here — it's handled by phase_valkey_data
-    # (Phase 5), which honors --keep-data and offers a backup snapshot first.
-    # Purging it here would ignore --keep-data and delete data unconditionally.
+    # /var/lib/valkey is left to phase_valkey_data, which honours --keep-data.
     local data_dirs=(
         "/etc/redis"
         "/var/lib/redis"
@@ -490,9 +383,6 @@ phase_valkey_redis_purge() {
         "/var/run/redis"
         "/etc/valkey"
         "/var/log/valkey"
-        # COMMS per-site SQLite persistence (message log, not
-        # precious operator data — ValKey RDB has its own --keep-data
-        # phase; this doesn't).
         "/var/lib/geodineum-comms"
     )
     for dir in "${data_dirs[@]}"; do
@@ -501,15 +391,12 @@ phase_valkey_redis_purge() {
         fi
     done
 
-    # ------ valkey system user (source-build only — apt path doesn't
-    # create one; --keep-users honored as a safety override) ------
     if [[ "$KEEP_USERS" != "true" ]] && /usr/bin/getent passwd valkey >/dev/null 2>&1; then
         if [[ "$DRY_RUN" == "true" ]] || confirm "Remove 'valkey' system user (source-build artifact)?" y; then
             do_or_dry "userdel valkey" /usr/sbin/userdel valkey 2>/dev/null || true
         fi
     fi
 
-    # ------ apt autoremove orphaned deps (libjemalloc2, lua-bitop, etc.) ------
     if /usr/bin/command -v apt-get >/dev/null 2>&1; then
         do_or_dry "apt-get autoremove -y" /usr/bin/apt-get autoremove -y -qq 2>/dev/null || true
     fi
@@ -527,8 +414,6 @@ phase_etc_geodineum() {
         return 0
     fi
 
-    # Invariant F — secrets-via-file-path. Reference paths only; never cat
-    # credential files into logs.
     if [[ -d /etc/geodineum/credentials ]]; then
         local cred_count
         cred_count=$(find /etc/geodineum/credentials -type f 2>/dev/null | wc -l)
@@ -556,9 +441,7 @@ phase_etc_geodineum() {
 phase_valkey_data() {
     log_step "Phase 5/8 — /var/lib/valkey (data)"
 
-    # the data dir is /var/lib/valkey (valkey.conf `dir` + the relocated
-    # aclfile). Previously, this targeted a non-existent /var/lib/valkey-gnode, so
-    # --keep-data was a no-op and Phase 2 deleted the real data unconditionally.
+    # valkey.conf `dir`, which also holds the aclfile
     local data_dir="/var/lib/valkey"
     if [[ ! -d "$data_dir" ]]; then
         log_info "${data_dir} already absent."
@@ -570,7 +453,6 @@ phase_valkey_data() {
         return 0
     fi
 
-    # Always offer backup-snapshot-first per primer SAFETY directive.
     log_warning "About to delete ValKey persistent data at ${data_dir}"
     local sz
     sz=$(/usr/bin/du -sh "$data_dir" 2>/dev/null | /usr/bin/awk '{print $1}' || echo "unknown")
@@ -594,7 +476,7 @@ phase_valkey_data() {
 }
 
 # =============================================================================
-# Phase 5: /opt/geodineum/ (operator-confirmed; contains all components)
+# Phase 6: /opt/geodineum/ (operator-confirmed; contains all components)
 # =============================================================================
 
 phase_opt_geodineum() {
@@ -609,14 +491,7 @@ phase_opt_geodineum() {
     log_warning "About to delete component install root at ${install_root}"
     log_info "  (contains: Geodineum, gCore, gTemplate, gNode, gNode-Client, COMMS, BAK, ...)"
 
-    # detect dedicated mount. Operators frequently mount /opt/geodineum
-    # on its own partition (LVM logical volume, ZFS dataset, separate disk)
-    # to isolate component code from / and apply different fs options
-    # (noatime, quota, etc.). In that case `rm -rf /opt/geodineum` either
-    # fails (busy mount) or — worse — succeeds at removing the mount-point
-    # directory while the kernel keeps the mount live but orphaned. The
-    # right inverse is to empty the mount, not unmount it; the operator
-    # owns the partition itself.
+    # A dedicated mount is emptied, not removed: the operator owns the partition.
     local is_mountpoint=false
     if /usr/bin/mountpoint -q "$install_root" 2>/dev/null; then
         is_mountpoint=true
@@ -625,9 +500,7 @@ phase_opt_geodineum() {
 
     if [[ "$DRY_RUN" == "true" ]] || confirm "Proceed with ${install_root} deletion?"; then
         if [[ "$is_mountpoint" == "true" ]]; then
-            # -mindepth 1 protects the mount point; -xdev keeps us inside
-            # this filesystem only (skips any nested bind-mounts the
-            # operator may have set up under /opt/geodineum/).
+            # -xdev skips nested mounts under the install root
             do_or_dry "find ${install_root} -mindepth 1 -xdev -delete" \
                 /usr/bin/find "$install_root" -mindepth 1 -xdev -delete
         else
@@ -637,29 +510,24 @@ phase_opt_geodineum() {
         log_info "Skipped ${install_root} deletion (operator declined)."
     fi
 
-    # Sweep CLI symlinks (created by install.sh post-Phase-N).
     for sym in /usr/local/bin/geodineum /usr/local/bin/gcli; do
         if [[ -L "$sym" || -f "$sym" ]]; then
             do_or_dry "rm ${sym}" /usr/bin/rm -f "$sym"
         fi
     done
 
-    # Sweep bootstrap-loader.sh.
     if [[ -d /usr/local/lib/geodineum ]]; then
         do_or_dry "rm -rf /usr/local/lib/geodineum/" /usr/bin/rm -rf /usr/local/lib/geodineum/
     fi
 }
 
 # =============================================================================
-# Phase 6: /etc/sudoers.d/geodineum drop-in
+# Phase 7: /etc/sudoers.d drop-ins
 # =============================================================================
 
 phase_sudoers() {
     log_step "Phase 7/8 — sudoers drop-in removal"
 
-    # install.sh Phase 8 writes /etc/sudoers.d/geodineum-deploy (rendered
-    # from templates/sudoers-geodeploy.tpl). Older runs may have left
-    # /etc/sudoers.d/geodineum too. Remove both.
     for drop_in in \
         "/etc/sudoers.d/geodineum-deploy" \
         "/etc/sudoers.d/geodineum"; do
@@ -672,7 +540,7 @@ phase_sudoers() {
 }
 
 # =============================================================================
-# Phase 7b: geodeploy auto-deploy cron entry 
+# Phase 7b: geodeploy auto-deploy cron entry
 # =============================================================================
 phase_geodeploy_cron() {
     log_step "Phase 7b/8 — geodeploy auto-deploy cron"
@@ -708,7 +576,7 @@ phase_geodeploy_cron() {
 }
 
 # =============================================================================
-# Phase 7: geodineum group + service users (operator-confirmed)
+# Phase 8: geodineum group + service users (operator-confirmed)
 # =============================================================================
 
 phase_users_group() {
@@ -719,9 +587,6 @@ phase_users_group() {
         return 0
     fi
 
-    # Service users created by install.sh: gnode (Phase 0 deploy_user pattern).
-    # deploy_user is variable per install — read from /etc/passwd by GID match
-    # before geodineum group is removed.
     local gnode_uid=""
     if /usr/bin/getent passwd gnode >/dev/null 2>&1; then
         gnode_uid=$(/usr/bin/getent passwd gnode | /usr/bin/awk -F: '{print $3}')
@@ -733,8 +598,6 @@ phase_users_group() {
         fi
     fi
 
-    # Dedicated COMMS service user (created by install.sh
-    # alongside the narrow groups).
     if /usr/bin/getent passwd geodineum-comms >/dev/null 2>&1; then
         local comms_uid
         comms_uid=$(/usr/bin/getent passwd geodineum-comms | /usr/bin/awk -F: '{print $3}')
@@ -743,16 +606,7 @@ phase_users_group() {
         fi
     fi
 
-    # Ecosystem groups (narrow-group hardening).
-    # Order matters: remove narrowest first, broadest last. Empty groups
-    # are auto-deleted; groups with remaining members are preserved with
-    # an info note (manual gpasswd -d to vacate).
-    #
-    # Narrow web/client groups:
-    #   geodineum-web    — Apache-readable WP stack (themes + gCore)
-    #   geodineum-client — gNode-Client PHP library readers
-    # COMMS group:
-    #   geodineum-comms  — COMMS daemon runtime identity (cred reads)
+    # Narrowest first, broadest last; a group that still has members is kept.
     for grp in geodineum-comms geodineum-web geodineum-client geodineum-bootstrap geodineum-dash geodineum-creds geodineum; do
         if /usr/bin/getent group "$grp" >/dev/null 2>&1; then
             local members
@@ -806,9 +660,7 @@ main() {
     phase_systemd_stop
     phase_valkey_redis_purge
     phase_systemd_remove
-    # Cron removal must run BEFORE phase_etc_geodineum deletes
-    # /etc/geodineum/deploy.env — that's how we identify whose
-    # crontab to filter without scanning every user on the system.
+    # Before phase_etc_geodineum: deploy.env names the user whose crontab to filter.
     phase_geodeploy_cron
     phase_etc_geodineum
     phase_valkey_data

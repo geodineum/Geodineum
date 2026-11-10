@@ -1,21 +1,7 @@
 #!/bin/bash
-# Strict mode; sourced libs no longer
-# silent-fail when called from a context that does not pre-set -euo.
 set -euo pipefail
 
-#
-# Geodineum CLI — Environment Management
-# ========================================
-# Change DTAP environments, manage viewkeys, show gate status.
-#
-# DTAP model:
-#   testing     → viewkey-gated, "Under Development" screen
-#   staging     → viewkey-gated, environment badge visible
-#   acceptance  → viewkey-gated, final review
-#   production  → public, no gate
-#
-# Requires: common.sh sourced first
-#
+# Environment commands: change a site's DTAP environment, manage viewkeys, show the gate. Requires common.sh.
 
 # =============================================================================
 # Helpers
@@ -27,7 +13,6 @@ find_site_config() {
     local domain
     domain=$(echo "$site_id" | sed 's/_/./g')
 
-    # Resolution order: centralized → WordPress fallback → service fallback
     for candidate in \
         "${GEODINEUM_CONFIG_ROOT}/sites/${site_id}/config.yaml" \
         "${GEODINEUM_CONFIG_ROOT}/services/${site_id}/config.yaml" \
@@ -46,19 +31,16 @@ find_site_config() {
     return 1
 }
 
-# Read current environment from YAML config
-# Supports both v1 (metadata.environment) and v2 (environment.active) formats
+# Read the environment: environment.active, else metadata.environment, else GNODE_ENVIRONMENT.
 read_yaml_env() {
     local config_file="$1"
     if [[ "$config_file" == *.yaml ]]; then
-        # v2 format: environment.active
         local v2
         v2=$(grep -E "^\s+active:" "$config_file" 2>/dev/null | head -1 | sed 's/.*active:\s*//' | tr -d '"' | tr -d "'")
         if [[ -n "$v2" ]]; then
             echo "$v2"
             return
         fi
-        # v1 format: metadata.environment
         grep -E "^\s+environment:" "$config_file" 2>/dev/null | head -1 | sed 's/.*environment:\s*//' | tr -d '"' | tr -d "'"
     elif [[ "$config_file" == *.env ]]; then
         grep "^GNODE_ENVIRONMENT=" "$config_file" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"'
@@ -73,8 +55,7 @@ read_yaml_viewkey() {
     fi
 }
 
-# Every file that records a site's environment, one "file<TAB>field" line per recorded value
-# (field: a yq path, or GNODE_ENVIRONMENT for a .env file).
+# Print "file<TAB>field" for every recorded environment value (field: a yq path or GNODE_ENVIRONMENT).
 site_env_targets() {
     local site_id="$1" domain f p
     domain=$(echo "$site_id" | sed 's/_/./g')
@@ -105,7 +86,7 @@ _stage_env_edit() {
         sed "s/^GNODE_ENVIRONMENT=.*/GNODE_ENVIRONMENT=\"${new_env}\"/" "$staged" > "$tmp"
         [[ "$(grep -c '^GNODE_ENVIRONMENT="'"${new_env}"'"$' "$tmp")" == 1 ]] || { rm -f "$tmp"; return 1; }
     else
-        # the child line inside its top-level block (yq's `line` is off by the file's leading comments)
+        # Find the line with awk: yq's `line` is offset by leading comments.
         n=$(awk -v top="${field#.}" 'BEGIN { split(top, k, "."); t = k[1]; c = k[2] }
             $0 ~ "^" t ":[[:space:]]*$" { inb = 1; next }
             inb && /^[^[:space:]#]/ { inb = 0 }
@@ -118,8 +99,7 @@ _stage_env_edit() {
     mv "$tmp" "$staged"
 }
 
-# Write new_env into every recorded place, or into none. Sets ENV_STAGE (originals kept there for
-# restore_site_env); returns 1 with nothing written when any edit cannot be made exactly.
+# Write new_env into every recorded place or none; ENV_STAGE keeps the originals for restore_site_env.
 write_site_env() {
     local site_id="$1" new_env="$2" stage f field i=0 line
     stage=$(mktemp -d) || return 1
@@ -162,7 +142,6 @@ write_yaml_viewkey() {
         if grep -q "^\s*viewkey:" "$config_file" 2>/dev/null; then
             sed -i "s|^\(\s*viewkey:\s*\).*|\1\"${viewkey}\"|" "$config_file"
         else
-            # Add viewkey under security section
             if grep -q "^security:" "$config_file" 2>/dev/null; then
                 sed -i "/^security:/a\\  viewkey: \"${viewkey}\"" "$config_file"
             else
@@ -177,19 +156,12 @@ generate_viewkey() {
     openssl rand -base64 24 | tr -d '=+/' | cut -c1-20
 }
 
-# Canonical ValKey site_id: PHP's get_site_id_from_domain() builds it as the
-# domain with '.' and '-' replaced by '_'. Accept either the domain (dots) or
-# the already-underscored id; tr normalizes both to the one true key form.
-# The dots/underscore mismatch was the root cause of the "config flipped but
-# runtime stayed staging" bug — the cred file and ValKey keys silently missed.
+# The ValKey site_id, as PHP's get_site_id_from_domain() builds it: '.' and '-' become '_'.
 valkey_site_id() {
     printf '%s' "$1" | tr '.-' '__'
 }
 
-# Run valkey-cli for env writes. Prefer the per-site client credential; fall
-# back to the admin credential (default user) so it works whenever run as root.
-# site_id MUST be the canonical (underscore) form. Returns 2 if no credential
-# is readable.
+# valkey-cli as the site's client, else as admin; returns 2 when neither credential is readable.
 _valkey_env_cli() {
     local site_id="$1"; shift
     local client_pw="${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${site_id}.password"
@@ -206,16 +178,11 @@ _valkey_env_cli() {
     REDISCLI_AUTH="$pass" valkey-cli -p "${VALKEY_PORT:-47445}" "${user_flag[@]}" --no-auth-warning "$@"
 }
 
-# Can we reach ValKey with a usable credential? (pre-flight before mutating)
 valkey_env_reachable() {
     [[ "$(_valkey_env_cli "$1" PING 2>/dev/null)" == "PONG" ]]
 }
 
-# Stamp active_environment + invalidate the cached registration config, then
-# VERIFY the cache key is actually gone. Runtime env (gtemplate_detect_environment)
-# reads metadata.environment from {site_id}:config:registration, so clearing it
-# is what makes the flip take effect. Returns non-zero unless verified.
-# site_id MUST be the canonical (underscore) form.
+# Stamp active_environment and clear {site_id}:config:registration, which the runtime reads the environment from.
 update_valkey_env() {
     local site_id="$1"
     local new_env="$2"
@@ -229,19 +196,14 @@ update_valkey_env() {
     [[ "$exists" == "0" ]]
 }
 
-# Reconcile the environment slot of the one topology (header slot 1) with the new
-# active_environment, and notify the daemon. The entity id IS the site_id, so a
-# re-registration with --env upserts in place and touches ONLY the topology
-# entity — never creds/viewkey/wp-admin. Best-effort: a failure leaves
-# active_environment correct (what PHP reads).
+# Best effort: re-register the topology entity with the new environment and notify the daemon.
 reembed_dim20_and_broadcast() {
     local site_id="$1"
     local new_env="$2"
     local dcred="${GEODINEUM_CREDENTIALS_DIR:-/etc/geodineum/credentials}/valkey_daemon.password"
     local port="${VALKEY_PORT:-47445}"
 
-    # Re-register with the SAME shape the entity already has (its `sh`), so only
-    # env changes — the declared words are preserved. Default to 'web' (a site).
+    # Keep the entity's existing shape so only the environment changes.
     local profile="web"
     if [[ -r "$dcred" ]] && command -v python3 >/dev/null 2>&1; then
         local ns="${GNODE_TOPOLOGY_NAMESPACE:-geodineum}" entity_json detected
@@ -279,7 +241,6 @@ i=json.load(sys.stdin); i["environment"]=os.environ["NEW_ENV"]; print(json.dumps
         fi
     fi
 
-    # Best-effort broadcast → immediate daemon stream-discovery refresh.
     if [[ -r "$dcred" ]]; then
         local ts; ts=$(date +%s)
         REDISCLI_AUTH="$(cat "$dcred")" valkey-cli -p "$port" --user gnode_daemon \
@@ -290,11 +251,7 @@ i=json.load(sys.stdin); i["environment"]=os.environ["NEW_ENV"]; print(json.dumps
     fi
 }
 
-# Bump {site}:constellation:generation. Every config reader (gCore
-# ConfigLoader, gTemplate gNodeConfigLoader) compares its APCu entry against
-# this counter on each hit, so one bump invalidates every FPM worker at once;
-# the 300 s APCu TTL is only the fallback. Daemon tier: the FCALL writes, and
-# a site's own client identity does not necessarily hold this key.
+# Config readers compare their APCu entry against this counter, so one bump invalidates every worker.
 bump_constellation_generation() {
     local site_id="$1"
     local reason="$2"
@@ -369,7 +326,6 @@ EOF
 
     validate_environment "$new_env" || exit 1
 
-    # Find config
     local config_file
     config_file=$(find_site_config "$site_id") || {
         log_error "No config found for site '${site_id}'"
@@ -377,9 +333,7 @@ EOF
         exit 1
     }
 
-    # Canonical ValKey site_id + pre-flight: confirm we can reach ValKey BEFORE
-    # touching the config, so we never leave the file flipped but the runtime
-    # cache stale.
+    # Check ValKey first, so the config never changes while the runtime cache stays stale.
     local vk_site_id
     vk_site_id=$(valkey_site_id "$site_id")
     if ! valkey_env_reachable "$vk_site_id"; then
@@ -403,10 +357,7 @@ EOF
     echo ""
 
     if [[ "$current_env" == "$new_env" ]]; then
-        # Config already matches, but the runtime reads env from the ValKey
-        # cache — which can have drifted (e.g. a prior half-applied switch that
-        # updated the file but not ValKey). Re-invalidate so config and runtime
-        # are guaranteed consistent instead of trusting the file blindly.
+        # The runtime reads the ValKey cache, which can differ from the file: re-sync it.
         log_info "Config already ${new_env}; re-syncing ValKey cache to match"
         if update_valkey_env "$vk_site_id" "$new_env"; then
             reembed_dim20_and_broadcast "$site_id" "$new_env"
@@ -418,17 +369,15 @@ EOF
         exit 1
     fi
 
-    # Warn on production → non-production (site goes behind gate)
     if [[ "$current_env" == "production" ]] && [[ "$new_env" != "production" ]]; then
         log_warning "Site will be gated behind viewkey (hidden from public)"
     fi
 
-    # Warn on non-production → production (gate removed)
     if [[ "$current_env" != "production" ]] && [[ "$new_env" == "production" ]]; then
         log_warning "Site will become publicly accessible (gate removed)"
     fi
 
-    # 1. Update every file that records the environment, all or none; kept for a restore below.
+    # 1. Every file that records the environment, all or none.
     log_step "Updating Configuration"
 
     local env_stage
@@ -450,10 +399,7 @@ EOF
         fi
     fi
 
-    # 3. Invalidate the cached registration config + stamp active_environment.
-    # REQUIRED for the switch to take effect: gtemplate_detect_environment()
-    # reads env from that cache, not the YAML. Pre-flighted above, so a failure
-    # here is exceptional — fail loudly instead of reporting a false success.
+    # 3. The runtime reads the environment from the ValKey cache, not the YAML.
     if update_valkey_env "$vk_site_id" "$new_env"; then
         log_success "ValKey: cache invalidated + active_environment → ${new_env}  (site_id: ${vk_site_id})"
     else
@@ -464,14 +410,13 @@ EOF
     fi
     rm -rf "$env_stage"
 
-    # 3b. Reconcile dim-20 (geometric env coordinate) with active_environment +
-    #     notify the daemon. Without this the two env stores diverge.
+    # 3b. Topology environment slot.
     reembed_dim20_and_broadcast "$site_id" "$new_env"
 
-    # 3c. Invalidate APCu-cached config on every FPM worker at once.
+    # 3c. Cached config on every worker.
     bump_constellation_generation "$vk_site_id" "env:${new_env}"
 
-    # 4. Clear PHP OPcache so the change takes effect immediately
+    # 4. PHP OPcache.
     php -r "opcache_reset();" 2>/dev/null && log_success "PHP OPcache cleared" || true
 
     # Summary

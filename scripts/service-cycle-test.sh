@@ -78,8 +78,7 @@ assert_registry(){
     fi
 }
 assert_acl_composed(){
-    # The retired legacy-uniform set granted ~template:* to everything; a
-    # composed ACL must NOT carry it unless the manifest declared it.
+    # A composed ACL carries ~template:* only when the manifest declares it.
     local user="gnode_client_$1" out
     out=$(REDISCLI_AUTH="$(cat "${CRED_DIR}/valkey.password")" \
         valkey-cli -p "${VALKEY_PORT:-47445}" ACL GETUSER "$user" 2>/dev/null)
@@ -90,8 +89,7 @@ assert_acl_composed(){
     else
         ok "ACL for ${user} is manifest-composed (no legacy powerset)"
     fi
-    # TOPOLOGY-ACL-SCOPE: the shared topology is daemon-written. As the client:
-    # a raw mutation must be NOPERM, a no-writes read via FCALL_RO must work.
+    # The shared topology is daemon-written: a client mutation is NOPERM, an FCALL_RO read works.
     local pw shared="{${GNODE_TOPOLOGY_NAMESPACE:-geodineum}}:gnode:constellation" reply
     pw=$(cat "${CRED_DIR}/valkey_client_$1.password" 2>/dev/null) || { no "client password unreadable for ${user}"; return; }
     reply=$(REDISCLI_AUTH="$pw" valkey-cli -p "${VALKEY_PORT:-47445}" --user "$user" --no-auth-warning \

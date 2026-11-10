@@ -18,8 +18,7 @@ site_pool_user() {   # <site_id>
 SITE_POOL_HANDLER="${SITE_POOL_HANDLER:-/etc/apache2/conf-available/geodineum-php-fpm.conf}"
 SITE_POOL_IDLE_SOCK=/run/php/_idle.sock
 
-# The PHP a new record starts on: the version whose FPM holds the shared pool (geodineum-fpm.sock)
-# or, once closed, the [_idle] pool; installing another php-fpm never moves a site by itself.
+# A new record's PHP: the version holding the shared or [_idle] pool, so a new php-fpm never moves a site.
 site_pool_phpv() {
     local f v=""
     f=$(grep -lE 'geodineum-fpm\.sock|^\[_idle\]' /etc/php/*/fpm/pool.d/*.conf 2>/dev/null | sort -V | tail -1 || true)
@@ -28,8 +27,7 @@ site_pool_phpv() {
     printf '%s' "${SITE_POOL_PHPV:-$v}"
 }
 
-# The deploy sweep's own copy of its library (it runs from the installer clone under /opt), and
-# whether it has known <pattern> for two cycles (it sources its library before pulling it).
+# Ready once the deploy sweep's own library copy has held <pattern> for two cycles (it sources before pulling).
 site_pool_sweep_wait() {   # <pattern> -> prints why not, returns 1; silent and 0 when ready
     local lib="${GEODINEUM_ROOT:-/opt/geodineum}/Geodineum/lib/geodeploy.sh" age
     [[ -f "$lib" ]] || return 0

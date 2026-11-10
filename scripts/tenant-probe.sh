@@ -58,8 +58,7 @@ rnd() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 echo "== on $(hostname -s): tenant probe, $N sites, $((N*(N-1))) ordered pairs, layers $LAYERS"
 
 # ---- daemon: what A may ask gNode to do, through A's own stream ------------------------------
-# The ACLs above cannot see this: the daemon acts with its own rights. The id does not exist, so a
-# daemon that wrongly obeys changes nothing and answers not_found, and that answer is the alarm.
+# The target ids do not exist, so a daemon that wrongly obeys changes nothing.
 ask_daemon() { # <site> <user> <password file> <command> <params json>
     local id="$1:probe-$(rnd)" i r
     vk_as "$2" "$3" XADD "{$1}:gnode:unified:$ENVN" '*' t c id "$id" c "$4" ss "$1" sn tenant-probe p "${5%\}},\"_request_id\":\"$id\"}" >/dev/null
@@ -117,8 +116,7 @@ if has valkey; then
             r=$(dryrun "$UA" HSET "{$B}:site:status" state up); [[ "$r" != OK ]] && ok "$A -> {$B} status write refused (dry run)" || bad "$A may write {$B}'s status"
             r=$(dryrun "$UA" SET "{$B}:edit:token:probe" x); [[ "$r" != OK ]] && ok "$A -> {$B} edit token write refused (dry run)" || bad "$A may write {$B}:edit:token:*"
             r=$(dryrun "$UA" XADD "{$B}:gnode:comms:$ENVN" '*' a 1); [[ "$r" != OK ]] && ok "$A -> {$B} comms write refused (dry run)" || bad "$A may XADD to {$B}:gnode:comms"
-            # a real call: ACL DRYRUN answers OK for FCALL even when the script's own key access is refused.
-            # Refused writes nothing; a success writes one harmless field into {B}, and that is the alarm.
+            # a real call: ACL DRYRUN answers OK for FCALL even when the script's key access is refused
             r=$(vk_as "$UA" "$PA" FCALL GCORE_MGR_CONFIG_SET 0 "$B" TenantProbe crossed "$A"); refused "$r" && ok "$A -> {$B} a function writing {$B} is refused inside the script" || bad "$A wrote {$B} through a function: $r"
             if [[ -n "$PORTAL_A" ]]; then
                 r=$(vk_as "portal_$A" "$PORTAL_A" HGETALL "{$B}:site:content"); refused "$r" && ok "portal_$A -> {$B} content refused" || bad "portal_$A -> {$B} content answered: $r"

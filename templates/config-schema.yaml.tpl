@@ -8,7 +8,6 @@
 #   - Validate values on `geodineum config set`
 #   - Show descriptions on `geodineum config list`
 #   - Present options during `geodineum register --express`
-#   - Enable future LLM auto-management of service configuration
 #
 # Auto-generation:
 #   `geodineum config import <site_id>` generates a draft schema from

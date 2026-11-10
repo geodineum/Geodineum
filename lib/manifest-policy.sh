@@ -1,43 +1,16 @@
 #!/bin/bash
 # =============================================================================
-# manifest-policy.sh — Static policy for manifest-declared ACL grants
+# manifest-policy.sh — static namespace policy for manifest-declared ACL grants
 # =============================================================================
-# v1 enforcement layer for LAYER 5 (data) of the modular manifest. Reads the
-# `data.consumes` / `data.produces` sections from a service's geodeploy.yaml,
-# interpolates {site_id}/{service}/{ecosystem} placeholders, and validates each
-# pattern against the static namespace policy. Refused patterns abort the
-# composition with a clear stderr diagnostic.
-#
-# Consumed by: gNode onboard-service.sh, `geodineum validate` (extended), and any tooling that needs to know what
-# ACL grants a manifest implies.
-#
-# Daemon-mediated runtime negotiation (planned) replaces the static checks with
-# an FCALL → vet → ACL-SETUSER → audit flow. v1 stays static.
-#
-# Static policy v1 — allowed namespaces (after interpolation):
-#   1. Service's own namespace:      {<site_id>}:<service>:*  and  {<site_id>}:*
-#   2. Per-site gnode bus:           {<site_id>}:gnode:*
-#   3. Per-site gcore config:        {<site_id>}:gcore:*
-#   4. Ecosystem bus:                {<ecosystem>}:gnode:*
-#   5. Shared default config space:  {default}:gnode:*  and  {default}:gcore:*
-#   6. Environment-tagged streams:   {testing|staging|acceptance|production}:gnode:*
-#   7. Geodineum shared topology:    {geodineum}:gnode:*   (READ-ONLY for clients;
-#                                    own heartbeat key excepted — the daemon tier writes)
-#   8. Legacy/migration alias:       gnode:*  and  topology:*  and  membership:*
-#                                    template:*  and  error:<site_id>:*
-#                                    cache:<site_id>:*  and  session:<site_id>:*
-#
-# Anything outside this set is REFUSED. No silent narrowing — refuse and fail.
+# Interpolates a manifest's consumes/produces patterns and refuses any outside the
+# allowed prefixes below; one refusal aborts the whole composition.
 # =============================================================================
 
-# Guard against double-sourcing
 [[ -n "${_GEODINEUM_MANIFEST_POLICY_SH:-}" ]] && return 0
 _GEODINEUM_MANIFEST_POLICY_SH=1
 
 # ---- Interpolation ---------------------------------------------------------
 
-# Substitute {site_id}, {service}, {ecosystem} placeholders.
-# Echoes the interpolated pattern.
 # Usage: policy_interpolate <pattern> <site_id> [service-name] [ecosystem]
 policy_interpolate() {
     local pattern="$1"
@@ -51,8 +24,6 @@ policy_interpolate() {
     printf '%s' "$p"
 }
 
-# The constellation a manifest registers in: its gnode.constellation, else the
-# caller's default. `{ecosystem}` interpolates to it.
 # Usage: policy_manifest_constellation <manifest_path> [default]
 policy_manifest_constellation() {
     local manifest_path="$1" dflt="${2:-${GNODE_TOPOLOGY_NAMESPACE:-geodineum}}" c=""
@@ -64,8 +35,6 @@ policy_manifest_constellation() {
 
 # ---- Allowed prefix list ---------------------------------------------------
 
-# Print the well-known allowed pattern prefixes (one per line, after
-# interpolation). Used for prefix-matching in policy_validate_pattern.
 _policy_well_known_prefixes() {
     local site_id="$1"
     local service_name="${2:-$site_id}"
@@ -109,11 +78,7 @@ EOF
 }
 
 # ---- Grant form ------------------------------------------------------------
-# The shared topology namespace ({<ecosystem>}:gnode:*) is written by the
-# daemon tier only. A manifest may CONSUME it (read), never produce into it —
-# except the service's own heartbeat key. Emitting `%R~` here means a
-# declaration cannot hand a service raw write on another service's entity,
-# whichever section it appears in. Everything else keeps the plain `~` form.
+# Only the daemon writes the shared topology: read-only (%R~) except the service's own heartbeat key.
 # Usage: policy_key_grant_form <interpolated-pattern> <site_id> [ecosystem]
 policy_key_grant_form() {
     local p="$1"
@@ -131,9 +96,6 @@ policy_key_grant_form() {
 
 # ---- Validation ------------------------------------------------------------
 
-# Validate a single (interpolated) pattern against the static policy.
-# Strips ACL grammar prefixes (`~` for keys, `&` for channels) before matching.
-# Returns 0 if allowed; prints a diagnostic to stderr and returns 1 if refused.
 # Usage: policy_validate_pattern <interpolated-pattern> <site_id> [service] [ecosystem]
 policy_validate_pattern() {
     local pattern="$1"
@@ -141,15 +103,11 @@ policy_validate_pattern() {
     local service_name="${3:-$site_id}"
     local ecosystem="${4:-geodineum}"
 
-    # Strip ACL grammar prefix for the namespace check.
-    # `~` and `&` need character-class form ([~] / [&]) because bash performs
-    # tilde-expansion inside ${var#pattern} otherwise — leaving the leading
-    # `~` un-stripped (every valid pattern would then look "outside namespace").
+    # Bracketed, or bash tilde-expands the pattern and nothing is stripped.
     local p="$pattern"
     p="${p#[~]}"
     p="${p#[&]}"
 
-    # Empty / null / wildcard-only patterns are refused (would broaden grants)
     if [[ -z "$p" || "$p" == "*" ]]; then
         echo "  POLICY DENY: empty or wildcard-all pattern: '$pattern'" >&2
         return 1
@@ -169,28 +127,18 @@ policy_validate_pattern() {
 
 # ---- Manifest readers ------------------------------------------------------
 
-# Extract a list field from a manifest's data section.
-# Usage: policy_read_patterns <manifest_path> <yq-path>
-# Echoes one pattern per line (empty output if section missing).
+# Usage: policy_read_patterns <manifest_path> <yq-path>; one pattern per line.
 policy_read_patterns() {
     local manifest_path="$1" yq_path="$2"
     [[ -f "$manifest_path" ]] || return 1
     command -v yq &>/dev/null || return 1
-    # (path // [])[] — the `[] // empty` form is rejected by yq >= 4.5x's
-    # lexer, which silently zeroed every composed grant set.
+    # Newer yq rejects the `[] // empty` form.
     yq eval "(${yq_path} // [])[]" "$manifest_path" 2>/dev/null
 }
 
 # ---- Grant composition -----------------------------------------------------
 
-# Compose validated, interpolated keyspace patterns from a manifest.
-# Reads .data.consumes.{streams,keys} (read-only) and .data.produces.{streams,keys}
-# (read-write). Own-namespace patterns are emitted as `~<pattern>` whichever
-# section they sit in (the manifest records intent; a per-section split is a
-# later audit hook). Shared-topology patterns are the exception: they are
-# emitted read-only (`%R~`) regardless of section, own heartbeat key excepted —
-# see policy_key_grant_form. Echoes one ACL grant token per line. Refuses the
-# whole composition on any policy violation.
+# One ACL key grant per line; any policy violation refuses the whole composition.
 # Usage: policy_compose_key_grants <manifest_path> <site_id> [service] [ecosystem]
 policy_compose_key_grants() {
     local manifest_path="$1"
@@ -202,9 +150,7 @@ policy_compose_key_grants() {
     local failed=0
     local out=()
 
-    # Two accepted schemas, one policy: geodeploy.yaml declares under a data:
-    # root; service manifests (gnode_services.yaml) declare flat top-level
-    # consumes:/produces: lists. Same interpolation, validation, and deny.
+    # geodeploy.yaml nests under data:; gnode_services.yaml uses top-level consumes:/produces:.
     for yq_path in '.data.consumes.streams' '.data.consumes.keys' \
                    '.data.produces.streams' '.data.produces.keys' \
                    '.consumes' '.produces'; do
@@ -219,10 +165,7 @@ policy_compose_key_grants() {
         done < <(policy_read_patterns "$manifest_path" "$yq_path")
     done
 
-    # Optional well-known grants if requested via the manifest: the service's own
-    # gnode namespace, read-only on its constellation's one topology, write on
-    # its own heartbeat key. The legacy untagged/{default} families stay only for
-    # the geodineum constellation, until the keys retire (SPEC §9).
+    # data.ecosystem_well_known: own gnode namespace, read-only topology, own heartbeat key.
     if [[ "$(yq eval '.data.ecosystem_well_known // false' "$manifest_path" 2>/dev/null)" == "true" ]]; then
         out+=("~{${site_id}}:gnode:*")
         out+=("%R~{${ecosystem}}:gnode:*")
@@ -241,9 +184,7 @@ policy_compose_key_grants() {
     printf '%s\n' "${out[@]}"
 }
 
-# Compose validated, interpolated channel (pub/sub) grants from a manifest.
-# Channels MUST be prefixed with `&` in ACL grammar; manifests declare them
-# that way too, so we forward the prefix.
+# One ACL channel grant (&-prefixed) per line.
 # Usage: policy_compose_channel_grants <manifest_path> <site_id> [service] [ecosystem]
 policy_compose_channel_grants() {
     local manifest_path="$1"
@@ -258,7 +199,6 @@ policy_compose_channel_grants() {
     for yq_path in '.data.consumes.channels' '.data.produces.channels'; do
         while IFS= read -r raw; do
             [[ -n "$raw" ]] || continue
-            # Strip a leading & in the raw pattern; we re-add it after interpolation
             local raw_stripped="${raw#[&]}"
             interp=$(policy_interpolate "$raw_stripped" "$site_id" "$service_name" "$ecosystem")
             if policy_validate_pattern "&${interp}" "$site_id" "$service_name" "$ecosystem"; then
@@ -273,10 +213,7 @@ policy_compose_channel_grants() {
         out+=("&{${ecosystem}}:gnode:broadcast:*")
     fi
 
-    # Contract baseline (gNode-Client COMMAND path): every client publishes
-    # bundle-invalidation events on <site>:events:invalidate (no hash tags on
-    # pub/sub channels). A manifest without a channels section must not strip
-    # this, or every wp-admin save that touches a bundle dies on NOPERM.
+    # Every client publishes bundle invalidations here, whatever its manifest declares.
     out+=("&${site_id}:events:invalidate")
 
     if [[ $failed -gt 0 ]]; then
@@ -287,11 +224,8 @@ policy_compose_channel_grants() {
     printf '%s\n' "${out[@]}"
 }
 
-# ---- Convenience: does the manifest have a usable data section? -----------
+# ---- Does the manifest declare any stream, key or channel? -----------------
 
-# Returns 0 if the manifest declares at least one stream/key/channel anywhere
-# in data.consumes or data.produces. Used to decide whether to engage the
-# manifest-driven flow at all.
 # Usage: policy_manifest_has_data <manifest_path>
 policy_manifest_has_data() {
     local manifest_path="$1"

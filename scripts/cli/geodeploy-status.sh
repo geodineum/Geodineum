@@ -1,8 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Standard handler preamble: source cli-helpers.sh from the canonical search
-# path. Falls back to the in-repo location for dev/uninstalled runs.
+# cli-helpers.sh: installed copy first, then the in-repo one.
 source "${GEODINEUM_LIB:-/usr/local/lib/geodineum}/cli-helpers.sh" 2>/dev/null \
     || source "${GEODINEUM_ROOT:-/opt/geodineum}/Geodineum/lib/cli-helpers.sh" 2>/dev/null \
     || { SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$(dirname "$(dirname "$SCRIPT_DIR")")/lib/cli-helpers.sh"; }

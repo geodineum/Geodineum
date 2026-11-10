@@ -21,14 +21,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/lib"
 
-# Logging/color helpers (log_error, log_info, …) are used by built-in commands
-# that run BEFORE any per-branch `source common.sh`. Load them once up front so
-# those call sites never hit "log_error: command not found".
+# Logging helpers for commands that run before any per-command source of common.sh
 [[ -r "${LIB_DIR}/common.sh" ]] && source "${LIB_DIR}/common.sh"
 
-# Load ecosystem config via the canonical loader (soft-load: CLI must run
-# on hosts without /etc/geodineum/ for `geodineum --help`, status checks,
-# pre-install workflows). Subcommands needing ValKey re-load strictly.
+# Soft-load: --help and pre-install commands run without /etc/geodineum.
 GEODINEUM_LIB="${GEODINEUM_LIB:-/usr/local/lib/geodineum}"
 if [[ -r "${GEODINEUM_LIB}/bootstrap-loader.sh" ]]; then
     # shellcheck source=/usr/local/lib/geodineum/bootstrap-loader.sh
@@ -40,12 +36,7 @@ fi
 # CLI Manifest Discovery
 # =============================================================================
 
-# Resolve yq even under sudo. The operator's yq often lives in ~/bin or
-# ~/.local/bin, which are NOT in root's secure_path — so `sudo geodineum <cmd>`
-# would find no yq, discover_manifest_commands would register ZERO commands, and
-# every requires_sudo manifest command (topology, daemon *, …) would fail with a
-# misleading "Unknown command". Prepend yq's directory to PATH from a robust set
-# of locations (incl. the invoking/deploy user's home) before probing.
+# Under sudo, root's secure_path may miss the operator's yq; without it no manifest command loads.
 if ! command -v yq &>/dev/null; then
     _yq_user="${SUDO_USER:-${DEPLOY_USER:-}}"
     if [[ -z "$_yq_user" && -r /etc/geodineum/deploy.env ]]; then
@@ -81,11 +72,7 @@ discover_manifest_commands() {
     local root="${GEODINEUM_ROOT:-/opt/geodineum}"
     local manifest
 
-    # Scan two depths so components can ship their own bundled services:
-    #   ${root}/<comp>/geodeploy.yaml                     — component itself
-    #   ${root}/<comp>/services/<svc>/geodeploy.yaml      — bundled services
-    # The hello-world and gmath demos live at the nested depth as part of
-    # the Geodineum repo's services/ directory.
+    # Components may bundle services under <comp>/services/<svc>/.
     for manifest in "${root}"/*/geodeploy.yaml "${root}"/pro/*/*/geodeploy.yaml "${root}"/*/services/*/geodeploy.yaml; do
         [[ -f "$manifest" ]] || continue
 
@@ -99,11 +86,7 @@ discover_manifest_commands() {
         local line
         while IFS= read -r line; do
             [[ -n "$line" ]] || continue
-            # Split on tab WITHOUT collapsing empty fields. IFS=$'\t' is
-            # whitespace, so `read` merges consecutive tabs — an empty optional
-            # field (e.g. args) then shifts every later column left and blanks
-            # the category (everything fell back to "Component"). Translate tabs
-            # to a non-whitespace Unit Separator first; read preserves empties.
+            # read merges consecutive tabs; a non-whitespace separator keeps empty fields.
             local rec="${line//$'\t'/$'\x1f'}"
             local name handler desc args req_sudo category fallback
             IFS=$'\x1f' read -r name handler desc args req_sudo category fallback <<< "$rec"
@@ -115,8 +98,7 @@ discover_manifest_commands() {
             CMD_SUDO["$name"]="${req_sudo:-false}"
             CMD_CAT["$name"]="${category:-Component}"
             CMD_FALLBACK["$name"]="${fallback:-}"
-            # A command named "<component> status" is that component's status:
-            # operators reach it as `geodineum status <component>`.
+            # "<component> status" is reached as `geodineum status <component>`.
             [[ "$name" =~ ^([a-z0-9_-]+)\ status$ ]] && CMD_STATUS["${BASH_REMATCH[1]}"]="$name"
         done < <(yq eval '.cli.commands[] | [.name, .handler, .description // "", .args // "", .requires_sudo // "false", .category // "Component", .fallback // ""] | @tsv' "$manifest" 2>/dev/null)
     done
@@ -176,7 +158,6 @@ _exec_handler() {
     local default_args="${CMD_ARGS[$cmd_key]}"
     local fallback_rel="${CMD_FALLBACK[$cmd_key]:-}"
 
-    # No fallback declared → keep the `exec` fast-path (no extra fork).
     if [[ -z "$fallback_rel" ]]; then
         if [[ -n "$default_args" ]]; then
             # shellcheck disable=SC2086
@@ -186,8 +167,7 @@ _exec_handler() {
         fi
     fi
 
-    # Fallback declared → run primary, capture exit, exec fallback on failure.
-    # Uses cli-helpers' with_fallback semantics inline (no extra source).
+    # Run the handler; exec the declared fallback if it fails.
     local fallback_path="${CMD_ROOT[$cmd_key]}/${fallback_rel}"
     if [[ -n "$default_args" ]]; then
         # shellcheck disable=SC2086
@@ -217,7 +197,7 @@ _exec_handler() {
 # =============================================================================
 
 banner() {
-    # The box logo is suppressed when the iris session banner already printed.
+    # Skipped when the session banner already printed.
     [[ "${_IRIS_SHOWN:-0}" == 1 ]] && return 0
     echo ""
     echo -e "\033[1;33m    ╔═════════════════════════════════════════════════╗\033[0m"
@@ -230,7 +210,7 @@ banner() {
 }
 
 # =============================================================================
-# Iris session banner — the six-fold mark, shown once per interactive session.
+# Session banner, shown once per interactive session
 # =============================================================================
 
 _iris_color_tier() {
@@ -388,7 +368,6 @@ version() {
     echo "geodineum ${GEODINEUM_VERSION}"
 }
 
-# Also accessible as a variable for templates/markers
 GEODINEUM_VERSION="0.2.0"
 
 # =============================================================================
@@ -398,7 +377,6 @@ GEODINEUM_VERSION="0.2.0"
 main() {
     maybe_session_banner || true
 
-    # No args → show help
     if [[ $# -eq 0 ]]; then
         usage
         exit 0
@@ -496,8 +474,7 @@ main() {
             cmd_harden "$@"
             ;;
         status)
-            # The one status route. The constellation view is gNode's manifest
-            # command; components, configuration and visitors route from here.
+            # The constellation view is gNode's manifest command; the rest routes here.
             case "${1:-}" in
                 --config)
                     shift; source "${LIB_DIR}/common.sh"; cmd_status_config "$@" ;;
@@ -505,8 +482,7 @@ main() {
                     shift; source "${LIB_DIR}/common.sh"; cmd_visitors "$@" ;;
                 *)
                     if [[ -n "${1:-}" && -n "${CMD_STATUS[$1]+x}" ]]; then
-                        # A component's own status; a component that is also a registered
-                        # entity (gflow, gschedule) gets its topology view after it.
+                        # A component that is also a registered entity gets its topology view too.
                         local _comp="$1" _rc=0; shift
                         ( _exec_handler "${CMD_STATUS[$_comp]}" "$@" ) || _rc=$?
                         if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${CMD_HANDLER[status]+x}" && $# -eq 0 ]]; then
@@ -534,14 +510,10 @@ main() {
             cmd_wp "$@"
             ;;
         install)
-            # Delegate to existing install.sh
             exec "${SCRIPT_DIR}/install.sh" "$@"
             ;;
         service)
-            # Per-service install/uninstall/health (the install section of
-            # the manifest contract). Distinct from `install` above, which is the
-            # Geodineum-wide installer. Operates on user-contributed services
-            # whose geodeploy.yaml declares install: / uninstall: sections.
+            # Services whose geodeploy.yaml declares install:/uninstall: sections
             if [[ $# -eq 0 ]]; then
                 cat >&2 <<USAGE
 Usage: geodineum service <subcommand> [args]
@@ -613,9 +585,6 @@ USAGE
                     service_check_prerequisites "$1"
                     ;;
                 list)
-                    # List services with install: sections. Scans two depths to
-                    # match discover_manifest_commands: component-level + bundled
-                    # services under ${root}/<comp>/services/<svc>/.
                     local _root="${GEODINEUM_ROOT:-/opt/geodineum}"
                     local _found=0
                     for _mf in "${_root}"/*/geodeploy.yaml "${_root}"/*/services/*/geodeploy.yaml; do
@@ -638,7 +607,6 @@ USAGE
             esac
             ;;
         uninstall)
-            # Dispatcher to uninstall.sh (deletes by default; --dry-run previews).
             if [[ ! -x "${SCRIPT_DIR}/uninstall.sh" ]]; then
                 echo "Error: uninstall.sh not found at ${SCRIPT_DIR}/uninstall.sh" >&2
                 exit 1
@@ -646,10 +614,6 @@ USAGE
             exec "${SCRIPT_DIR}/uninstall.sh" "$@"
             ;;
         backup)
-            # Dispatcher to BAK/scripts/backup-valkey.sh.
-            # Looks up the BAK install dir relative to SCRIPT_DIR (geodineum
-            # binary lives at /opt/geodineum/Geodineum/geodineum; BAK is at
-            # /opt/geodineum/Geodineum-BAK/).
             local _bak_script="${SCRIPT_DIR}/../Geodineum-BAK/scripts/backup-valkey.sh"
             if [[ ! -x "$_bak_script" ]]; then
                 echo "Error: backup script not found at ${_bak_script}" >&2
@@ -659,11 +623,7 @@ USAGE
             exec "$_bak_script" "$@"
             ;;
         schema)
-            # SchemasAdmin enumeration via valkey-cli (the daemon publishes
-            # config_schema at startup; this surfaces it).
-            # valkey-cli is the canonical tool; redis-cli works as a
-            # compat fallback (Phase 4 installs a symlink) but the user-
-            # facing tool name should be the real one.
+            # The daemon publishes its config_schema entries at startup.
             if [[ $# -eq 0 ]]; then
                 echo "Usage: geodineum schema <list|show> [extension_id]" >&2
                 exit 1
@@ -747,10 +707,7 @@ USAGE
 # =============================================================================
 # Validate command — check a geodeploy.yaml manifest against the canonical schema
 # =============================================================================
-# Uses python3 + jsonschema for full JSON Schema Draft 2020-12 validation.
-# Schema lives at $GEODINEUM_ROOT/Geodineum/schemas/geodeploy-manifest.schema.yaml.
-# Accepts one or more paths, or --all to scan every geodeploy.yaml under the
-# install root. Exits 0 if all valid, 1 on first failure, 2 on usage error.
+# Exits 0 if all are valid, 1 if any fails, 2 on usage error.
 
 cmd_validate() {
     local schema_path="${GEODINEUM_SCHEMA_PATH:-${GEODINEUM_ROOT:-/opt/geodineum}/Geodineum/schemas/geodeploy-manifest.schema.yaml}"
@@ -810,8 +767,6 @@ EOF
         exit 1
     fi
 
-    # Capture pass/fail across all manifests so we report the full picture
-    # rather than stopping at the first failure (helps with --all).
     local pass=0 fail=0
     local m
     for m in "${manifests[@]}"; do
@@ -871,10 +826,7 @@ PYEOF
 # =============================================================================
 # Manifest registry — publish + describe
 # =============================================================================
-# Reads every $GEODINEUM_ROOT/*/geodeploy.yaml, resolves explicit values vs.
-# convention defaults, and writes a single HSET per service to ValKey
-# (`geodineum:registry:<name>`). Downstream consumers (describe, logs, BAK)
-# read from the registry instead of re-parsing YAML.
+# One ValKey hash per service (geodineum:registry:<name>), read by describe and logs.
 
 cmd_manifest_sync() {
     while [[ $# -gt 0 ]]; do
@@ -937,18 +889,12 @@ EOF
         exit 2
     fi
 
-    # Try registry first. `|| true` because under set -e the cmd-substitution's
-    # exit status would terminate the script (manifest_describe_raw returns 1
-    # when ValKey is unreachable, which is a normal "use the fallback" state).
+    # Unreachable ValKey is not an error: the manifest file is the fallback.
     local raw
     raw=$(manifest_describe_raw "$svc") || true
     local from="registry"
 
     if [[ -z "$raw" ]]; then
-        # Fallback: parse the manifest file directly. Search the same two
-        # depths the dispatcher discovers:
-        #   ${root}/<name>/geodeploy.yaml
-        #   ${root}/<comp>/services/<name>/geodeploy.yaml
         local _gr="${GEODINEUM_ROOT:-/opt/geodineum}"
         local manifest_path=""
         local _cand
@@ -979,8 +925,7 @@ EOF
         from="file"
     fi
 
-    # Render the registry hash (key/value pairs on alternating lines) as a
-    # human-readable summary grouped by conceptual layer.
+    # Keys and values arrive on alternating lines.
     declare -A R=()
     local k=""
     while IFS= read -r line; do
@@ -1016,7 +961,7 @@ EOF
 }
 
 # =============================================================================
-# Status command (inline — simple wrapper)
+# Status --config command
 # =============================================================================
 
 cmd_status_config() {
@@ -1040,7 +985,6 @@ cmd_status_config() {
         esac
     done
 
-    # Find validate script
     local validate_script=""
     for candidate in \
         "${GNODE_SCRIPTS}/validate-geodineum-config.sh" \
@@ -1057,7 +1001,6 @@ cmd_status_config() {
         exit 1
     fi
 
-    # Build args
     [[ "$verbose" == "true" ]] && args+=(--verbose)
     [[ "$json" == "true" ]] && args+=(--json)
     [[ "$fix" == "true" ]] && args+=(--fix)
@@ -1069,11 +1012,7 @@ cmd_status_config() {
 # =============================================================================
 # Visitors command — per-site visitor counts from the beacon-fed aggregates
 # =============================================================================
-# One no-writes FCALL (GNODE_ANALYTICS_SUMMARY) per site over the last 30 UTC
-# days; today/7d/30d are folded from its daily[] array. Uses each site's OWN
-# credential (the keys are {site}:* — no admin surface involved), so it needs
-# root to read the password files. Visitor hashes rotate daily by design, so
-# week/month figures are sums of daily uniques, not cross-day uniques.
+# 7d/30d sum daily uniques: visitor hashes rotate daily.
 
 cmd_visitors() {
     local site="" json_mode=false compact=false
@@ -1099,15 +1038,8 @@ cmd_visitors() {
         local cli="${GNODE_SCRIPTS}/valkey-cli-secure.sh"
         [[ -x "$cli" ]] || cli="${GEODINEUM_ROOT}/gNode/scripts/valkey-cli-secure.sh"
         if [[ -x "$cli" ]]; then
-            # The wrapper reports auth failures on stdout, so 2>/dev/null does
-            # not filter them and "NOAUTH Authentication required." arrived here
-            # as a one-element site list: the empty-check passed, every lookup
-            # then missed, and the command blamed the credentials. Keep only
-            # well-formed site ids, and say what the registry actually replied.
+            # Auth errors arrive on stdout: keep only well-formed site ids.
             local registry_raw
-            # || true: the wrapper exits non-zero when it cannot authenticate,
-            # and under `set -e` a bare assignment from a failing command
-            # substitution aborts the whole script before we can report why.
             registry_raw=$("$cli" SMEMBERS "gnode:sites:registry" 2>&1) || true
             mapfile -t sites < <(printf '%s\n' "$registry_raw" | grep -E '^[a-z0-9._-]+$' | sort)
             if [[ ${#sites[@]} -eq 0 && -n "$registry_raw" ]]; then
@@ -1173,8 +1105,6 @@ print(f"{v1} {p1} {v7} {p7} {v30} {p30}")' <<< "$raw") || { parse_err=$((parse_e
         echo "}"
     else
         if [[ $shown -eq 0 ]]; then
-            # One line per distinct cause. Collapsing these into a single
-            # message named the one failure that was not happening.
             [[ $no_cred -gt 0 ]] && echo -e "  ${DIM}${no_cred} site(s): credential unreadable (run with sudo)${NC}"
             [[ $call_err -gt 0 ]] && echo -e "  ${DIM}${call_err} site(s): GNODE_ANALYTICS_SUMMARY returned an error${NC}"
             [[ $parse_err -gt 0 ]] && echo -e "  ${DIM}${parse_err} site(s): summary was not parseable JSON${NC}"
@@ -1263,7 +1193,6 @@ cmd_constellation() {
     local action="${1:-}"
     shift 2>/dev/null || true
 
-    # Locate constellation setup script (gNode infrastructure)
     local vp_script=""
     for candidate in \
         "${GNODE_SCRIPTS}/constellation-setup.sh"; do
@@ -1294,13 +1223,11 @@ cmd_constellation() {
             ;;
 
         close)
-            # Tear down VPN, revert to single-node
             require_sudo "Closing constellation"
 
             if [[ -n "$vp_script" ]]; then
                 "$vp_script" --disable
             else
-                # Fallback: just rebind ValKey to localhost
                 local valkey_conf="${GEODINEUM_CONFIG_ROOT}/valkey/valkey-gnode.conf"
                 [[ ! -f "$valkey_conf" ]] && valkey_conf="/etc/valkey/valkey-gnode.conf"
                 if [[ -f "$valkey_conf" ]]; then
@@ -1324,7 +1251,6 @@ cmd_constellation() {
             ;;
 
         join-replica)
-            # Configure local ValKey as a read replica of the constellation master
             require_sudo "Configuring ValKey replica"
 
             local replica_script="${GNODE_PATH}/scripts/setup-valkey-replica.sh"
@@ -1376,7 +1302,6 @@ cmd_constellation() {
             ;;
 
         leave-replica)
-            # Revert from replica back to standalone
             require_sudo "Removing replica configuration"
 
             local replica_script="${GNODE_PATH}/scripts/setup-valkey-replica.sh"
@@ -1463,7 +1388,6 @@ cmd_update() {
 
     log_step "Updating Geodineum Components"
 
-    # Map of component names to directory names
     local -A COMP_DIRS=(
         [gnode-daemon]="gNode"
         [gnode-client]="gNode-Client"
@@ -1478,7 +1402,6 @@ cmd_update() {
     local updated=0
     local failed=0
 
-    # Resolve the deploy user (for running git as the correct user)
     local deploy_user="${DEPLOY_USER:-}"
     if [[ -z "$deploy_user" ]] && [[ -r /etc/geodineum/deploy.env ]]; then
         deploy_user=$(grep '^DEPLOY_USER=' /etc/geodineum/deploy.env 2>/dev/null | cut -d= -f2)
@@ -1487,17 +1410,14 @@ cmd_update() {
     local deploy_home
     deploy_home=$(getent passwd "$deploy_user" 2>/dev/null | cut -d: -f6)
 
-    # Fix ownership + remote URLs in one pass
     for comp in "${!COMP_DIRS[@]}"; do
         local dir="${GEODINEUM_ROOT}/${COMP_DIRS[$comp]}"
         [[ -d "${dir}/.git" ]] || continue
 
-        # Fix ownership so git can write (deploy_user owns all repos;
-        # group is set correctly in the post-update fixup below)
+        # Groups are set after the update
         chown -R "${deploy_user}" "$dir" 2>/dev/null || true
         git config --global --add safe.directory "$dir" 2>/dev/null || true
 
-        # Fix github-deploy → github.com remote if needed
         local old_url
         old_url=$(git -C "$dir" remote get-url origin 2>/dev/null || echo "")
         local new_url
@@ -1510,23 +1430,20 @@ cmd_update() {
     for comp in "${!COMP_DIRS[@]}"; do
         local dir="${GEODINEUM_ROOT}/${COMP_DIRS[$comp]}"
 
-        # Skip if targeting a specific component
         if [[ -n "$target_component" ]] && [[ "$comp" != "$target_component" ]]; then
             continue
         fi
 
-        # Skip if not installed
         if [[ ! -d "${dir}/.git" ]]; then
             continue
         fi
 
         log_info "Updating ${comp}"
 
-        # Detect current branch
         local branch
         branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
-        # Fetch + reset as the deploy user (has the SSH key)
+        # As the deploy user, who holds the SSH key
         local git_ssh="ssh -F ${deploy_home}/.ssh/config -o StrictHostKeyChecking=accept-new"
         if sudo -u "$deploy_user" HOME="$deploy_home" GIT_SSH_COMMAND="$git_ssh" \
             git -C "$dir" fetch origin "$branch" 2>/dev/null && \
@@ -1541,7 +1458,6 @@ cmd_update() {
             failed=$((failed + 1))
         fi
 
-        # Post-update build steps
         if [[ "$skip_build" != "true" ]]; then
             case "$comp" in
                 gnode-daemon)
@@ -1563,7 +1479,6 @@ cmd_update() {
         fi
     done
 
-    # Reload Lua functions if daemon was updated
     if [[ "$skip_build" != "true" ]] && [[ -z "$target_component" || "$target_component" == "gnode-daemon" ]]; then
         local lua_script="${GNODE_SCRIPTS}/load-valkey-functions.sh"
         if [[ -x "$lua_script" ]]; then
@@ -1572,8 +1487,6 @@ cmd_update() {
         fi
     fi
 
-    # Fix ownership per repo type. PHP repos need www-data group so
-    # Apache/PHP-FPM can read them. Infrastructure repos need gnode group.
     if [[ $updated -gt 0 ]]; then
         log_info "Fixing ownership..."
         for comp in "${!COMP_DIRS[@]}"; do
@@ -1591,7 +1504,7 @@ cmd_update() {
                     ;;
             esac
         done
-        # Install root must be world-traversable (www-data follows symlinks into it)
+        # www-data follows symlinks into the install root
         chmod 755 "$GEODINEUM_ROOT"
         log_success "Ownership set (PHP:www-data, infra:gnode, installer:geodineum)"
     fi
@@ -1599,7 +1512,6 @@ cmd_update() {
     echo ""
     log_info "Update complete: ${updated} updated, ${failed} failed"
 
-    # Re-harden after update (new files may lack web-deny rules)
     if [[ $updated -gt 0 ]]; then
         log_info "Re-deploying web-deny rules..."
         harden_ecosystem_dirs >/dev/null 2>&1
@@ -1632,10 +1544,7 @@ _wp_resolve_root() {
     return 1
 }
 
-# Build the usable wp-login URL. Sites harden wp-login.php behind a secret query
-# key via .htaccess (RewriteCond %{QUERY_STRING} !k=<hex>) — without it a GET to
-# wp-login.php is 403. Extract that key (whatever its param name) and append it,
-# so the printed URL actually opens the login form. Falls back to /wp-admin/.
+# Login URL including the secret query key that .htaccess requires for wp-login.php
 _wp_login_url() {
     local root="$1" domain="$2" qs=""
     if [[ -r "${root}/.htaccess" ]]; then
@@ -1650,10 +1559,6 @@ _wp_login_url() {
 }
 
 cmd_wp() {
-    # Resolve the site from (1) an explicit first arg that names a real site,
-    # else (2) the current directory if it sits under /var/www/<domain>. This
-    # lets `cd /var/www/example.com && geodineum wp plugin list` work while
-    # keeping the legacy `geodineum wp <site_id> <cmd>` form.
     local site_id="" wp_root=""
     if [[ -n "${1:-}" ]] && wp_root="$(_wp_resolve_root "$1")"; then
         site_id="$(echo "$1" | sed 's/\./_/g')"
@@ -1687,10 +1592,7 @@ cmd_wp() {
         exit 1
     fi
 
-    # Inject the per-site ValKey credential so gCore boots gNode-connected
-    # (the web user is in geodineum-web and can read the cred). Without this,
-    # wp-cli has no SERVER_NAME to resolve a cred by, and gCore degrades to
-    # legacy/no-gNode mode. Skip the env if the site has no client cred.
+    # wp-cli has no SERVER_NAME, so gCore needs the site's ValKey credential passed in.
     local pw_file="${GEODINEUM_CREDENTIALS_DIR:-/etc/geodineum/credentials}/valkey_client_${site_id}.password"
     local -a wp_env=()
     if [[ -e "$pw_file" ]]; then
@@ -1699,7 +1601,6 @@ cmd_wp() {
 
     local subcmd="${1:-}"
 
-    # Shortcut: admin list → user list --role=administrator
     if [[ "$subcmd" == "admin" ]]; then
         shift
         local admin_action="${1:-login}"
@@ -1707,9 +1608,6 @@ cmd_wp() {
 
         case "$admin_action" in
             login|info)
-                # Read-only: WHO can log in + WHERE. Passwords are one-way
-                # hashed in WordPress and cannot be retrieved — `admin reset`
-                # is the way to obtain a usable credential.
                 echo "  Site:   ${domain}"
                 echo "  Login:  $(_wp_login_url "$wp_root" "$domain")"
                 echo "  Administrators:"
@@ -1724,9 +1622,6 @@ cmd_wp() {
                     --fields=ID,user_login,user_email,user_registered --path="$wp_root" "$@"
                 ;;
             login-link|magic)
-                # Mint a one-time magic-login URL — logs the admin in with NO
-                # password change and bypasses the wp-login secret-key gate.
-                # Redeemed by the gcore-mu handler. No ValKey needed (pure WP).
                 local ll_user="${1:-}"
                 sudo -u www-data env GCORE_LL_USER="$ll_user" wp eval '
                     $u = getenv("GCORE_LL_USER");
@@ -1769,7 +1664,6 @@ cmd_wp() {
         return
     fi
 
-    # Passthrough: run wp-cli with resolved path
     sudo -u www-data "${wp_env[@]}" wp --path="$wp_root" "$@"
 }
 
@@ -1816,10 +1710,7 @@ cmd_logs() {
     local journal_args=("--no-pager" "-n" "$lines")
     [[ "$follow" == "true" ]] && journal_args+=("-f")
 
-    # Manifest-registry first: if `service` is a registered manifest service,
-    # use its resolved log_journald or log_path. This lets any manifest-driven
-    # service surface its logs through `geodineum logs <svc>` without being
-    # added to the hardcoded case below.
+    # A manifest-registered service's own log comes before the built-ins.
     if [[ -f "${LIB_DIR}/manifest-registry.sh" ]]; then
         # shellcheck source=lib/manifest-registry.sh
         source "${LIB_DIR}/manifest-registry.sh"
@@ -1835,7 +1726,6 @@ cmd_logs() {
                 exec tail -n "$lines" "$reg_path"
             fi
         fi
-        # Empty registry result → fall through to built-in case.
     fi
 
     case "$service" in
