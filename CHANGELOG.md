@@ -12,3 +12,19 @@ All notable changes to this project are documented here. The format follows Keep
 - Generic probe-gated heartbeat wrapper with units; the http probe accepts `http:<url>` and bare URLs.
 - Registration recipes rewritten for the one topology.
 
+
+### Removed
+
+- `install.sh --constellation` and `--theme-path`, which had no effect; `uninstall.sh --commit` and `--force`, which did nothing.
+- `components.yaml`, which nothing read; the unused config, geodeploy and site templates.
+- The CLI's notices for renamed commands.
+
+### Changed
+
+- COMMS gets a narrower ValKey grant: no command streams, no conversation or inference keys.
+- The account watch ignores WireGuard's per-boot ports, keeps its digest on the node, and needs `--alert-site`.
+- One permission model (`SECURITY.md`) and one CLI reference (`README_CLI.md`).
+
+### Fixed
+
+- A failed install removes the repositories it cloned.
