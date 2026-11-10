@@ -1978,7 +1978,7 @@ install_valkey_from_source() {
 
         cat > /etc/valkey/valkey.conf <<'VALKEY_CONF_EOF'
 # Geodineum-managed Valkey config (source build).
-# Port 47445 = the canonical Geodineum port (see CH1_DASHBOARD_PRIMER).
+# Port 47445 = the canonical Geodineum port.
 port 47445
 bind 127.0.0.1 ::1
 protected-mode yes
@@ -1997,10 +1997,7 @@ VALKEY_CONF_EOF
 [Unit]
 Description=Valkey In-Memory Data Store (Geodineum / gNode)
 After=network.target
-# Fail-fast cascade limit: if the service fails 3 times within 60s,
-# systemd stops retrying. Prevents the "100 instances in 45 seconds"
-# spiral that bit a worker-host migration when port 47445 was transiently
-# held by a stopping legacy unit.
+# Stop retrying after 3 failures in 60s (e.g. while port 47445 is still held).
 StartLimitIntervalSec=60
 StartLimitBurst=3
 

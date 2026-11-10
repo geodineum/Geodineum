@@ -43,7 +43,6 @@ if [[ "$NODE" =~ ^[a-z0-9][a-z0-9-]{0,62}$ && "$NODE" != localhost && "$NODE" !=
 else
     bad "short hostname '$NODE' is not a usable node id" "sudo hostnamectl set-hostname <lowercase-name> before installing"
 fi
-[[ "$BRANCH" == main ]] && warn "installer is on main" "the one-topology code is on branch one-topology until it merges: git checkout one-topology"
 if [[ -e /etc/geodineum/components/gnode-daemon/daemon.env ]]; then
     warn "a gNode is already installed here (daemon.env exists)" "a re-install keeps its constellation list; this is not a fresh machine"
 else
