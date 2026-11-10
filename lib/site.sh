@@ -266,7 +266,7 @@ cmd_new_site() {
     fi
 
     # =================================================================
-    # Step 3: gShield security hardening
+    # Step 3: security hardening, when a security component is installed
     # =================================================================
 
     local shield_script=""
@@ -280,16 +280,15 @@ cmd_new_site() {
     done
 
     if [[ -n "$shield_script" ]]; then
-        log_step "Step 3/3: Security Hardening (gShield)"
+        log_step "Step 3/3: Security Hardening"
         log_info "Deploying .htaccess rules, upload protection, honeypot traps..."
         "$shield_script" "${GEODINEUM_WEB_ROOT}/${domain}" || {
-            log_warning "gShield deployment had issues — see output above"
+            log_warning "Security hardening had issues — see output above"
             log_info "Deploy manually: sudo ${shield_script} /var/www/${domain}"
         }
     else
         log_step "Step 3/3: Security Hardening (skipped)"
-        log_warning "gShield not installed — deploy security manually"
-        log_info "Install: sudo geodineum install --components gshield"
+        log_info "No security component installed"
     fi
 
     # =================================================================
@@ -345,7 +344,7 @@ Options:
   --help, -h                Show this help message
 
 Examples:
-  sudo geodineum register geodineum.com --new website-wp --theme gcube --env production
+  sudo geodineum register example.com --new website-wp --theme gcube --env production
   sudo geodineum register test.example.com --new website-wp --theme gcube --env testing --no-ssl
   sudo geodineum register myapp.com --new website-wp --owner acme_corp --dry-run
 EOF

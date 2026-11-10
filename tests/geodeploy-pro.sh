@@ -5,7 +5,7 @@ set -uo pipefail
 LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/geodeploy.sh"
 if [[ -n "${1:-}" ]]; then SB="$1"; rm -rf "$SB"; mkdir -p "$SB"
 else SB="$(mktemp -d "${TMPDIR:-/tmp}/geodeploy-pro.XXXXXX")"; trap 'rm -rf "$SB"' EXIT; fi
-mkdir -p "$SB"/{remotes,work,log} "$SB"/root/pro/{gCore,gNode,GSD}
+mkdir -p "$SB"/{remotes,work,log} "$SB"/root/pro/{gCore,gNode,Other}
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 g() { git -c init.defaultBranch=main "$@" >/dev/null 2>&1; }
 
@@ -21,8 +21,8 @@ push() { ( cd "$SB/work/$1" && mkdir -p "$(dirname "$2")" && echo "$3" > "$2" &&
 rmpush() { ( cd "$SB/work/$1" && g rm "$2" && g commit -m "rm $2" && g push origin HEAD:main ); }
 deploy_clone() { g clone "$SB/remotes/$1.git" "$SB/root/pro/$2/$1"; }
 
-mkremote gCore-A; mkremote ext-a ext; mkremote ext-bad ext; mkremote gsd-old; mkremote ext-new ext
-deploy_clone gCore-A gCore; deploy_clone ext-a gNode; deploy_clone ext-bad gNode; deploy_clone gsd-old GSD
+mkremote gCore-A; mkremote ext-a ext; mkremote ext-bad ext; mkremote other-old; mkremote ext-new ext
+deploy_clone gCore-A gCore; deploy_clone ext-a gNode; deploy_clone ext-bad gNode; deploy_clone other-old Other
 
 mkdir -p "$SB/root/gNode/daemon/target/release"
 cat > "$SB/root/gNode/geodeploy.yaml" <<'EOF'
@@ -75,13 +75,13 @@ head_of() { git -C "$1" rev-parse HEAD; }
 run
 check "quiet cycle: rc 0, no actions, no pull"      '[[ $RC == 0 ]] && [[ ! -s $ACT ]] && ! has_log PULL && [[ ! -e $PENDING ]]'
 
-push gCore-A x.php v1; push ext-a functions/a.lua l2; push gsd-old y z
+push gCore-A x.php v1; push ext-a functions/a.lua l2; push other-old y z
 run
 check "php + lua change: pulls both"                'has_log "pro/gCore/gCore-A: PULL" && has_log "pro/gNode/ext-a: PULL"'
 check "php + lua change: one reload each, no build" 'has_act "lua pro/gNode" && has_act "opcache pro/gCore" && no_act build && [[ $RC == 0 ]]'
-check "GSD tree is never pulled"                    '! has_log gsd-old && [[ $(head_of $SB/root/pro/GSD/gsd-old) != $(head_of $SB/work/gsd-old) ]]'
+check "Other tree is never pulled"                    '! has_log other-old && [[ $(head_of $SB/root/pro/Other/other-old) != $(head_of $SB/work/other-old) ]]'
 
-push ext-a CLAUDE.md docs
+push ext-a NOTES.md docs
 run
 check "docs-only extension change: pull, no action" 'has_log "ext-a: PULL" && [[ ! -s $ACT ]] && [[ ! -e $PENDING ]]'
 
@@ -115,7 +115,7 @@ rm "$SB/root/unmanaged-repos.conf"
 run
 check "released again: pulled"                      'has_log "gCore-A: PULL" && has_act "opcache pro/gCore"'
 
-echo retired > "$SB/root/pro/gNode/ext-a/manifest.sig"; push ext-a CLAUDE.md docs2
+echo retired > "$SB/root/pro/gNode/ext-a/manifest.sig"; push ext-a NOTES.md docs2
 run
 check "dirty tree discarded, then pulled"           'has_log "ext-a: DISCARD dirty tree" && has_log "ext-a: PULL" && [[ ! -e $SB/root/pro/gNode/ext-a/manifest.sig ]]'
 
@@ -132,13 +132,13 @@ pro:
   - name: gCore-A
     remote: $SB/remotes/gCore-A.git
     type: gCore
-  - name: gsd-old
-    remote: $SB/remotes/gsd-old.git
-    type: GSD
+  - name: other-old
+    remote: $SB/remotes/other-old.git
+    type: Other
 EOF
 run
 check "manifest clones a missing extension, builds" 'has_log "pro/gNode/ext-new: CLONE success" && has_act "build pro/gNode [scripts/build.sh --force]" && [[ $RC == 0 ]]'
-check "manifest ignores other types"                '! has_log "gsd-old"'
+check "manifest ignores other types"                '! has_log "other-old"'
 
 echo "pro: [unclosed" > "$SB/root/pro/manifest.yaml"
 push gCore-A z.php v1

@@ -8,14 +8,13 @@ set -euo pipefail
 # =============================================================================
 #
 # Single-route config loader for every Geodineum component. Implements the
-# two-tier model documented in REMEDIATION_PLAN_DEEP.md commit 0.1:
+# two-tier model:
 #
 #   Tier 1 (disk):   /etc/geodineum/bootstrap.env
 #                    root:geodineum-bootstrap 0640 (or 0600 root-only).
-#                    Strict-deny posture (operator stance 2026-06-03):
-#                    world-readable + group-writable REJECTED. The
+#                    World-readable or group-writable is REJECTED. The
 #                    geodineum-bootstrap narrow group contains only the
-#                    legitimate readers (www-data, gnode, geodine,
+#                    legitimate readers (www-data, gnode, service users,
 #                    deploy_user).
 #                    Exactly 3 whitelisted keys:
 #                       VALKEY_HOST
@@ -31,7 +30,7 @@ set -euo pipefail
 #   /usr/local/lib/geodineum/bootstrap-loader.sh   (root:root 0755)
 #
 # Dev override:
-#   GEODINEUM_LIB=~/gh/Geodineum-pro/lib
+#   GEODINEUM_LIB=<checkout>/lib
 #
 # Public API (consumer):
 #   load_ecosystem_config            # disk + ValKey, the one-call wrapper
@@ -289,14 +288,8 @@ write_disk_bootstrap() {
         printf 'VALKEY_PORT=%s\n' "$port"
         printf 'VALKEY_CREDS_PATH=%s\n' "$creds"
     } > "$tmp"
-    # Strict-deny posture (operator security stance 2026-06-03):
-    # root owner, narrow geodineum-bootstrap group, mode 0640. NEVER
-    # world-readable. The geodineum-bootstrap group is created at
-    # install time (see install.sh phase_users_groups) and contains ONLY
-    # the legitimate readers (www-data, gnode, deploy user, geodine) —
-    # least-privilege so a compromised web-server account doesn't gain
-    # the broader operator group's access scope.
-    #
+    # root owner, narrow geodineum-bootstrap group, mode 0640, never
+    # world-readable (group created by install.sh phase_users_groups).
     # gNode daemon's ecosystem_config.rs strict-deny check accepts only
     # 0640 or 0600. Any drift here → daemon FATAL at startup.
     chown root:geodineum-bootstrap "$tmp" || {

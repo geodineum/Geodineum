@@ -1,5 +1,5 @@
 #!/bin/bash
-# The estate watch against a fake node: replays the innovagent.net takeover step by step and checks that each
+# The estate watch against a fake node: replays a site takeover step by step and checks that each
 # step is flagged, and that a clean site stays quiet. Needs nothing but python3.
 #   bash tests/estate-watch/run.sh
 set -uo pipefail
@@ -80,12 +80,12 @@ touch "$SITE/wp-includes/extra.php"; o=$(go); has "an extra file in a core folde
 mkdir -p "$D/www/forgotten/wp-includes"; cp "$SITE/wp-config.php" "$D/www/forgotten/"; cp "$SITE/wp-includes/version.php" "$D/www/forgotten/wp-includes/"
 cat > "$D/vh/forgotten.conf" <<E
 <VirtualHost *:443>
-  ServerName innovagent.test
+  ServerName forgotten.test
   DocumentRoot $D/www/forgotten
 </VirtualHost>
 E
-o=$(go); has "a public site nothing maintains (how this one hid)" "innovagent.test: public vhost" "$o"
-echo 'innovagent.test' > "$D/allow"; o=$(go); r=$(grep -F 'public vhost' <<<"$o" || true); [[ -z "$r" ]] && { pass=$((pass+1)); echo "  ok   allowed by name: not an unregistered site"; } || { fail=$((fail+1)); echo "  FAIL allow list"; }
+o=$(go); has "a public site nothing maintains" "forgotten.test: public vhost" "$o"
+echo 'forgotten.test' > "$D/allow"; o=$(go); r=$(grep -F 'public vhost' <<<"$o" || true); [[ -z "$r" ]] && { pass=$((pass+1)); echo "  ok   allowed by name: not an unregistered site"; } || { fail=$((fail+1)); echo "  FAIL allow list"; }
 rm -f "$D/allow" "$D/vh/forgotten.conf"
 
 mkdir -p "$D/www/under/public"

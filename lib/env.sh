@@ -358,8 +358,8 @@ Environments:
   production    Public — gate removed
 
 Examples:
-  sudo geodineum env set geodineum_com staging
-  sudo geodineum env set geodineum_com production
+  sudo geodineum env set example_com staging
+  sudo geodineum env set example_com production
 EOF
                 exit 0
                 ;;
@@ -398,8 +398,7 @@ EOF
 
     # Canonical ValKey site_id + pre-flight: confirm we can reach ValKey BEFORE
     # touching the config, so we never leave the file flipped but the runtime
-    # cache stale (the failure that shipped geodineum.com "production" in the
-    # config while it kept serving the staging viewkey gate).
+    # cache stale.
     local vk_site_id
     vk_site_id=$(valkey_site_id "$site_id")
     if ! valkey_env_reachable "$vk_site_id"; then
@@ -599,8 +598,8 @@ Options:
   --generate, -g    Generate a new viewkey (replaces existing)
 
 Examples:
-  geodineum env viewkey geodineum_com              # Show current
-  sudo geodineum env viewkey geodineum_com --generate  # Generate new
+  geodineum env viewkey example_com              # Show current
+  sudo geodineum env viewkey example_com --generate  # Generate new
 EOF
                 exit 0
                 ;;

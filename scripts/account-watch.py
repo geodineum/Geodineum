@@ -2,13 +2,13 @@
 """Account watch: who can log in, who can become root, what runs as root, who did log in and use sudo.
 
 Nightly as root. The first run records a baseline; afterwards a change is flagged until `--accept` records it.
-Every run also writes a digest of the last day's logins and sudo use, sent with the findings (and on its own with
---digest-always). Findings and digest go through COMMS like the estate watch. Reads only; changes nothing it watches.
+Every run also writes a digest of the last day's logins and sudo use to <state>/digest.json, sent with
+the findings (and on its own with --digest-always). Findings go through COMMS like the estate watch. Reads only.
   python3 -I account-watch.py [--accept] [--no-alert] [--root /]   (--root and the --cmd-* options exist for the tests)
 """
 import argparse, glob, hashlib, json, os, re, socket, subprocess, sys, time
 
-PRIV_GROUPS = ["root", "sudo", "admin", "wheel", "docker", "lxd", "disk", "adm", "shadow", "aesir", "geodineum-creds"]
+PRIV_GROUPS = ["root", "sudo", "admin", "wheel", "docker", "lxd", "disk", "adm", "shadow", "geodineum-creds"]
 NOLOGIN = ("/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false", "")
 
 
@@ -27,6 +27,7 @@ def args_():
     a.add_argument("--cmd-auth", default="journalctl -q --no-pager -o short-iso _COMM=sudo _COMM=sshd --since -{hours}h")
     a.add_argument("--cmd-docker", default="docker image ls --digests --format {{.Repository}}:{{.Tag}}@{{.Digest}}")
     a.add_argument("--cmd-ports", default="ss -H -ltnu")
+    a.add_argument("--cmd-wg", default="wg show all listen-port")
     return a.parse_args()
 
 
@@ -100,7 +101,10 @@ def collect(a):
     s["docker_images"] = lines_of(d) if d is not None else None
     ports = sh(a.cmd_ports, a)
     if ports is not None:
-        s["ports"] = sorted({f"{p[0]} {p[4]}" for p in (l.split() for l in ports.splitlines()) if len(p) >= 5})
+        # WireGuard without a ListenPort takes a new random UDP port at every boot: its own ports are not listeners to watch
+        wg = {l.split()[-1] for l in lines_of(sh(a.cmd_wg, a) or "") if l.split()[-1].isdigit()}
+        s["ports"] = sorted({f"{p[0]} {p[4]}" for p in (l.split() for l in ports.splitlines())
+                             if len(p) >= 5 and not (p[0] == "udp" and p[4].rsplit(":", 1)[-1] in wg)})
     return s
 
 
@@ -216,6 +220,11 @@ def main():
     try:
         now = collect(a)
         findings = []
+        if not first and not state.get("wg_excluded") and now.get("ports") is not None:
+            # a baseline from before WireGuard's own ports were left out still lists them: its UDP ports that are gone now
+            # are dropped once, so the change of rule is not reported as listeners removed
+            state["ports"] = [p for p in (state.get("ports") or []) if not p.startswith("udp ") or p in now["ports"]]
+        state["wg_excluded"] = now["wg_excluded"] = True
         if not first:
             for k, label in (("login_accounts", "account that can log in"), ("groups", "group"), ("sudoers", "sudoers"),
                              ("ssh_keys", "ssh key"), ("crontabs", "crontab"), ("units", "systemd unit"),
@@ -254,6 +263,14 @@ def main():
         print("  ..   kept until --accept: what is flagged stays flagged")
     if a.accept:
         findings = []
+    try:
+        # the digest stays on the node, sent or not
+        with open(os.path.join(a.state, "digest.json.tmp"), "w") as o:
+            json.dump({"host": host, "at": int(time.time()), "findings": findings, "lines": lines}, o, indent=1)
+        os.chmod(os.path.join(a.state, "digest.json.tmp"), 0o600)
+        os.replace(os.path.join(a.state, "digest.json.tmp"), os.path.join(a.state, "digest.json"))
+    except OSError as e:
+        print(f"  ..   digest not kept: {e}")
     try:
         alert(a, host, findings, lines, a.state)
     except Exception as e:

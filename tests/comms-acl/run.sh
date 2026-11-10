@@ -10,8 +10,7 @@ valkey-server --port $P --bind 127.0.0.1 --dir "$D" --save '' --requirepass admi
 until valkey-cli -p $P -a admin --no-auth-warning PING 2>/dev/null | grep -F PONG >/dev/null; do :; done
 A() { valkey-cli -p $P -a admin --no-auth-warning "$@"; }
 # the array as install.sh states it, so this test tests what ships
-keys_src="$(awk '/local acl_comms_keys=\(/{f=1;next} f&&/^    \)$/{exit} f' "$HERE/install.sh")"
-eval "keys=($keys_src)"
+mapfile -t keys < <(awk '/local acl_comms_keys=\(/{f=1;next} f&&/^    \)$/{exit} f' "$HERE/install.sh" | grep -v '^[[:space:]]*#' | grep -oE '"[^"[:space:]]+"' | tr -d '"')
 cmds_src="$(awk '/local acl_comms_commands=\(/{f=1;next} f&&/^    \)$/{exit} f' "$HERE/install.sh")"
 eval "cmds=($cmds_src)"
 printf 'secret-comms' > "$D/pw"
@@ -26,23 +25,25 @@ T yes SET "$S:comms:retry:m" x
 T yes HSET "$S:comms:messages:m" a 1
 T yes INCR "$S:comms:stats:addressed:20261107"
 T yes SET "$S:comms:context:x" x
-T yes SET "{geodineum}:gnode:heartbeat:production:comms:aesir" x
+T yes SET "$S:comms:active_context:1" x
+T no HSET "$S:comms:conversation:1" a 1
+T yes SET "{geodineum}:gnode:heartbeat:production:comms:node1" x
 T yes XADD "$S:gnode:receipts:production" '*' a 1
 T yes HSET '{geodineum}:gnode:receipt_pubkeys' k v
-T yes XADD "$S:gnode:unified:production" '*' a 1
-T yes XRANGE "$S:gnode:unified:production" - +
-T yes XREVRANGE "$S:gnode:unified:production" + -
-T yes XLEN "$S:gnode:unified:production"
-T yes SET '{geodine}:gnode:schema:geodineum_comms:outbound_alert' x
-T yes SET 'geodine:gnode:schema:geodineum_comms:outbound_alert' x
-T yes SET '{geodine}:gnode:schema:_index' x
-T yes GET '{geodine}:gnode:schema:gnode_daemon:x'
-T no SET '{geodine}:gnode:schema:gnode_daemon:x' x
+T no XADD "$S:gnode:unified:production" '*' a 1
+T no XRANGE "$S:gnode:unified:production" - +
+T no XREVRANGE "$S:gnode:unified:production" + -
+T no XLEN "$S:gnode:unified:production"
+T yes SET '{example_com}:gnode:schema:geodineum_comms:outbound_alert' x
+T yes SET 'example_com:gnode:schema:geodineum_comms:outbound_alert' x
+T yes SET '{example_com}:gnode:schema:_index' x
+T yes GET '{example_com}:gnode:schema:gnode_daemon:x'
+T no SET '{example_com}:gnode:schema:gnode_daemon:x' x
 T yes GET 'gnode:site:x:meta'
 T yes HGETALL 'gnode:site:x:meta'
-T yes GET "$S:inference:metrics:p"
-T yes LRANGE "$S:inference:history:s" 0 -1
-T yes GET "$S:gnode:pipeline:_index"
+T no GET "$S:inference:metrics:p"
+T no LRANGE "$S:inference:history:s" 0 -1
+T no GET "$S:gnode:pipeline:_index"
 T no DEL "$S:gnode:unified:production"
 T no XTRIM "$S:gnode:unified:production" MAXLEN 0
 T no XDEL "$S:gnode:unified:production" 1-0
@@ -54,9 +55,9 @@ T no SET 'topology:x' x
 T no SET "$S:inference:history:s" x
 T no GET "$S:site:content"
 T no GET "$S:edit:token:x"
-T no GET "{geodineum}:gnode:heartbeat:production:gnode-daemon:aesir"
+T no GET "{geodineum}:gnode:heartbeat:production:gnode-daemon:node1"
 T no SET "{geodineum}:gnode:constellation:entities" x
-T no GET "$S:geodine:history:s"
+T no GET "$S:other:history:s"
 if [[ -x "$BIN" ]]; then
     A XGROUP CREATE "$S:gnode:comms:production" geodineum_comms_dispatch 0 MKSTREAM >/dev/null
     A XADD 'gnode:sites:registry' '*' x 1 >/dev/null 2>&1 || true

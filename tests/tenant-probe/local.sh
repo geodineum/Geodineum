@@ -1,5 +1,5 @@
 #!/bin/bash
-# on aesir (or any dev box), as yourself: the tenant probe's ValKey layer on a throwaway ValKey
+# on a dev box, as yourself: the tenant probe's ValKey layer on a throwaway ValKey
 # (:47998) with two sites shaped like onboarding shapes them. Green first; then one ACL is widened
 # and the probe MUST go red (a probe that cannot fail proves nothing). No sudo, no live keys.
 #   bash tests/tenant-probe/local.sh
@@ -22,7 +22,7 @@ shape() { # <site>: the grant onboard-service.sh composes (own tag, brace-less a
     vk ACL SETUSER "gnode_client_$1" on ">$(<"$W/valkey_client_$1.password")" resetkeys "~{$1}:*" "~$1:*" "%R~{geodineum}:gnode:*" \
         nocommands +xread +xreadgroup +xadd +xack +xclaim +xpending +xinfo +xlen +xtrim +xrange +xrevrange +xgroup +xdel +fcall +fcall_ro +get +set +setex +setnx +del +exists +ttl +expire +mget +mset +incr +decr +incrby +decrby +hget +hset +hgetall +hdel +hexists +hkeys +hvals +hincrby +hmget +hmset +sadd +smembers +sismember +srem +scard +lpush +rpush +lpop +rpop +lrange +llen +lindex +ltrim +zadd +zrange +zrevrange +zrem +zscore +zcard +scan +ping +publish +auth +select +info +multi +exec +discard +time +type +object >/dev/null
 }
-REDISCLI_AUTH="$(<"$W/valkey.password")" valkey-cli --no-auth-warning -p $PORT -x FUNCTION LOAD REPLACE < "${GNODE_FUNCTIONS_DIR:-$HOME/gh/gNode/daemon/functions}/gnode_gcore_config.lua" >/dev/null
+REDISCLI_AUTH="$(<"$W/valkey.password")" valkey-cli --no-auth-warning -p $PORT -x FUNCTION LOAD REPLACE < "${GNODE_FUNCTIONS_DIR:-/opt/geodineum/gNode/daemon/functions}/gnode_gcore_config.lua" >/dev/null
 shape a_nl; shape b_nl
 vk HSET '{a_nl}:site:content' hero.title A >/dev/null; vk HSET '{b_nl}:site:content' hero.title B >/dev/null
 

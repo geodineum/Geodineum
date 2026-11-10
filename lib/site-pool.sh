@@ -1,5 +1,5 @@
 #!/bin/bash
-# One PHP-FPM pool and one Unix user per site (SPEC-SITE-POOLS). Desired state per site lives
+# One PHP-FPM pool and one Unix user per site. Desired state per site lives
 # in ${SITE_POOL_RECORDS}/<site_id>.env; a site without a record keeps the shared www-data pool.
 
 SITE_POOL_RECORDS="${SITE_POOL_RECORDS:-/etc/geodineum/web}"

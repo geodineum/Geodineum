@@ -122,18 +122,11 @@ geodeploy_deploy_pro || { _GD_FAILED_REPOS+=("pro"); geodeploy_log "pro: deploy 
 # =============================================================================
 # Site-local repos (opt-in, never shipped)
 # =============================================================================
-# A deployment that runs repos beyond the public Chapter-1 set (a flagship site
-# theme such as gIris, or GeoV) lists them in an OPTIONAL host-local file,
-# "name|branch" per line ('#' comments allowed). Public installers ship no such
-# file, so CORE_REPOS above is all they ever touch. Extra guard: an entry is
-# deployed ONLY if its repo is already cloned under GEODINEUM_ROOT, so a stale
-# or mistaken line can never make the orchestrator fetch a repo the host has no
-# access to. This is why gIris/GeoV silently dropped out when the monolithic
-# auto-deploy.sh (which hardcoded them) was replaced by this orchestrator.
+# Extra repos of one deployment are listed in an optional host-local file,
+# "name|branch" per line ('#' comments allowed); an entry deploys only if its
+# repo is already cloned under GEODINEUM_ROOT, so nothing new is ever fetched.
 SITE_REPOS_FILE="${GEODINEUM_ROOT}/site-repos.conf"
-# Exists-but-unreadable must be LOUD: a root:root site-repos.conf silently
-# stopped ALL site-repo deploys for a week on one host — the -r guard just
-# skipped the loop. Expected ownership: root:geodineum 640.
+# Exists but unreadable must be loud (expected root:geodineum 640).
 if [[ -f "$SITE_REPOS_FILE" && ! -r "$SITE_REPOS_FILE" ]]; then
     geodeploy_log "ERROR: ${SITE_REPOS_FILE} exists but is NOT readable by the deploy user — site repos are NOT deploying (fix: chown root:geodineum + chmod 640)"
 fi
@@ -191,7 +184,7 @@ sudo chmod 751 "${GEODINEUM_ROOT}/gNode" 2>/dev/null \
 geodeploy_fix_log_perms "/var/log/geodineum" || geodeploy_log "fix_log_perms: FAILED (continuing)"
 
 # Global: harden WordPress site permissions
-# Source: august:www-data 640 (read-only for PHP)
+# Source: <deploy user>:www-data 640 (read-only for PHP)
 # Uploads: www-data:www-data 750 (writable, PHP exec blocked + immutable .htaccess)
 geodeploy_harden_all_wp "/var/www" || geodeploy_log "harden_all_wp: FAILED (continuing)"
 
@@ -203,33 +196,10 @@ geodeploy_assert_git_guards
 # =============================================================================
 # Orchestration coverage — nothing rots unseen
 # =============================================================================
-# A git repo under GEODINEUM_ROOT that is in neither CORE_REPOS nor
-# site-repos.conf is invisible to this script: nothing pulls it, nothing runs
-# geodeploy_fix_binaries over it. gShield sat exactly there for months — four
-# commits behind dev, its cargo binaries stripped of the execute bit by an old
-# sweep, every scheduled scan failing with a misleading "Binary not found",
-# silently withholding both the IP-allowlist self-ban fix and the decide-daemon
-# heartbeat emitter. The comment above records gIris/GeoV having done the same
-# when the monolithic auto-deploy.sh was replaced. Nothing in the design
-# noticed any of it; a person did, eventually.
-#
-# So the rule is now explicit: every repo here is MANAGED, or it declares
-# itself unmanaged. Two places to declare it, because one is not enough:
-#
-#   * `unmanaged: true` in the repo's own geodeploy.yaml — travels with the
-#     repo, so a fresh host inherits the reasoning instead of re-deriving it.
-#   * a name per line in ${GEODINEUM_ROOT}/unmanaged-repos.conf — host-local.
-#
-# The second exists because the first cannot bootstrap itself: an unmanaged
-# repo is by definition never pulled, so a marker committed upstream never
-# arrives here on its own. It is also the only option for a repo we do not own
-# and cannot commit to. Anything declared in neither gets named.
-#
-# Once a day, not once a run: this log is capped at GEODEPLOY_LOG_MAX lines and
-# a handful of warnings every five minutes would evict the deploy history the
-# log exists to hold — which is precisely the trade that left the journal
-# useless on 2026-07-24. Daily is frequent enough to catch a rot measured in
-# months.
+# Every git repo under GEODINEUM_ROOT is managed (CORE_REPOS or site-repos.conf)
+# or declares itself unmanaged, by `unmanaged: true` in its geodeploy.yaml or by
+# name in ${GEODINEUM_ROOT}/unmanaged-repos.conf; anything else is named in the
+# log once a day, so the capped log keeps its deploy history.
 _gd_today=$(date '+%Y-%m-%d')
 _gd_cov_stamp="${GEODEPLOY_LOG_DIR}/.coverage-day"
 if [[ "$(cat "$_gd_cov_stamp" 2>/dev/null)" != "$_gd_today" ]]; then
@@ -277,12 +247,7 @@ if [[ "$(cat "$_gd_cov_stamp" 2>/dev/null)" != "$_gd_today" ]]; then
     done
 fi
 
-# What the permission sweeps actually changed this cycle. Silence means the
-# tree was already converged — which, on a healthy host, is every cycle. This
-# replaces sudo's session lines as the record of the sweep's work: those cost
-# ~1,250 journal entries per run to say "nothing had drifted" and held journal
-# retention down to ~15 hours, short enough that the COMMS boot failure of
-# 2026-07-24 had aged out before anyone asked what happened.
+# What the permission sweeps changed this cycle; silence means already converged.
 if (( ${_GD_PERM_FIXES:-0} > 0 )); then
     geodeploy_log "PERMS: ${_GD_PERM_FIXES} path(s) corrected this cycle — e.g. ${_GD_PERM_SAMPLE:-(unsampled)}"
 fi

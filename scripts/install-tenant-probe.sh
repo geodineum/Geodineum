@@ -1,5 +1,5 @@
 #!/bin/bash
-# on aesir, as root: install the nightly tenant probe (scripts/tenant-probe.sh) as a root-owned copy
+# on the master node, as root: install the nightly tenant probe (scripts/tenant-probe.sh) as a root-owned copy
 # under /usr/local/lib/geodineum, with its timer (03:00 UTC). Re-run after changing the probe or lib/site-pool.sh.
 #   sudo bash scripts/install-tenant-probe.sh --alert-site <site with COMMS recipients> [--run-now] [--apply]
 set -euo pipefail
@@ -7,7 +7,7 @@ APPLY=0; NOW=0; ALERT_SITE=""
 while [[ $# -gt 0 ]]; do case "$1" in
     --apply) APPLY=1; shift ;; --run-now) NOW=1; shift ;; --alert-site) ALERT_SITE="$2"; shift 2 ;;
     *) echo "unknown option $1" >&2; exit 2 ;; esac; done
-[[ $EUID -eq 0 ]] || { echo "on aesir: needs root: sudo bash $0 $*" >&2; exit 1; }
+[[ $EUID -eq 0 ]] || { echo "on $(hostname -s): needs root: sudo bash $0 $*" >&2; exit 1; }
 [[ "$ALERT_SITE" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || { echo "--alert-site <site_id> is required (the site whose COMMS recipients get the alert)" >&2; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"; LIB=/usr/local/lib/geodineum; ENVF=/etc/geodineum/tenant-probe.env
 run() { if (( APPLY )); then "$@"; else echo "   WOULD: $*"; fi; }

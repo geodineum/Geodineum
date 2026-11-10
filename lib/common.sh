@@ -796,7 +796,7 @@ render_template() {
     content="${content//\{\{DOMAIN\}\}/${DOMAIN:-}}"
     content="${content//\{\{GCORE_ENTRY\}\}/${GCORE_ENTRY:-/opt/geodineum/gCore/gcore-standalone.php}}"
     content="${content//\{\{PROFILE\}\}/${GEO_PROFILE:-web}}"
-    # The one topology's declaration (SPEC-ONE-TOPOLOGY §10), from the profile + CAP_* words
+    # The one topology's declaration, from the profile + CAP_* words
     local _gnode_block
     _gnode_block="$(gnode_block_yaml "${GEO_PROFILE:-web}" "${SERVICE_ID:-${SERVICE_NAME:-${SITE_ID:-}}}")"
     content="${content//\{\{GNODE_BLOCK\}\}/${_gnode_block}}"
@@ -874,7 +874,7 @@ ledger_file() {   # <id> <class> <path>
 }
 
 # =============================================================================
-# The one topology (SPEC-ONE-TOPOLOGY §10)
+# The one topology
 # =============================================================================
 
 # A registration profile names a shape: web → site (3.1), headless → app (3.2),
@@ -889,7 +889,7 @@ profile_to_shape() {
 
 # The manifest's `gnode:` block: the declaration by name the daemon registers
 # (the daemon codes the words). Axes come from the CAP_* words when set, else
-# the shape's defaults. holds/requires are REACH labels (D8): daemons require
+# the shape's defaults. holds/requires are REACH labels: daemons require
 # `internal` and hold it; sites hold nothing and require nothing.
 # Usage: gnode_block_yaml <profile> <service_id> [constellation]
 gnode_block_yaml() {
@@ -912,7 +912,7 @@ gnode_block_yaml() {
         *)    protocol="${CAP_PROTOCOL:-gnode_stream}"; scope="${CAP_SCOPE:-internal_api}"; auth="${CAP_AUTH:-api_key}"; labels="[internal]"; heartbeat="$id"; domain="${CAP_DOMAIN:-compute}" ;;
     esac
     cat <<EOF
-# The one topology (SPEC-ONE-TOPOLOGY §10): the declaration by name. The daemon
+# The one topology: the declaration by name. The daemon
 # codes the words and refuses one it does not know; the derived slots are its.
 gnode:
   constellation: ${c}

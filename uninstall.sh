@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # =============================================================================
-# Geodineum Uninstall Script (Tier-4 4.1)
+# Geodineum Uninstall Script
 # =============================================================================
 #
 # Symmetric inverse of install.sh's 11-phase flow. LIFO action order:
@@ -100,7 +100,7 @@ INSTALLER_PATHS=(
 # over the hardcoded list — preserves co-located unrelated files.
 MANIFEST_PATH="/etc/geodineum/installed.manifest"
 
-# Systemd units the installer creates (Tier-2 2.8 sandbox-hardened set).
+# Systemd units the installer creates.
 # stop+disable in LIFO order (timers before services they trigger).
 UNINSTALL_UNITS=(
     "valkey-backup.timer"
@@ -653,7 +653,7 @@ phase_opt_geodineum() {
         fi
     done
 
-    # Sweep bootstrap-loader.sh (Tier-1 1.14.f / 1.14.g).
+    # Sweep bootstrap-loader.sh.
     if [[ -d /usr/local/lib/geodineum ]]; then
         do_or_dry "rm -rf /usr/local/lib/geodineum/" /usr/bin/rm -rf /usr/local/lib/geodineum/
     fi

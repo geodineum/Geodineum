@@ -1,5 +1,5 @@
 #!/bin/bash
-# geodineum site pools — close the shared www-data pool once every PHP site runs its own (SPEC-SITE-POOLS P4).
+# geodineum site pools — close the shared www-data pool once every PHP site runs its own.
 set -euo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=../../lib/site-pool.sh

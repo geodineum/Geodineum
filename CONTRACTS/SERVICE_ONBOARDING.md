@@ -58,7 +58,7 @@ profile: service                  # web | headless | service | system | componen
                                   # names the shape when gnode: is absent
 environment: production           # DTAP tier — REQUIRED (flag|manifest|abort)
 
-# The one topology: the declaration by NAME the daemon registers (SPEC-ONE-TOPOLOGY §10).
+# The one topology: the declaration by NAME the daemon registers .
 # The daemon codes the words and refuses one it does not know; derived slots are its.
 gnode:
   constellation: geodineum        # where it registers; {ecosystem} interpolates to it
@@ -243,7 +243,7 @@ keyspace — they ask, the daemon crosses the boundary):
 
 ```bash
 FCALL GNODE_TENANT_LIST_SITES 0 acme
-FCALL_RO GNODE_TOPO_QUERY 1 '{acme}:gnode:constellation' <layer_lo> <layer_hi> '{"facets":{"protocol":["http_rest"]}}' '{"limit":10}'   # one topology (GNODE_TENANT_DISCOVER retired 2026-10-11)
+FCALL_RO GNODE_TOPO_QUERY 1 '{acme}:gnode:constellation' <layer_lo> <layer_hi> '{"facets":{"protocol":["http_rest"]}}' '{"limit":10}'
 ```
 
 Implementation: `gNode/daemon/functions/gnode_site.lua`.

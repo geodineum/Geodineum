@@ -194,8 +194,7 @@ do_apply() {
         for d in sessions tmp cache home; do install -d -m 0700 -o "$U" -g "$U" "$SITE_POOL_STATE/$ID/$d"; done
         install -d -m 2750 -o root -g geodineum "$SITE_POOL_LOGS"
         install -d -m 2750 -o "$U" -g geodineum "$SITE_POOL_LOGS/$ID"
-        # Before 2026-11-01 the state lived under /var/lib/geodineum, whose StateDirectoryMode=0700
-        # (keyspace sampler) reset the traverse ACL every hour.
+        # State under /var/lib/geodineum loses its traverse ACL to a StateDirectoryMode=0700 reset.
         if [[ -d "/var/lib/geodineum/sites/$ID" ]]; then
             rm -rf "/var/lib/geodineum/sites/$ID"
             rmdir /var/lib/geodineum/sites 2>/dev/null || true

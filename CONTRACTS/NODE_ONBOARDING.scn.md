@@ -22,7 +22,7 @@ MASTER-ONLY holds: ValKey admin cred, ACL/peer minting, function-library writes,
 DELEGATED SERVICE: master `geodineum register <n> --new T --env E --node <worker>`
   (mint + composed grants + hand-off print) → worker `geodineum credential add
   --service <n> --auth <printed> --group <printed>`. Taxonomy: [[SERVICE_ONBOARDING]].
-INTERMITTENT NODES ARE FIRST-CLASS (SB-8.85): reclaim on every node, exposure-gated claim,
+INTERMITTENT NODES ARE FIRST-CLASS: reclaim on every node, exposure-gated claim,
   bounded consumers, DELCONSUMER-self on graceful stop. Node loss = throughput cost, never
   correctness. EXPOSURE (willingness, _gh-matched) gates delivery, independent of capability.
 ```

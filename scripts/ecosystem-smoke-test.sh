@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# ecosystem-smoke-test.sh — Geodineum Ch.1 live ecosystem verification
+# ecosystem-smoke-test.sh — Geodineum live ecosystem verification
 # =============================================================================
 # Proves a running install actually works end to end:
 #   L0  ValKey reachable + every ACL identity authenticates (admin, daemon,
@@ -9,7 +9,7 @@
 #   L1  gNode Lua function libraries loaded + read-only functions callable
 #   L2  daemon command dispatch live — real round-trip through the unified
 #       stream (ping/health/version/echo), then `describe` to enumerate the
-#       live command surface and assert the Ch.1 baseline is present and no
+#       live command surface and assert the base command set is present and no
 #       extension commands leaked into a base install
 #   L3  services active + sites serve HTTP
 #

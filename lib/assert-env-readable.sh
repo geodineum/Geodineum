@@ -6,18 +6,8 @@
 # therefore answers the only question that matters: can THIS service, as the
 # identity it will actually run under, read this file?
 #
-# Why this exists. On 2026-07-24 Geodineum-COMMS ran for 20 hours with no
-# Telegram and no email. Nothing was broken in COMMS. A permission sweep had
-# grouped geodineum-comms.env to `geodineum`, a group the geodineum-comms user
-# is not in, so the file was unreadable — and because the unit loads it with
-# `EnvironmentFile=-`, systemd skipped it without a word. The daemon started
-# "successfully" with TELEGRAM_BOT_TOKEN simply absent. There was no error
-# anywhere to find.
-#
-# The `-` is not itself wrong: an env file that is genuinely optional (a
-# deployment using email but not Telegram) should not block startup by being
-# absent. What must never be silent is a file that EXISTS and cannot be read.
-# That is always a misconfiguration, and it is the case this script fails on.
+# `EnvironmentFile=-` skips an unreadable file without a word; an optional file
+# may be absent, but one that EXISTS and cannot be read is a misconfiguration.
 #
 #   absent      -> report and continue (may be deliberate)
 #   unreadable  -> report loudly, exit 1, let Restart= retry and keep saying so

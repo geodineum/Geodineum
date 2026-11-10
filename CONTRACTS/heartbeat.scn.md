@@ -6,10 +6,10 @@
 
 **Value** `{"ts":u64,"pid":u32,"comp":str,"node":str}` — self-describing detached. Daemon adds `la1,cores,mem_used_mb,mem_total_mb` (node authority; additive, readers treat as optional). Consumers: `geodineum status [--json]` ≡ daemon cmd `constellation_status` (same JSON shape).
 
-**node** = identity = `GNODE_NODE_ID` = consumer name = constellation entity id = **short hostname** (first dot-label). NEVER `master` — role ≠ identity; role lives in the node entity's `node_role` axis. Pre-segment failure: all nodes → one key → last-writer-wins → dead daemon hides behind live peer's ts.
+**node** = identity = `GNODE_NODE_ID` = consumer name = constellation entity id = **short hostname** (first dot-label). NEVER `master` — role ≠ identity; role lives in the node entity's `node_role` axis. Without the segment: all nodes → one key → dead daemon hides behind live peer's ts.
 
-**Read** HGETALL `{ns}:gnode:constellation:entities` → node list (no SCAN) → GET per component×env×node → judge by ts ≤75s. READ grant `~{geodineum}:gnode:*` covers all; WRITE needs the family in the WRITER's ACL (comms: `~*:gnode:heartbeat:*` in installer acl_comms_patterns — was missing once, NOPERM'd invisibly). New census row ⇒ `ACL DRYRUN <user> SETEX` first.
+**Read** HGETALL `{ns}:gnode:constellation:entities` → node list (no SCAN) → GET per component×env×node → judge by ts ≤75s. READ grant `~{geodineum}:gnode:*` covers all; WRITE needs the family in the WRITER's ACL (comms: `~*:gnode:heartbeat:*:comms:*` in installer acl_comms_keys). New census row ⇒ `ACL DRYRUN <user> SETEX` first.
 
-**Census** (update WITH form changes, same commit): gnode-daemon Rust `integration/heartbeat.rs` (canonical+tests) · COMMS Rust `main.rs::write_heartbeat` · gSchedule Rust `config.rs::k_heartbeat` · gFlow Node `engine/heartbeat.js` · Geodine PHP `pipeline_runner.php` · gShield Py `gshield-decide.py` · generic Bash `scripts/heartbeat/geodineum-heartbeat.sh` (timer, probe-gated, installed by `register`). Readers: gCore `wp-hooks.php::gcore_fetch_component_health`, gNode `cli/status.sh`.
+**Census** (update WITH form changes, same commit): gnode-daemon Rust `integration/heartbeat.rs` (canonical+tests) · COMMS Rust `main.rs::write_heartbeat` · gSchedule Rust `config.rs::k_heartbeat` · gFlow Node `engine/heartbeat.js` · generic Bash `scripts/heartbeat/geodineum-heartbeat.sh` (timer, probe-gated, installed by `register`). Readers: gCore `wp-hooks.php::gcore_fetch_component_health`, gNode `cli/status.sh`.
 
-5 languages, no shared code → form pinned HERE, per-writer literal tests (≡ field_names discipline).
+3 languages, no shared code → form pinned HERE, per-writer literal tests (≡ field_names discipline).

@@ -559,8 +559,8 @@ main() {
             exec "${SCRIPT_DIR}/install.sh" "$@"
             ;;
         service)
-            # Per-service install/uninstall/health (LAYER_2 of the manifest
-            # contract). Distinct from `install` above, which is the
+            # Per-service install/uninstall/health (the install section of
+            # the manifest contract). Distinct from `install` above, which is the
             # Geodineum-wide installer. Operates on user-contributed services
             # whose geodeploy.yaml declares install: / uninstall: sections.
             if [[ $# -eq 0 ]]; then
@@ -663,7 +663,7 @@ USAGE
             esac
             ;;
         uninstall)
-            # Tier-4 4.5: dispatcher to uninstall.sh (4.1).
+            # Dispatcher to uninstall.sh.
             # Defaults to dry-run; --commit required to actually delete.
             if [[ ! -x "${SCRIPT_DIR}/uninstall.sh" ]]; then
                 echo "Error: uninstall.sh not found at ${SCRIPT_DIR}/uninstall.sh" >&2
@@ -672,7 +672,7 @@ USAGE
             exec "${SCRIPT_DIR}/uninstall.sh" "$@"
             ;;
         backup)
-            # Tier-4 4.5: dispatcher to BAK/scripts/backup-valkey.sh.
+            # Dispatcher to BAK/scripts/backup-valkey.sh.
             # Looks up the BAK install dir relative to SCRIPT_DIR (geodineum
             # binary lives at /opt/geodineum/Geodineum/geodineum; BAK is at
             # /opt/geodineum/Geodineum-BAK/).
@@ -685,8 +685,8 @@ USAGE
             exec "$_bak_script" "$@"
             ;;
         schema)
-            # SchemasAdmin enumeration via valkey-cli (Tier-2 2.9
-            # wired daemon-side config_schema discovery; this surfaces it).
+            # SchemasAdmin enumeration via valkey-cli (the daemon publishes
+            # config_schema at startup; this surfaces it).
             # valkey-cli is the canonical tool; redis-cli works as a
             # compat fallback (Phase 4 installs a symlink) but the user-
             # facing tool name should be the real one.
@@ -1289,7 +1289,7 @@ cmd_constellation() {
     local action="${1:-}"
     shift 2>/dev/null || true
 
-    # Locate constellation setup script (gNode Ch.1 infrastructure)
+    # Locate constellation setup script (gNode infrastructure)
     local vp_script=""
     for candidate in \
         "${GNODE_SCRIPTS}/constellation-setup.sh"; do
@@ -1644,7 +1644,7 @@ cmd_update() {
 # WP command — wrapper around wp-cli with automatic path + user resolution
 # =============================================================================
 
-# Resolve a candidate site token (site_id like geodineum_com, or a domain) to
+# Resolve a candidate site token (site_id like example_com, or a domain) to
 # its /var/www root. Echoes the root and returns 0 if a wp-config is found.
 _wp_resolve_root() {
     local tok="$1" domain candidate
@@ -1678,7 +1678,7 @@ _wp_login_url() {
 cmd_wp() {
     # Resolve the site from (1) an explicit first arg that names a real site,
     # else (2) the current directory if it sits under /var/www/<domain>. This
-    # lets `cd /var/www/geodineum.com && geodineum wp plugin list` work while
+    # lets `cd /var/www/example.com && geodineum wp plugin list` work while
     # keeping the legacy `geodineum wp <site_id> <cmd>` form.
     local site_id="" wp_root=""
     if [[ -n "${1:-}" ]] && wp_root="$(_wp_resolve_root "$1")"; then
@@ -1703,8 +1703,8 @@ cmd_wp() {
         echo "  geodineum wp <site_id> <any wp args>     Passthrough to wp-cli"
         echo ""
         echo "Examples:"
-        echo "  geodineum wp geodineum_com plugin list"
-        echo "  cd /var/www/geodineum.com && geodineum wp option get blogname"
+        echo "  geodineum wp example_com plugin list"
+        echo "  cd /var/www/example.com && geodineum wp option get blogname"
         exit 1
     fi
 

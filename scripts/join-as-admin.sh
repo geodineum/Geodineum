@@ -18,7 +18,7 @@
 # from the first authenticated packet. Pass "-" as the endpoint to add-peer.
 #
 #   on the laptop:  sudo scripts/join-as-admin.sh --master-pubkey "<key>" \
-#                        --master-endpoint "<aesir_public_ip>:51820" --vpn-ip 10.66.0.9
+#                        --master-endpoint "<master_public_ip>:51820" --vpn-ip 10.66.0.9
 #   on the laptop:  sudo scripts/join-as-admin.sh --verify-only
 #
 # Idempotent: every step is a desired-state write, and an existing private key is
@@ -86,7 +86,7 @@ verify() {
         say "last handshake       $(( $(date +%s) - hs ))s ago"
     else
         say "last handshake       NEVER — the master has not accepted this peer"
-        say "                     on aesir: sudo geodineum node add $NODE_NAME roaming --pubkey \"\$(cat $KEY_FILE.pub)\""
+        say "                     on the master: sudo geodineum node add $NODE_NAME roaming --pubkey \"\$(cat $KEY_FILE.pub)\""
         rc=1
     fi
 
@@ -124,8 +124,8 @@ verify() {
 
 [[ "$MODE" == verify ]] && { verify; exit $?; }
 
-[[ -n "$MASTER_PUBKEY"   ]] || die "--master-pubkey is required (on aesir: geodineum constellation status)"
-[[ -n "$MASTER_ENDPOINT" ]] || die "--master-endpoint is required, as <aesir_public_ip>:$WG_PORT"
+[[ -n "$MASTER_PUBKEY"   ]] || die "--master-pubkey is required (on the master: geodineum constellation status)"
+[[ -n "$MASTER_ENDPOINT" ]] || die "--master-endpoint is required, as <master_public_ip>:$WG_PORT"
 [[ -n "$VPN_IP"          ]] || die "--vpn-ip is required; pick a free ${WG_NETWORK}.x the master has not assigned"
 
 # ───────────────────────────────────────────────────── 1. dependencies
@@ -173,13 +173,13 @@ fi
 # ──────────────────────────────────────────────── 3. the master's turn
 hr; echo "on the laptop: 3. membership is granted by the master, never taken"
 echo
-echo "  on aesir:  sudo geodineum node add $NODE_NAME roaming --pubkey \"$PUBKEY\""
+echo "  on the master: sudo geodineum node add $NODE_NAME roaming --pubkey \"$PUBKEY\""
 echo
 say "the trailing \"-\" means roaming: no Endpoint is written for this peer and"
 say "WireGuard learns the address from the first packet this laptop sends."
 echo
 if [[ "$DRY" != "true" ]]; then
-    read -r -p "  press enter once that has run on aesir (ctrl-c to stop here) " _
+    read -r -p "  press enter once that has run on the master (ctrl-c to stop here) " _
 fi
 
 # ────────────────────────────────────────────────────────── 4. tunnel
@@ -187,7 +187,7 @@ hr; echo "on the laptop: 4. the tunnel"
 # Same shape as `constellation-setup.sh --show-config` with two deliberate
 # differences: no ListenPort, because a roaming client wants an ephemeral source
 # port, and AllowedIPs stays the constellation /24 so only estate traffic is
-# tunnelled — a laptop must not route its whole life through aesir.
+# tunnelled — a laptop must not route its whole life through the master.
 if [[ "$DRY" == "true" ]]; then
     say "[dry] would write $CONF_FILE for ${VPN_IP}/24 → ${MASTER_ENDPOINT}"
 else
@@ -226,7 +226,7 @@ elif [[ -x "$CLI_LINK" ]]; then
     say "already present at $CLI_LINK"
 else
     say "not installed. Clone the installer repo on this laptop and re-run with"
-    say "  --cli-from /path/to/Geodineum-pro"
+    say "  --cli-from /path/to/Geodineum"
 fi
 
 # ────────────────────────────────────────────────────── 6. credential
@@ -242,7 +242,7 @@ echo
 say "a read-only identity is enough to operate from here. Copy the dashboard"
 say "credential across yourself — this script never mints or prints one:"
 echo
-echo "  on aesir:       sudo cat /etc/geodineum/credentials/<dashboard-cred-file>   # you read it, nothing logs it"
+echo "  on the master:  sudo cat /etc/geodineum/credentials/<dashboard-cred-file>   # you read it, nothing logs it"
 echo "  on the laptop:  sudo install -m 0640 -o root -g $CRED_GROUP /dev/stdin \\"
 echo "                    $CRED_DIR/geodineum-dash.password   # paste, then ctrl-d"
 echo

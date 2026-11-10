@@ -9,7 +9,7 @@
 # look up everything via one HGETALL without re-parsing YAML.
 #
 # Sourced by: geodineum (cmd_manifest_sync, cmd_describe, cmd_logs), and the
-# geodeploy-orchestrator post-pull hook (D-10).
+# geodeploy-orchestrator post-pull hook.
 #
 # Keys:
 #   geodineum:registry:_index           SET of service names

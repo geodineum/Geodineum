@@ -3,16 +3,9 @@
 # component-primitives.sh — installer/uninstaller reusable primitives
 # =============================================================================
 #
-# harvested from the installer's valkey-specific recovery helpers. Same
-# shape applies to any system-daemon component that's installed via apt
-# (or a similar package manager) and registers system user(s), data dirs,
-# and conffiles. Future components — additional gNode extensions, gCore
-# pro managers, standalone daemons — wire through these instead of
-# carrying per-component branches in install.sh.
-#
-# Sourced by install.sh and uninstall.sh in both Geodineum and
-# Geodineum-pro. Keep the API surface small and stable; let real usage
-# from the next 2-3 components shape any extensions.
+# Recovery helpers for a system-daemon component installed via apt (or a
+# similar package manager) that registers system users, data dirs and
+# conffiles. Sourced by install.sh and uninstall.sh.
 #
 # Logging contract: callers provide log_info, log_warning, log_error,
 # log_success, log_step. log_detail is optional; this file installs a

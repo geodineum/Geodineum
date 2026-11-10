@@ -1,5 +1,5 @@
 #!/bin/bash
-# on aesir, as root: the check the portal's Status tab reads (scripts/site-status.py), a root-owned copy with a timer, every five minutes.
+# on the master node, as root: the check the portal's Status tab reads (scripts/site-status.py), a root-owned copy with a timer, every five minutes.
 #   sudo bash scripts/install-site-status.sh --alert-site <site with COMMS recipients> [--apply]
 set -euo pipefail
 APPLY=0; ALERT_SITE=""

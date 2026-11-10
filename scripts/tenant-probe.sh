@@ -1,6 +1,6 @@
 #!/bin/bash
-# on aesir, as root: every ordered pair (A, B) of pooled sites tries to reach the other on every
-# layer and must be refused everywhere (SPEC-SITE-STUDIO S0c). Read-only on the live constellation:
+# on the master node, as root: every ordered pair (A, B) of pooled sites tries to reach the other on every
+# layer and must be refused everywhere. Read-only on the live constellation:
 # writes are tried with ACL DRYRUN, reads as the site's own ValKey user. Nightly from
 # geodineum-tenant-probe.timer (install-tenant-probe.sh); by hand:
 #   sudo bash scripts/tenant-probe.sh [--layers valkey,daemon,files,php,store,http] [--alert-site <site>] [--no-alert]
@@ -214,7 +214,7 @@ if has http && [[ -z "$SITES_OPT" ]]; then
         [[ "${KINDS[$i]}" == wp ]] && continue
         A="${IDS[$i]}"; tpl=0
         for d in ${DOCS[$i]}; do [[ -f "$d/.site" || -f "$(dirname "$d")/.site" ]] && tpl=1; done
-        (( tpl )) || continue   # only an innovagent-template deployment has /_edit
+        (( tpl )) || continue   # only a site-template deployment has /_edit
         # shellcheck disable=SC2086
         hosts=$(for f in $(site_pool_vhosts ${DOCS[$i]}); do sed -nE 's/^\s*ServerName\s+//p' "$f"; done | sort -u)
         for h in $hosts; do

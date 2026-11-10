@@ -1,8 +1,7 @@
-# Geodineum installer — config_schema (private / pro mirror)
+# Geodineum installer — config_schema
 #
 # Enumerates the operator-visible keys used by install.sh + lib/common.sh
-# + the `geodineum` CLI. Mirrored byte-for-byte to the public installer
-# at ~/gh/Geodineum/config/config_schema.yaml.
+# + the `geodineum` CLI.
 #
 # Published at install time by `geodineum config publish` (one-shot).
 

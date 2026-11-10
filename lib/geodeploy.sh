@@ -263,7 +263,7 @@ geodeploy_fetch() {
     local branch="$1"
     local remote="${2:-origin}"
 
-    # Deploy clones must ignore mode bits (SB-8.79): the perms sweeps own the
+    # Deploy clones must ignore mode bits: the perms sweeps own the
     # modes of deployed files, and git tracking the executable bit turns every
     # sweep into a phantom dirty tree the dirty-tree strategies then churn on.
     geodeploy_as_deploy git config core.fileMode false 2>> "$GEODEPLOY_LOG"
@@ -384,8 +384,8 @@ geodeploy_handle_dirty() {
             #
             # clean MUST exclude untracked RUNTIME dirs: logs/ + .gnode/
             # (daemon state), backups/ (ValKey RDB archive — deleting it
-            # on a deploy would be silent data loss), cache/ (Geodine
-            # prefill KV), target/ (cargo — nuking it forces a full
+            # on a deploy would be silent data loss), cache/ (runtime
+            # caches), target/ (cargo — nuking it forces a full
             # rebuild every dirty cycle).
             geodeploy_log "${name}: DISCARD dirty tree (force-sync to origin)"
             geodeploy_as_deploy git checkout -- . 2>> "$GEODEPLOY_LOG"
@@ -730,23 +730,10 @@ for action in sorted(matched_actions):
 # =============================================================================
 # Privileged operations — quiet, guarded, batched
 # =============================================================================
-# Three rules, all bought with one incident. The COMMS outage of 2026-07-24 sat
-# undiagnosed for 20 hours because the journal only reached back ~15: 96% of a
-# 500M ring was sudo session noise from the sweeps below — roughly 1,250
-# invocations every five minutes, three to four pam/session lines each, against
-# a tree that had not drifted and needed none of them. The evidence was evicted
-# before the question was asked.
-#
-#   1. Do not sudo to root when already root. The orchestrator runs from root's
-#      crontab, so every call logged `root : USER=root ; COMMAND=/usr/bin/chmod
-#      …` and bought no privilege the process did not already hold.
-#   2. Do not act on what has not drifted. Assert-if-different means a
-#      converged tree issues ZERO privileged calls.
-#   3. Batch. `-exec … +` passes many paths per process, and behind a drift
-#      guard find skips the exec entirely when nothing matches.
-#
-# Use these helpers for every ownership/mode assertion in this file. A raw
-# `sudo chmod` in a loop is the bug, not the style.
+# Three rules keep the sweeps out of the journal: no sudo when already root;
+# act only on what has drifted (a converged tree issues zero privileged
+# calls); batch with `-exec … +`. Use these helpers for every ownership/mode
+# assertion in this file.
 
 # argv prefix for `find -exec`, which cannot call a shell function.
 # Empty when root; bash 4.4+ expands an empty array safely under `set -u`.
@@ -875,12 +862,8 @@ geodeploy_fix_perms() {
     local owner="${2:-${_GD_OWNER}}"
     local group="${3:-${_GD_GROUP}}"
 
-    # Self-heal: the target group MUST exist or the chown below silently
-    # no-ops (2>/dev/null) and the tree keeps a stale group — the exact
-    # failure that left gCore in geodineum-web and crash-looped geodine.
-    # install.sh creates the roster, but a worker host (e.g. the constellation
-    # replica) deploying via the orchestrator may predate a new group like
-    # geodineum-code. Create-if-missing makes deploys converge on any host.
+    # The target group must exist or the chown below silently no-ops; a
+    # worker host may predate a new group, so create it if missing.
     getent group "$group" >/dev/null 2>&1 || /usr/bin/sudo /usr/bin/groupadd --system "$group" 2>/dev/null || true
 
     # Use /usr/bin/sudo /usr/bin/chown to fix root-owned file drift.
@@ -1039,16 +1022,14 @@ geodeploy_fix_gnode_dirs() {
 # guarantees the group exists and owns the source; install.sh adds the members —
 # but install.sh does NOT run on every deploy, so a worker re-provision or a
 # drifted host can have source in geodineum-code with NOBODY in the group →
-# silent web 500s and the geodine "Interface not found" autoload crash. This
-# converges membership on deploy. It restarts the affected consumers ONLY when
+# silent web 500s and service autoload crashes. This converges membership on deploy. It restarts the affected consumers ONLY when
 # it actually ADDS a member (supplementary groups are cached at process start);
 # steady-state is a no-op, so a normal deploy never blips the web tier.
 geodeploy_ensure_code_members() {
     local changed=0 u fpm
     getent group geodineum-code >/dev/null 2>&1 \
         || { /usr/bin/sudo /usr/bin/groupadd --system geodineum-code 2>/dev/null && changed=1; }
-    # Consumers of the shared framework source. Add gshield/gsignals here when
-    # they deploy as gCore-linking services — keep in lockstep with
+    # Consumers of the shared framework source; keep in lockstep with
     # validate-geodineum-config.sh::check_source_readable CONSUMERS.
     for u in www-data geodine; do
         id "$u" >/dev/null 2>&1 || continue
@@ -1101,7 +1082,7 @@ geodeploy_ensure_dash_members() {
 # Re-asserting on each deploy makes it converge. Source = this lib's own dir
 # (the freshly-pulled Geodineum/lib). Mode 0755 root:root matches install.sh:
 # the libs carry no secrets (they ARE the public installer) and are sourced by
-# five distinct identities (operator, www-data, gnode, geodine, deploy_user).
+# several identities (operator, www-data, gnode, service users, deploy_user).
 # Keep the helper list in lockstep with install.sh::ensure_bootstrap_loader_installed.
 geodeploy_ensure_helper_libs() {
     local src="${_GEODEPLOY_LIB_DIR}"
@@ -1328,8 +1309,7 @@ geodeploy_harden_all_wp() {
 
 # Fix /etc/geodineum config directory permissions
 # =============================================================================
-# Security model (current — supersedes the pre-2026-06 "www-data in no group,
-# 0600 www-data creds, 0644 config" model; that predates the narrow-group rework):
+# Security model:
 #   - www-data is NOT in the broad `geodineum`/`geodineum-creds` groups (so a PHP
 #     compromise can't read daemon/admin/service secrets), but IS in surgical
 #     single-purpose groups granting exactly what gCore needs to read:
@@ -1359,18 +1339,7 @@ geodeploy_fix_config_perms() {
     _gd_own "$config_root" root geodineum
     _gd_mode "$config_root" 751
 
-    # ── bootstrap.env: strict-deny posture (operator security stance 2026-06-03) ──
-    # Owner: root (only root writes). Group: geodineum-bootstrap (a narrow
-    # group containing ONLY the legitimate readers: www-data, gnode, deploy
-    # user, geodine). Mode: 0640. World bit + group-write bit are strict-deny.
-    #
-    # Replaces the pre-2026-06-03 pattern of `root:root 0644` (world-
-    # readable). The 0644 leak gave reconnaissance — anyone on the host could
-    # read the file's existence/contents (VALKEY host/port/creds_path) and
-    # build a deployment topology map. The narrow group below keeps PHP-side
-    # read access (gCore bootstrap-loader needs it) without exposing the
-    # file to every uid on the host.
-    #
+    # bootstrap.env: root:geodineum-bootstrap 0640 (the narrow reader group).
     # gNode daemon's `ecosystem_config.rs` strict-deny check accepts only
     # 0640 (or 0600 root-only). Any drift to 0644/0666/etc. → FATAL at
     # daemon startup.
@@ -1378,11 +1347,8 @@ geodeploy_fix_config_perms() {
         _gd_own "${config_root}/bootstrap.env" root geodineum-bootstrap
         _gd_mode "${config_root}/bootstrap.env" 0640
 
-        # 2026-06-03 content-drift self-heal: detect any keys outside the
-        # strict whitelist (legacy "shared paths/settings" dumping ground
-        # from pre-D.x design — kills the gnode-daemon at startup because
-        # the Rust loader fatals on non-whitelisted keys). Rewrite with
-        # canonical 3-key shape, preserving VALKEY_* values from disk.
+        # A key outside the whitelist makes the Rust loader fatal: rewrite the
+        # canonical 3-key shape, keeping the VALKEY_* values from disk.
         local _extra
         # `|| true`: under set -e + pipefail a no-match grep (the NORMAL
         # case — no drift) makes the whole substitution fail and aborts
@@ -1445,7 +1411,7 @@ EOF"
             _gd_mode "$_receipt_key" 0600
         fi
 
-        # COMMS is a receipt PRODUCER too (T-E) and signs with its OWN key, so
+        # COMMS is a receipt PRODUCER too and signs with its OWN key, so
         # there is a second private key under components/ with a different
         # owner. Both are excluded from the default file pass by name above;
         # this asserts the COMMS one explicitly so it is actively maintained
@@ -1648,7 +1614,6 @@ geodeploy_fix_log_perms() {
 # This means:
 #   - gnode reads daemon/comms/backup credentials
 #   - www-data reads PHP site credentials
-#   - geodine reads its own credential
 #   - A new service user reads its own credential
 #   - No service can read another service's credential
 
@@ -1669,8 +1634,7 @@ geodeploy_fix_credential() {
 #
 # ─── PERMISSION / ACL MODEL — 2 COORDINATED LOCATIONS (keep in sync) ─────────
 # This function is [2] of two places that define the ValKey cred-ownership +
-# client ACL model; they MUST change together (fixing one alone is what caused
-# the geodine NOAUTH crash-loop). Canonical model: CONTRACTS/permission-model.md.
+# client ACL model; they MUST change together. Canonical model: CONTRACTS/permission-model.md.
 #   [1] gNode/scripts/onboard-service.sh — every service's and site's creds + ACL grant
 #   [2] THIS function — deploy-time enforcement of cred ownership from the
 #       per-cred .owner sidecars (root:group:mode), NO www-data default.
@@ -1715,8 +1679,7 @@ geodeploy_fix_all_credentials() {
     # Client credentials → ownership declared by a per-cred .owner sidecar
     # (root:group:mode) written at provisioning. The sidecar is the single
     # source of truth, so this pass can NEVER clobber a service's cred back to
-    # www-data (the bug that crash-looped geodine for 187 restarts). The
-    # legacy "default to www-data" is GONE. Model:
+    # www-data. Model:
     #   web-site cred     → root:geodineum-web 0640 (www-data reads via the
     #                       single-member geodineum-web group)
     #   service/component → root:geodineum 0640     (its runtime user is in
@@ -2109,7 +2072,7 @@ geodeploy_repo() {
         # Shared-source components: fix_perms guaranteed the geodineum-code GROUP
         # owns the tree, but not that its CONSUMERS are members. Converge that
         # here so a worker/fresh host can't end up with source in a group nobody
-        # is in (the silent-500 / geodine-crash class).
+        # is in.
         if [[ "$_GD_GROUP" == "geodineum-code" ]]; then
             geodeploy_ensure_code_members
         fi

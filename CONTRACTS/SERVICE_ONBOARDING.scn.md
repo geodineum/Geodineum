@@ -40,7 +40,7 @@ CRED MODEL follows type: web → root:geodineum-web:640 (www-data via group) ·
 MANIFEST (ONE schema, all generators): .geodineum/gnode_services.yaml —
   gnode: block = the declaration by NAME on the one topology (constellation, shape
   site|app|daemon, heartbeat, holds/requires = REACH labels, fundamentality,
-  capacity_weight, axes in the service body's vocabulary; SPEC-ONE-TOPOLOGY §10) +
+  capacity_weight, axes in the service body's vocabulary) +
   profile: (names the shape when gnode: absent) + environment: (REQUIRED,
   flag|manifest|abort) + services[].metadata + consumes:/produces: (flat lists;
   {site_id}/{service}/{ecosystem}=gnode.constellation interpolate).
@@ -122,7 +122,7 @@ SILENT-EXPIRY: replies are EX 10 — poll immediately; the receipt is the durabl
 FALSE-GREEN-HEARTBEAT: a bare timer heartbeats a dead service; the shipped pair is
   ExecCondition-gated on the main unit — keep that property when hand-rolling.
 TENANT: `--owner acme` → `gnode:tenant:acme:sites` SET; cross-site discover = daemon-level
-  (GNODE_TENANT_LIST_SITES, gnode_site.lua; cross-site discovery = GNODE_TOPO_QUERY on the constellation key since 2026-10-11); clients stay keyspace-isolated.
+  (GNODE_TENANT_LIST_SITES, gnode_site.lua; cross-site discovery = GNODE_TOPO_QUERY on the constellation key); clients stay keyspace-isolated.
 CREATES: ACL user + cred 0640 (group per type) + unified/health streams ×DTAP +
   sites:registry + discovery-path + intent + type rows (vhost/unit/heartbeat/manifest),
   each host artifact recorded in the ledger /etc/geodineum/registrations/<id>.tsv.

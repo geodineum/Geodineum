@@ -231,9 +231,7 @@ usage() {
     echo "  --dry-run               Preview without making changes"
     echo "  --skip-build            Skip compilation (use existing binaries)"
     echo "  --branch <ref>          Git branch/tag to fetch for ALL component repos"
-    echo "                          (default: each repo's main). Use this to test"
-    echo "                          a pre-launch wave end-to-end:"
-    echo "                            --branch my-feature-branch"
+    echo "                          (default: each repo's main), e.g. --branch my-feature-branch"
     echo "  --yes, -y               Non-interactive (accept defaults)"
     echo "  --help, -h              Show this help"
     echo ""
@@ -710,19 +708,15 @@ phase_deploy_user() {
     #   geodineum-dash      — dashboard credential readers. Members:
     #                         gnode user, www-data, deploy_user. Used by
     #                         /etc/geodineum/dashboard/.
-    #   geodineum-bootstrap — bootstrap.env readers (2026-06-03 added; was
-    #                         previously world-readable 0644 root:root —
-    #                         operator security stance rejects world-read).
-    #                         Members: gnode, www-data, deploy_user,
-    #                         geodine. Used by /etc/geodineum/bootstrap.env
+    #   geodineum-bootstrap — bootstrap.env readers. Members: gnode,
+    #                         www-data, deploy_user and service users.
+    #                         Used by /etc/geodineum/bootstrap.env
     #                         and PHP component env files. NOTHING ELSE
     #                         goes in this group — it grants exactly
     #                         bootstrap.env / php-env read, nothing more.
-    #   geodineum           — RETIRED conceptually; kept as empty marker
-    #                         for /opt/geodineum/ chown (decision R back-
-    #                         compat). NO untrusted users (especially
-    #                         not www-data) — broad group, would violate
-    #                         least-privilege.
+    #   geodineum           — group of /opt/geodineum and the operator
+    #                         files. NO untrusted users (especially not
+    #                         www-data).
     getent group gnode               &>/dev/null || groupadd --system gnode
     getent group geodineum           &>/dev/null || groupadd --system geodineum
     getent group geodineum-creds     &>/dev/null || groupadd --system geodineum-creds
@@ -733,19 +727,14 @@ phase_deploy_user() {
     #                    0640). Sole member www-data. A secret group; no
     #                    source is ever filed here.
     #   geodineum-code — reads deployed shared SOURCE only (gCore, gNode-Client,
-    #                    themes). Members www-data (web) + geodine (the
-    #                    in-process library consumer) + future gCore consumers.
-    #                    Non-secret source; adding a member leaks no credential.
-    # Keeping source and creds in separate groups is what lets geodine read the
-    # framework without ever gaining read on any site's credential.
+    #                    themes). Members www-data and every gCore-consuming
+    #                    service. Non-secret source; adding a member leaks no
+    #                    credential.
     getent group geodineum-web       &>/dev/null || groupadd --system geodineum-web
     getent group geodineum-code      &>/dev/null || groupadd --system geodineum-code
 
-    # Dedicated COMMS runtime identity. Previously the COMMS
-    # daemon ran as gnode (deployment convenience — gnode already had
-    # ValKey creds), which meant a compromised COMMS gateway = a
-    # compromised gnode-daemon (far more privileged: writes streams
-    # across every site). geodineum-comms owns exactly its own
+    # Dedicated COMMS identity, so a compromised gateway is not the daemon.
+    # geodineum-comms owns exactly its own
     # credential (valkey_comms.password via group), its state dir
     # (/var/lib/geodineum-comms), and bootstrap.env read.
     getent group geodineum-comms     &>/dev/null || groupadd --system geodineum-comms
@@ -771,7 +760,7 @@ phase_deploy_user() {
     # Service users joining geodineum-bootstrap (narrow group — grants
     # bootstrap.env read only). www-data needs read for PHP gCore
     # bootstrap-loader. gnode needs read for the daemon's ecosystem_config
-    # at startup. geodine needs read for ValKey-integration discovery.
+    # at startup.
     # NOTHING ELSE goes in this group — adding a user here MUST be
     # justified by a documented bootstrap.env read need.
     local _hosts_sites=1
@@ -788,11 +777,8 @@ phase_deploy_user() {
     fi
 
     # www-data reads its web-site creds via geodineum-web and the deployed
-    # shared source via geodineum-code. geodine (if already present) joins
-    # geodineum-code too so the in-process gCore/gNode-Client library is
-    # readable — but is NEVER added to www-data (it must not see web content)
-    # nor geodineum-web (it must not see any site credential). Service onboard
-    # (onboard-service.sh) adds later gCore-consuming services to geodineum-code.
+    # shared source via geodineum-code. A gCore-consuming service user joins
+    # geodineum-code only, never www-data or geodineum-web.
     # Group changes don't apply to a running process — Apache/PHP-FPM MUST be
     # restarted; the next restart in this install flow picks them up.
     if (( _hosts_sites )); then
@@ -812,29 +798,14 @@ phase_deploy_user() {
     # SUDO_USER, no $USER from the install session) — without this file
     # the auto-deploy library would have to guess. /etc/geodineum/deploy.env
     # makes the deploy identity self-describing on disk and lives
-    # alongside bootstrap.env (same directory, but stricter perms — see
-    # 2026-06-03 narrow-group hardening; bootstrap.env itself moves to
-    # root:geodineum-bootstrap 0640, this deploy.env file is the same
-    # pattern since it's a "name not a secret" but no excuse for world-read).
-    # /etc/geodineum is root:geodineum 0751 — the o+x traverse bit is
-    # REQUIRED: www-data (bootstrap.env via geodineum-bootstrap file
-    # group), geodineum-comms (credentials/, components/), and geodine
-    # all need to traverse to their own group-readable files without
-    # broad group memberships. Same rationale as credentials/.
-    # (A prior revision set root:gnode 0750, which contradicted
-    # lib/geodeploy.sh's fix_config_perms and would have blocked
-    # www-data's bootstrap reads on a fresh host until the first
-    # orchestrator cycle flipped it back.)
+    # alongside bootstrap.env. /etc/geodineum is root:geodineum 0751: service
+    # users traverse to their own group-readable files without broad groups.
     install -d -m 0751 -o root -g geodineum /etc/geodineum
     cat > /etc/geodineum/deploy.env <<EOF_DEPLOY_ENV
 DEPLOY_USER=${DEPLOY_USER}
 DEPLOY_HOME=${DEPLOY_HOME}
 EOF_DEPLOY_ENV
-    # 2026-06-03 strict-deny posture: root:geodineum-bootstrap 0640 — same
-    # narrow-group pattern as bootstrap.env. deploy.env contains a name,
-    # not a secret, but world-read still leaks deployment shape (who is
-    # the operator user). geodeploy.sh and geodeploy-orchestrator read it
-    # as deploy_user (member of geodineum-bootstrap).
+    # Not a secret, but never world-readable; read by the deploy user.
     chmod 0640 /etc/geodineum/deploy.env
     chown root:geodineum-bootstrap /etc/geodineum/deploy.env
     log_detail "Persisted deploy identity to /etc/geodineum/deploy.env (root:geodineum-bootstrap 0640)"
@@ -2499,7 +2470,7 @@ ensure_valkey_data_dirs() {
 # Generate (or recover) the ValKey admin password and ensure requirepass
 # is set in /etc/valkey/valkey.conf.
 #
-# Idempotent (decision T): if /etc/geodineum/credentials/valkey.password
+# Idempotent: if /etc/geodineum/credentials/valkey.password
 # exists with content, we re-use it (and align requirepass to it).
 # Otherwise we generate fresh via `openssl rand -base64 32`.
 #
@@ -2932,8 +2903,7 @@ phase_valkey() {
             # because the valkey user creation failed; the daemon
             # exited on first AOF write). Phase 7 + Phase 9 then hit
             # "Connection refused" while the install summary reported
-            # 10/10 OK. Decision T (phase tracker reflects ground
-            # truth) applies here as much as to Build.
+            # 10/10 OK: the phase tracker must reflect ground truth.
             if verify_valkey_admin_auth; then
                 VALKEY_RUNNING=true
                 HAS_VALKEY=true
@@ -2994,16 +2964,13 @@ phase_valkey() {
         provision_daemon_acl
     fi
 
-    # COMMS ACL user — previously the geodineum_comms ACL user
-    # was hand-provisioned (Mar 2026) and fresh installs silently shipped
-    # a COMMS daemon that could never authenticate. Master-only, same
-    # rationale as provision_daemon_acl.
+    # COMMS ACL user. Master-only, same rationale as provision_daemon_acl.
     if [[ "$VALKEY_RUNNING" == "true" ]] && [[ "$VALKEY_REPLICA" != "true" ]]; then
         provision_comms_acl
     fi
 
-    # gDash dashboard ACL user — read-only across all keys, narrow xadd to the
-    # operator audit-log stream (planned write surface). Idempotent. Master-only:
+    # Dashboard ACL user — read-only across all keys, narrow xadd to the
+    # operator audit-log stream. Idempotent. Master-only:
     # replicas inherit the ACL via replication, and ACL SETUSER would fail
     # on a read-only replica (and would generate a divergent local password
     # file that doesn't match the master's). On replicas the operator
@@ -3230,26 +3197,8 @@ provision_replica_acl() {
     log_success "ACL user gnode_replica provisioned (replication-only; copy ${cred_file} to workers)"
 }
 
-# Provision the geodineum_comms ACL user.
-#
-# The COMMS binary defaults to ACL username `geodineum_comms`
-# (Geodineum-COMMS/src/config.rs `redis_user` default; overridable via
-# VALKEY_USER env) and the systemd unit feeds it the password from
-# /etc/geodineum/credentials/valkey_comms.password. Previously NOTHING
-# in the installer created either — the ACL user + credential were
-# hand-provisioned on the original host, so a fresh install produced a
-# COMMS daemon that could never authenticate.
-#
-# ACL grants: same tier shape as gnode_daemon (+@all -@dangerous).
-# COMMS reads/acks the {site}:gnode:comms:{env} streams, writes
-# inference-request streams, session hashes, and pubsub — key patterns
-# span sites, so ~* is required. Tightening to per-category grants is a
-# post-launch refinement; the isolation win is the dedicated
-# Unix user + dedicated password, not command scoping.
-#
-# Credential: root:geodineum-comms 0640 — root owns (daemon cannot
-# rewrite its own credential), geodineum-comms group reads. Idempotent:
-# recovers an existing password rather than rotating it.
+# The geodineum_comms ACL user and its credential (root:geodineum-comms 0640,
+# recovered rather than rotated on a rerun).
 provision_comms_acl() {
     local cred_dir="${VALKEY_CREDS_PATH:-/etc/geodineum/credentials}"
     local cred_file="${cred_dir}/valkey_comms.password"
@@ -3257,7 +3206,7 @@ provision_comms_acl() {
     local valkey_port="${VALKEY_PORT:-47445}"
 
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_dry "ACL SETUSER geodineum_comms with @all -@dangerous; write ${cred_file} (0640 root:geodineum-comms)"
+        log_dry "ACL SETUSER geodineum_comms (allowlisted commands and keys); write ${cred_file} (0640 root:geodineum-comms)"
         return
     fi
 
@@ -3284,17 +3233,8 @@ provision_comms_acl() {
     chmod 0640 "$cred_file" 2>/dev/null || true
     chown "root:geodineum-comms" "$cred_file" 2>/dev/null || true
 
-    # LEAST PRIVILEGE, explicitly. This block previously granted `~*` (every key
-    # in the keyspace) with `+@all -@dangerous`, which handed the notification
-    # daemon read/write over every site's state and every other service's
-    # namespace. It was re-applied to a live master on 2026-07-28 while chasing
-    # an unrelated NOPERM, silently replacing a correctly-hardened runtime grant
-    # — so the over-broad version is not merely untidy, it actively undoes
-    # hardening on every reinstall.
-    #
-    # COMMANDS: an allowlist, not a category. `-@dangerous` is a denylist, and a
-    # denylist grants every command nobody has classified yet — including
-    # commands added by future ValKey versions.
+    # Least privilege: an allowlist of commands (a denylist would grant every
+    # command added later) over its own namespaces plus the shared ones it reads.
     local acl_comms_commands=(
         -@all
         # Streams: consume its work queue, ack it, and write receipts.
@@ -3320,35 +3260,19 @@ provision_comms_acl() {
         -keys -debug -client
         "+client|id" "+client|getname" "+client|setname" "+client|setinfo"
     )
-    # KEYS: its own namespaces, plus the few shared ones it demonstrably reads.
     local acl_comms_keys=(
         "~*:gnode:comms:*" "~*:comms:config" "~*:comms:retry:*"
-        "~*:comms:messages:*" "~*:comms:stats:*" "~*:comms:conversation:*"
+        "~*:comms:messages:*" "~*:comms:stats:*"
         "~*:comms:context:*" "~*:comms:active_context:*"
-        # Read, never write: discovery and what Geodine leaves for it.
+        # Read, never write: discovery.
         "%R~gnode:site:*" "%R~gnode:sites:*" "%R~gnode:routing:*" "%R~topology:*"
-        "%R~*:gnode:schema:*" "%R~*:inference:metrics:*" "%R~*:inference:history:*"
+        "%R~*:gnode:schema:*"
         # ...except the schema it publishes itself at start.
         "~*:gnode:schema:geodineum_comms:*" "~*:gnode:schema:_index"
-        "%R~*:gnode:pipeline:_index"
-        # Receipts (T-E). BOTH are required: the registry is where the producer
-        # publishes its pubkey so verifiers can resolve its signer, and the
-        # streams are where the receipts themselves go. Granting only the first
-        # produces a daemon that logs "receipt signer ready" and then NOPERMs
-        # every actual write — announcing itself and emitting nothing.
+        # Receipts: the pubkey registry and the receipt streams; both are needed to sign.
         "~*:gnode:receipt_pubkeys" "~*:gnode:receipts:*"
-        # Liveness: its own heartbeat key in every constellation it serves
-        # (CONTRACTS/heartbeat.md; the node segment is the short hostname).
-        # Absent from the original least-privilege composition, so every COMMS
-        # heartbeat failed NOPERM with the error hidden at debug level. The
-        # `~*:gnode:comms:*` grant above is the ONE cross-constellation read of
-        # the estate (D17): COMMS delivers for a second constellation on this node until
-        # it has a placement of its own (ROADMAP_ONE_TOPOLOGY R-3).
+        # Its own heartbeat in every constellation it serves (CONTRACTS/heartbeat.md).
         "~*:gnode:heartbeat:*:comms:*"
-        # A person's message goes to the site's own stream and the reply is read
-        # back there, so every tag stays reachable, but only to add and read:
-        # no delete, trim or consumer group on anyone's command stream.
-        "(~*:gnode:unified:* -@all +xadd +xrange +xrevrange +xlen)"
     )
     if ! REDISCLI_AUTH="$(cat "$admin_pwfile")" valkey-cli -p "$valkey_port" \
         ACL SETUSER geodineum_comms \
@@ -3365,7 +3289,7 @@ provision_comms_acl() {
 
     REDISCLI_AUTH="$(cat "$admin_pwfile")" valkey-cli -p "$valkey_port" ACL SAVE >/dev/null 2>&1 || true
 
-    log_success "ACL user geodineum_comms provisioned (daemon-tier grants, @dangerous denied)"
+    log_success "ACL user geodineum_comms provisioned (allowlisted commands and keys)"
 }
 
 # ensure /opt/geodineum/gNode/.gnode IS a symlink to the
@@ -3431,10 +3355,10 @@ ensure_daemon_credential_symlink() {
 
 # Provision the geodineum_dashboard ACL user.
 #
-# Creates a read-only ACL user used by the Geodineum Dashboard (gDash) to
-# query ValKey from wp-admin. The user has:
+# Creates a read-only ACL user the wp-admin dashboard uses to
+# query ValKey. The user has:
 #   - +@read across all keys (%R~*) — covers get/hgetall/scan/pfcount/xread etc.
-#   - +xadd narrowed to geodineum:audit-log:operator-actions (%W, Ch.1.C audit log)
+#   - +xadd narrowed to geodineum:audit-log:operator-actions (%W, the operator audit log)
 #   - @write/@admin/@dangerous explicitly disallowed (no xreadgroup — the
 #     consumer live-tails via read-only XREAD, never consumer groups)
 #
@@ -3674,8 +3598,8 @@ phase_fetch() {
     # Deploy the installer repo to /opt/geodineum/Geodineum so the
     # geodeploy infra (lib/geodeploy.sh, scripts/geodeploy-orchestrator,
     # geodineum CLI binary) is reachable at the canonical FHS-style
-    # location. Operators run install.sh from a dev clone (e.g.
-    # ~/gh/Geodineum); without this step, /opt/geodineum/Geodineum never
+    # location. Operators run install.sh from a clone of this repo;
+    # without this step, /opt/geodineum/Geodineum never
     # exists and Phase 8/9/post-install hooks all hit "not found"
     # warnings.
     install_self_to_opt
@@ -3874,9 +3798,7 @@ fetch_component() {
         cd "$install_dir"
         # Pull as calling user (SSH keys are theirs)
         local pull_user="${DEPLOY_USER:-${SUDO_USER:-$(whoami)}}"
-        # Surface git's own error on failure. The old 2>/dev/null hid the
-        # diagnostic entirely (a permission-broken .git printed only
-        # "fetch failed", costing a debugging round-trip on the squad join).
+        # Surface git's own error on failure.
         local git_err
         if [[ -n "$branch" ]]; then
             # Explicit branch — fetch + checkout + ff-only pull. Detached or
@@ -4105,8 +4027,8 @@ phase_build() {
     # Aggregate per-component build failures. Without this, a cargo panic
     # in build_component would print [ERR] but phase_build would still
     # return 0 (for-loop's last exit), so PHASE_RESULTS["Build"] got
-    # recorded as OK while the daemon binary was missing. Decision T:
-    # ensure the phase tracker reflects ground truth.
+    # recorded as OK while the daemon binary was missing: the phase
+    # tracker must reflect ground truth.
     local rc=0
     for comp in "${resolved[@]}"; do
         build_component "$comp" || rc=$?
@@ -4163,13 +4085,8 @@ ensure_bootstrap_env_written() {
         return 0
     fi
     if [[ -s "$env_file" ]]; then
-        # 2026-06-03 content-drift self-heal: if existing file has any keys
-        # outside the strict whitelist, treat it as drifted state from
-        # pre-D.x architecture (the "shared paths/settings" dumping ground
-        # design) and rewrite to the canonical 3-key shape. Back up the
-        # drifted file for forensics. Daemon will FATAL on any non-whitelisted
-        # key, so silently honoring drifted state breaks startup — exactly
-        # the failure mode we hit on 2026-06-03 prod canary.
+        # Any key outside the whitelist makes the daemon FATAL: back the file
+        # up and rewrite the canonical 3-key shape.
         local extra_keys
         extra_keys=$(grep -E "^[A-Z_]+=" "$env_file" 2>/dev/null \
             | grep -vE "^(VALKEY_HOST|VALKEY_PORT|VALKEY_CREDS_PATH)=" \
@@ -4180,7 +4097,7 @@ ensure_bootstrap_env_written() {
         fi
         log_warning "bootstrap.env content drift detected — non-whitelisted keys present:"
         log_warning "  ${extra_keys}"
-        log_warning "These keys belong in ValKey Tier 2 (or were dead post-D.x). The Rust"
+        log_warning "These keys belong in ValKey Tier 2. The Rust"
         log_warning "bootstrap-loader strict-rejects anything outside {VALKEY_HOST,"
         log_warning "VALKEY_PORT, VALKEY_CREDS_PATH}, so the gnode-daemon would FATAL."
         log_warning "Backing up drifted file to ${env_file}.archived-$(date +%Y%m%d-%H%M%S)"
@@ -4196,8 +4113,8 @@ ensure_bootstrap_env_written() {
         [[ -n "$_creds" ]] && VALKEY_CREDS_PATH="$_creds"
         # Fall through to the canonical 3-key write below.
     fi
-    # root:geodineum 0751 — o+x traverse required by www-data /
-    # geodineum-comms / geodine for their group-readable files; matches
+    # root:geodineum 0751 — o+x traverse required by service users for
+    # their group-readable files; matches
     # lib/geodeploy.sh fix_config_perms (one authority, one mode).
     install -d -m 0751 -o root -g geodineum /etc/geodineum 2>/dev/null \
         || install -d -m 0751 /etc/geodineum
@@ -4214,11 +4131,7 @@ VALKEY_HOST=${host}
 VALKEY_PORT=${port}
 VALKEY_CREDS_PATH=${creds}
 EOF_BOOTSTRAP_ENV
-    # 2026-06-03 strict-deny posture: root:geodineum-bootstrap 0640 (was
-    # root:root 0644 — world-readable, rejected by operator). geodineum-bootstrap
-    # is a narrow group containing ONLY {www-data, gnode, deploy_user,
-    # geodine} so PHP/daemon/operator reads work via group bit; nothing
-    # else on the host can read. If this runs in a fresh-install phase
+    # root:geodineum-bootstrap 0640: only the narrow group reads it. If this runs in a fresh-install phase
     # BEFORE phase_users_groups created the group, fall back to root:root
     # 0600 (strictly tighter; daemon's strict-deny check also accepts 0600).
     if getent group geodineum-bootstrap >/dev/null 2>&1; then
@@ -4577,8 +4490,7 @@ phase_config() {
     #                         dashboard/). www-data here is intentional
     #                         and surgical: ONLY the dashboard token,
     #                         which has +@read across ValKey.
-    #   geodineum           → empty marker (kept for /opt/geodineum/
-    #                         chown back-compat per decision R).
+    #   geodineum           → group of /opt/geodineum.
     id -u gnode    &>/dev/null && true   # gnode in gnode primary only
     [[ "${DEPLOY_TIER:-}" == compute || "${DEPLOY_TIER:-}" == replica ]] || { id -u www-data &>/dev/null && usermod -aG geodineum-dash www-data 2>/dev/null || true; }
     id -u "$deploy_user" &>/dev/null && usermod -aG geodineum-creds "$deploy_user" 2>/dev/null || true
@@ -5062,7 +4974,7 @@ phase_services() {
     #   gNode/BAK                  → deploy_user:gnode            (daemon-side)
     #   Geodineum-COMMS/           → deploy_user:geodineum-comms  (isolation)
     #   Geodineum/                 → deploy_user:geodineum        (operator + CLI access via group)
-    #   web/theme components       → deploy_user:geodineum-code   (shared source; www-data + geodine read via group)
+    #   web/theme components       → deploy_user:geodineum-code   (shared source; www-data + services read via group)
     #
     # Fallback (when geodeploy_fix_perms isn't loaded) MUST distinguish
     # executable files from regular files — otherwise the blanket
@@ -5078,7 +4990,7 @@ phase_services() {
     # Helper: blanket chmod 0640 then promote executables to 0750.
     # Defined inline so the fallback works even when lib/geodeploy.sh
     # isn't sourced (very-fresh install with no deploy harness yet).
-    __sb77_chmod_files() {
+    __chmod_files_by_kind() {
         local root="$1"
         # Regular files
         find "$root" -type f \( -name "*.sh" -o -name "*.bash" -o -name "*.py" \) -prune -o \
@@ -5111,7 +5023,7 @@ phase_services() {
             else
                 chown -R "${DEPLOY_USER}:gnode" "${INSTALL_ROOT}/${repo_dir}"
                 find "${INSTALL_ROOT}/${repo_dir}" -type d -exec chmod 2750 {} \;
-                __sb77_chmod_files "${INSTALL_ROOT}/${repo_dir}"
+                __chmod_files_by_kind "${INSTALL_ROOT}/${repo_dir}"
             fi
         fi
     done
@@ -5128,7 +5040,7 @@ phase_services() {
         else
             chown -R "${DEPLOY_USER}:geodineum-comms" "${INSTALL_ROOT}/Geodineum-COMMS"
             find "${INSTALL_ROOT}/Geodineum-COMMS" -type d -exec chmod 2750 {} \;
-            __sb77_chmod_files "${INSTALL_ROOT}/Geodineum-COMMS"
+            __chmod_files_by_kind "${INSTALL_ROOT}/Geodineum-COMMS"
         fi
         for rw_dir in .gnode logs; do
             mkdir -p "${INSTALL_ROOT}/Geodineum-COMMS/${rw_dir}" 2>/dev/null || true
@@ -5144,13 +5056,13 @@ phase_services() {
         else
             chown -R "${DEPLOY_USER}:geodineum" "${INSTALL_ROOT}/Geodineum"
             find "${INSTALL_ROOT}/Geodineum" -type d -exec chmod 2750 {} \;
-            __sb77_chmod_files "${INSTALL_ROOT}/Geodineum"
+            __chmod_files_by_kind "${INSTALL_ROOT}/Geodineum"
         fi
     fi
 
     # Shared SOURCE (gCore framework + themes that WP `require_once`s). Group =
     # geodineum-code, the single source-read class. NOT www-data: filing the
-    # framework under the web server's primary group would force geodine into
+    # framework under the web server's primary group would force service users into
     # www-data to use the library — exposing the whole web tier to a service
     # compromise. geodineum-code is a SUPPLEMENTARY group for www-data, so a
     # php-fpm/apache worker forked before www-data joined it cannot read these
@@ -5176,12 +5088,12 @@ phase_services() {
             else
                 chown -R "${DEPLOY_USER}:geodineum-code" "${INSTALL_ROOT}/${wp_dir}"
                 find "${INSTALL_ROOT}/${wp_dir}" -type d -exec chmod 2750 {} \;
-                __sb77_chmod_files "${INSTALL_ROOT}/${wp_dir}"
+                __chmod_files_by_kind "${INSTALL_ROOT}/${wp_dir}"
             fi
         fi
     done
 
-    unset -f __sb77_chmod_files
+    unset -f __chmod_files_by_kind
     log_success "Component permissions set per narrow-group model"
 
     # Centralized log directory: /var/log/geodineum/
@@ -5366,7 +5278,7 @@ phase_functions() {
                 log_success "Ecosystem components registered on the one topology (shape 2)"
             else
                 log_warning "Tool registration had issues (see stderr above) — register later: VALKEY_USER=gnode_daemon GNODE_REDIS_AUTH_FILE=${daemon_pass_file} gnode-daemon register-tools --tier tool"
-                # Non-fatal for Ch.1 launch — the daemon can
+                # Non-fatal — the daemon can
                 # self-register on first start.
             fi
         else
@@ -5499,9 +5411,9 @@ phase_verify() {
 # Summary
 # =============================================================================
 
-# Tier-4 4.2: Cog-load status table. Best-effort query of ValKey for
+# Cog-load status table. Best-effort query of ValKey for
 # the per-extension config_schema entries the daemon publishes at
-# startup (Tier-2 2.9 wired the daemon-side discovery). When ValKey
+# startup. When ValKey
 # isn't reachable yet (e.g. daemon not started, or running under a
 # different ACL than the one the wizard can read), the table degrades
 # gracefully: shows scanned filesystem state with status "pending".
@@ -5525,7 +5437,7 @@ print_cog_load_status() {
     if [[ -n "$_cli" ]]; then
         # No-auth-warning: best-effort read; if ACL rejects, fall back
         # to filesystem detection. SCAN-via-SMEMBERS preferred over
-        # KEYS per Tier-2 2.2 invariant (COMMS_KEYS_FORBIDDEN).
+        # KEYS (COMMS_KEYS_FORBIDDEN).
         schemas=$("$_cli" --no-auth-warning SMEMBERS geodineum:config_schema:_index 2>/dev/null || echo "")
     fi
 
@@ -5535,7 +5447,7 @@ print_cog_load_status() {
     echo -e "    ${DIM}│${NC} ${BOLD}Extension${NC}   ${DIM}│${NC} ${BOLD}Status${NC}   ${DIM}│${NC} ${BOLD}Notes${NC}                            ${DIM}│${NC}"
     echo -e "    ${DIM}├─────────────┼──────────┼──────────────────────────────────┤${NC}"
 
-    # gNode-CMS — Ch.1 only ships this extension by default
+    # gNode-CMS — the extension shipped by default
     if echo "$schemas" | grep -q '^gnode-cms$\|^cms$'; then
         printf "    ${DIM}│${NC} %-11s ${DIM}│${NC} ${GREEN}%-8s${NC} ${DIM}│${NC} %-32s ${DIM}│${NC}\n" "gNode-CMS" "LOADED" "via daemon config_schema discovery"
     elif [[ -d "$cms_path" ]]; then
@@ -5656,7 +5568,7 @@ print_summary() {
         done
     fi
 
-    # Tier-4 4.2: Cog-load status
+    # Cog-load status
     print_cog_load_status
 
     # Log file location
@@ -6182,17 +6094,7 @@ main() {
         # Install scoped sudoers for deploy operations
         local sudoers_tpl="${INSTALL_ROOT}/Geodineum/templates/sudoers-geodeploy.tpl"
         if [[ -f "$sudoers_tpl" ]]; then
-            # Render the sudoers template by substituting {{DEPLOY_USER}}
-            # everywhere — both the leading rule-user position AND inside
-            # `chown` argument lists like `{{DEPLOY_USER}}\:gnode`. The
-            # pre-fix sed used `s/^august /${DEPLOY_USER} /g` which only
-            # touched the leading user; chown arg-user references like
-            # `chown -R august\:gnode` survived unchanged, leaving the
-            # deploy user only able to sudo-chown things to literal
-            # `august` (the upstream maintainer's account name) on every
-            # downstream install. The new placeholder is unambiguous and
-            # global-replaces correctly. (Aligned with Geodineum-pro's
-            # convention.)
+            # Every {{DEPLOY_USER}}, including those inside chown arguments.
             sed "s|{{DEPLOY_USER}}|${DEPLOY_USER}|g" "$sudoers_tpl" > /etc/sudoers.d/geodineum-deploy
             chmod 440 /etc/sudoers.d/geodineum-deploy
             if visudo -cf /etc/sudoers.d/geodineum-deploy &>/dev/null; then

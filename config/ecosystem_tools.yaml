@@ -4,7 +4,7 @@
 # Each component declares its axes by NAME, in the component body's vocabulary
 # (gNode/daemon/config/topology_schema.yaml); the daemon codes the words and refuses
 # one it does not know. `requires` are the REACH labels a caller must hold.
-# `depends_on` is the edge list and the source of the fundamentality ladder (D11).
+# `depends_on` is the edge list and the source of the fundamentality ladder.
 #
 # Pyramid hierarchy (top → bottom):
 #   Level 0: gMath                                   (mathematical truth)

@@ -34,6 +34,10 @@ cat > "$D/bin/docker" <<E
 #!/bin/bash
 cat "$D/docker.out"
 E
+cat > "$D/bin/wg" <<E
+#!/bin/bash
+cat "$D/wg.out"
+E
 cat > "$D/bin/ports" <<E
 #!/bin/bash
 cat "$D/ports.out"
@@ -42,9 +46,10 @@ chmod +x "$D/bin/"*
 echo "op       pts/0        203.0.113.7      $NOW   still logged in" > "$D/last.out"
 printf '%s host sudo[1]:   op : TTY=pts/0 ; PWD=/home/op ; USER=root ; COMMAND=/usr/bin/systemctl restart gnode-daemon\n%s host sudo[2]:     root : PWD=/ ; USER=op ; COMMAND=/usr/bin/git fetch origin main\n' "$NOW" "$NOW" > "$D/auth.out"
 echo "valkey/valkey:latest@sha256:aaa" > "$D/docker.out"
-printf 'tcp LISTEN 0 511 127.0.0.1:47445 0.0.0.0:*\n' > "$D/ports.out"
+printf 'tcp LISTEN 0 511 127.0.0.1:47445 0.0.0.0:*\nudp UNCONN 0 0 0.0.0.0:53601 0.0.0.0:*\n' > "$D/ports.out"
+printf 'wg-geodineum\t53601\n' > "$D/wg.out"
 go() { python3 -I "$W" --root "$R" --state "$D/st" --status "$D/nodir/s" --no-alert \
-       --cmd-last "$D/bin/last" --cmd-auth "$D/bin/auth" --cmd-docker "$D/bin/docker" --cmd-ports "$D/bin/ports" "$@" 2>&1; }
+       --cmd-last "$D/bin/last" --cmd-auth "$D/bin/auth" --cmd-docker "$D/bin/docker" --cmd-ports "$D/bin/ports" --cmd-wg "$D/bin/wg" "$@" 2>&1; }
 
 o=$(go); none "first run: baseline, no flags" "$o"; has "first run says baseline" "baseline recorded" "$o"
 has "the digest names who logged in and from where" "logins op: 203.0.113.7 x1" "$o"
@@ -71,4 +76,10 @@ has "a login from an address never seen for that account" "login: op from 198.51
 o=$(go); lacks "the address is remembered after one night" "login: op from 198.51.100.9" "$o"
 o=$(go); none "and the node is quiet again" "$o"
 printf 'exit 1\n' > "$D/bin/docker"; o=$(go); none "docker not answering is not 'every image removed'" "$o"
+sed -i 's/53601/53136/' "$D/ports.out" "$D/wg.out"; o=$(go); none "WireGuard's port changing at a reboot is not a new listener" "$o"
+old_baseline() { python3 -I -c 'import json,sys; f=sys.argv[1]; s=json.load(open(f)); s.pop("wg_excluded",None); s["ports"]=sorted(s["ports"]+sys.argv[2:]); json.dump(s,open(f,"w"))' "$D/st/state.json" "$@"; }
+old_baseline "udp 0.0.0.0:41000"; o=$(go); none "a baseline from before the WireGuard rule: its gone UDP port is not 'removed'" "$o"
+o=$(go); none "and stays quiet after that" "$o"
+old_baseline "tcp 0.0.0.0:9999"; o=$(go); has "the migration still flags a TCP listener that went away" "listening port: 1 removed" "$o"; go --accept >/dev/null
+has "the digest is kept on the node" '"lines"' "$(cat "$D/st/digest.json")"
 echo "== $pass ok, $fail failed"; exit $(( fail > 0 ))

@@ -52,7 +52,7 @@ policy_interpolate() {
 }
 
 # The constellation a manifest registers in: its gnode.constellation, else the
-# caller's default (SPEC-ONE-TOPOLOGY §10). `{ecosystem}` interpolates to it.
+# caller's default. `{ecosystem}` interpolates to it.
 # Usage: policy_manifest_constellation <manifest_path> [default]
 policy_manifest_constellation() {
     local manifest_path="$1" dflt="${2:-${GNODE_TOPOLOGY_NAMESPACE:-geodineum}}" c=""

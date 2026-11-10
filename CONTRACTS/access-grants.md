@@ -1,8 +1,7 @@
 # Access Grants — the ACL approval loop
 
 A service asks for key patterns; an operator decides; the decision is a
-ledger entry before it is an ACL change. v0 of the SB-8.92 lifecycle;
-implementation `gNode/scripts/cli/grants.sh`.
+ledger entry before it is an ACL change. Implementation `gNode/scripts/cli/grants.sh`.
 
 ## Flow
 

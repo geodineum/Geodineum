@@ -2,7 +2,7 @@
 #
 # Geodineum Permission Fix
 # =========================
-# One-shot script to fix all permission issues found during audit.
+# Brings every ecosystem directory back to the permission model.
 # Safe to re-run (idempotent). Must run as root.
 #
 # Issues addressed:
@@ -21,9 +21,6 @@ set -euo pipefail
 DRY_RUN=false
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
 
-# Deploy-user is no longer hardcoded as
-# `august`. Resolve from the GEODEPLOY_DEPLOY_USER env (matches
-# lib/geodeploy.sh:28) with safe-fallback.
 DEPLOY_USER="${GEODEPLOY_DEPLOY_USER:-${SUDO_USER:-${USER}}}"
 if [[ -z "$DEPLOY_USER" ]] || ! id "$DEPLOY_USER" &>/dev/null; then
     echo "FATAL: deploy user '$DEPLOY_USER' does not exist on this host. Set GEODEPLOY_DEPLOY_USER explicitly." >&2
@@ -261,7 +258,7 @@ else
 fi
 
 # =============================================================================
-# 8. Infrastructure repos: ensure august:gnode (not www-data)
+# 8. Infrastructure repos: ensure <deploy user>:gnode (not www-data)
 #    These are not PHP-autoloaded. Only deploy user + daemon need access.
 # =============================================================================
 
@@ -312,9 +309,7 @@ for subdir in "${GEODINEUM_ROOT}/Geodineum-BAK/backups" "${GEODINEUM_ROOT}/Geodi
     fi
 done
 
-# gShield: the file-scan cargo binaries lose +x to the 640 file-sweep like every
-# other release binary, but nothing restored them — the daily scan then died
-# with a misleading "Binary not found". Restore +x on the release binaries.
+# Release binaries of an optional file scanner keep their +x after the 640 sweep.
 gshield_rel="${GEODINEUM_ROOT}/gShield/gshield-geov/target/release"
 if [[ -d "$gshield_rel" ]]; then
     for bin in gshield-file-scan gshield-file-learn gshield-learn gshield-score; do
@@ -326,7 +321,7 @@ fi
 # 9. Shared source (framework + library + themes): group geodineum-code — the
 #    SINGLE source-read class. NOT www-data: that conflates source with the
 #    web-credentials group and would force services into www-data to use the
-#    library. www-data + geodine read via geodineum-code membership.
+#    library. www-data reads via geodineum-code membership.
 # =============================================================================
 
 log_step "9. Shared-source component groups (geodineum-code)"
@@ -362,7 +357,7 @@ for repo in "${web_repos[@]}"; do
 done
 
 # =============================================================================
-# 10. .git dirs in prod repos must be august-owned (git pull requires write)
+# 10. .git dirs in prod repos must be owned by the deploy user (git pull requires write)
 # =============================================================================
 
 log_step "10. .git directory ownership"

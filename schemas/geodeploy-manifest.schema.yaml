@@ -9,8 +9,8 @@
 # against this schema. Sections beyond the meta block are OPTIONAL — convention
 # defaults apply when absent (see field-level descriptions).
 #
-# Tier-1 services typically declare: meta + cli + maybe log overrides.
-# Tier-2 services additionally declare: data + (usually) install + config.
+# A simple service typically declares: meta + cli + maybe log overrides.
+# A service that owns data additionally declares: data + (usually) install + config.
 #
 # Companion brief: the manifest-pattern documentation.
 # =============================================================================
@@ -137,7 +137,7 @@ $defs:
         description: Override the service-level `cli.category` for this single command.
 
 # =============================================================================
-# LAYER 0 — META
+# META
 # =============================================================================
 properties:
 
@@ -177,7 +177,7 @@ properties:
 
   # ===========================================================================
   # ===========================================================================
-  # LAYER 1 — DEPLOY MECHANICS (flat top-level: runtime, auto, build, triggers,
+  # DEPLOY MECHANICS (flat top-level: runtime, auto, build, triggers,
   # perms, dirty-tree, links). Matches the existing in-repo convention; the
   # "layer" grouping is conceptual, surfaced by `geodineum describe`.
   # ===========================================================================
@@ -316,7 +316,7 @@ properties:
         link:   { type: string, description: "Relative link name inside the repo." }
 
   # ===========================================================================
-  # LAYER 2 — INSTALL / UNINSTALL (user-service lifecycle hooks)
+  # INSTALL / UNINSTALL (user-service lifecycle hooks)
   # ===========================================================================
   install:
     type: object
@@ -358,7 +358,7 @@ properties:
           Per-service equivalent of the global credential/data preservation.
 
   # ===========================================================================
-  # LAYER 3 — LOG
+  # LOG
   # ===========================================================================
   log:
     type: object
@@ -391,7 +391,7 @@ properties:
           max_size_mb: { type: integer, minimum: 1, maximum: 10000, default: 100 }
 
   # ===========================================================================
-  # LAYER 4 — CONFIG
+  # CONFIG
   # ===========================================================================
   config:
     type: object
@@ -419,13 +419,13 @@ properties:
           OMIT this — it is not a contract requirement.
 
   # ===========================================================================
-  # LAYER 5 — DATA (the keyspace contract; Tier-2 anchor)
+  # DATA (the keyspace contract)
   # ===========================================================================
   gnode:
     type: object
     additionalProperties: false
     description: |
-      The one topology's declaration (SPEC-ONE-TOPOLOGY §10): where the component
+      The one topology's declaration: where the component
       registers and what it declares by NAME. The daemon codes the words and refuses
       one it does not know. `requires` here are REACH labels and never collide with
       the installer's top-level `requires:` (install dependencies). `tier:` above is an
@@ -437,8 +437,8 @@ properties:
       holds: { type: array, items: { $ref: "#/$defs/slug" }, description: "REACH labels this entity carries." }
       requires: { type: array, items: { $ref: "#/$defs/slug" }, description: "Labels a caller must hold to reach it (fail closed)." }
       peers: { type: array, items: { $ref: "#/$defs/slug" }, description: "Entities reachable regardless of potential." }
-      fundamentality: { type: number, minimum: 0, maximum: 1, description: "Optional; the shape's default applies (D11)." }
-      capacity_weight: { type: integer, minimum: 0, default: 1, description: "Per placement; 0 = standby (D13)." }
+      fundamentality: { type: number, minimum: 0, maximum: 1, description: "Optional; the shape's default applies." }
+      capacity_weight: { type: integer, minimum: 0, default: 1, description: "Per placement; 0 = standby." }
       axes:
         type: object
         description: "axis name → word, list of words, or fraction in [0, 1]; the shape's body vocabulary."
@@ -501,7 +501,7 @@ properties:
           should not see ecosystem traffic.
 
   # ===========================================================================
-  # LAYER 6 — BACKUP (light; declarative hints)
+  # BACKUP (light; declarative hints)
   # ===========================================================================
   backup:
     type: object
@@ -530,7 +530,7 @@ properties:
         description: Informational; the actual schedule lives in BAK's global config.
 
   # ===========================================================================
-  # LAYER 7 — CLI (already implemented; this section pins the schema)
+  # CLI (this section pins the schema)
   # ===========================================================================
   cli:
     type: object

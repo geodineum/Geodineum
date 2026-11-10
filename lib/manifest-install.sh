@@ -1,9 +1,9 @@
 #!/bin/bash
 # =============================================================================
-# manifest-install.sh — execute LAYER_2 (install) + LAYER_6 (backup) hooks
+# manifest-install.sh — execute the install + backup hooks
 # =============================================================================
 # Reads a service's geodeploy.yaml install:/uninstall: sections and runs them
-# with the documented manifest contract (LAYER_2):
+# with the documented manifest contract (install section):
 #
 #   install.prerequisites.apt/php_ext/commands  - checked, optionally installed
 #   install.steps[]                              - ordered, idempotent

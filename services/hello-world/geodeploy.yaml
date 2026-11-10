@@ -1,4 +1,4 @@
-# hello-world — minimal Tier-1 demo service exercising every LAYER section.
+# hello-world — minimal demo service exercising every manifest section.
 # Use as the reference example when authoring new user services.
 #
 # Verified against schemas/geodeploy-manifest.schema.yaml. Run:
@@ -10,7 +10,7 @@
 
 name: hello-world
 version: 0.1.0
-description: Reference Tier-1 service — touches a marker file, declares hints
+description: Reference service — touches a marker file, declares hints
 tier: 1
 language: bash
 

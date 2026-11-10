@@ -16,13 +16,13 @@ is no deregistration step, only expiry.
 | `topology_ns` | `geodineum` unless overridden | Brace-literal hash tag |
 | `gnode` | **literal** | Never built from a configurable prefix — one env override would diverge a writer from every reader |
 | `env` | DTAP environment (`production`, `testing`, …) | The component's own resolved environment |
-| `component` | stable component name | `gnode-daemon`, `comms`, `gschedule`, `gflow`, `geodine`, `gshield` |
+| `component` | stable component name | `gnode-daemon`, `comms`, `gschedule`, `gflow` |
 | `node` | the node's declared id | See below |
 
 Value — JSON, self-describing when found detached from its key:
 
 ```json
-{"ts": 1753900000, "pid": 1234, "comp": "comms", "node": "aesir"}
+{"ts": 1753900000, "pid": 1234, "comp": "comms", "node": "node1"}
 ```
 
 Write: `SETEX <key> 120 <value>`, refreshed ~every 60s. TTL is twice the
@@ -45,10 +45,8 @@ axis, never in an identity slot — a role in an
 identity slot renames the node when its role changes, and heartbeats,
 consumer names and constellation entities all silently fork.
 
-Why the segment exists: without it, every node in a constellation wrote
-the same key and last-writer-won. A two-node estate could not say which
-node a component ran on, and one dead daemon hid behind the other's
-fresh `ts`.
+Without the segment every node in a constellation would write the same
+key, and one dead daemon would hide behind another node's fresh `ts`.
 
 ## Reading
 
@@ -62,17 +60,14 @@ registry read and every heartbeat key.
 
 WRITE: a writer's own ACL must include the family. Service users get it
 via onboarding's `~{<ns>}:gnode:*`; geodineum_comms gets it explicitly
-(`~*:gnode:heartbeat:*` in the installer's `acl_comms_patterns`) — it was
-missing from the least-privilege composition once, every COMMS heartbeat
-failed NOPERM invisibly, and the dashboard showed a mail-delivering
-daemon as down. When adding a census row, verify the writer's grant with
+(`~*:gnode:heartbeat:*:comms:*` in the installer's `acl_comms_keys`). When adding a census row, verify the writer's grant with
 `ACL DRYRUN <user> SETEX <key> 120 x` — never assume coverage.
 
 ## Value fields (additive — readers judge liveness by `ts`, everything else optional)
 
 | Field | Writer | Meaning |
 |---|---|---|
-| `ts`, `pid`, `comp`, `node` | all six | the base contract |
+| `ts`, `pid`, `comp`, `node` | all | the base contract |
 | `la1`, `cores`, `mem_used_mb`, `mem_total_mb` | **gnode-daemon only** | node resources from /proc — the daemon is the node's authority, and ONE component per node reporting hardware keeps the numbers from disagreeing |
 
 Consumers: `geodineum status` (operator table + `--json`) and the daemon's
@@ -87,13 +82,11 @@ table and a function-call result never disagree about the estate).
 | Geodineum-COMMS | Rust | `src/main.rs` `write_heartbeat` |
 | gSchedule | Rust | `src/config.rs` `k_heartbeat` |
 | gFlow | Node.js | `engine/heartbeat.js` |
-| Geodine | PHP | `workers/pipeline_runner.php` |
-| gShield | Python | `scripts/gshield-decide.py` `_heartbeat_loop` |
 | any registered app, daemon or scheduled job | Bash | `Geodineum/scripts/heartbeat/geodineum-heartbeat.sh` (systemd timer, writes only when its probe passes; installed by `geodineum register` through `install-heartbeat.sh`) |
 
 Readers: `gCore/gcore-mu/wp-hooks.php` `gcore_fetch_component_health`; `gNode/scripts/cli/status.sh`.
 
-Seven writers in five languages cannot share code, so the wire form is
+Five writers in three languages cannot share code, so the wire form is
 pinned **here** and each writer carries a test (or the reviewed literal)
 against it — the same discipline as `utils::field_names` for the command
 schema. If you change the form, change every row of the census and this
