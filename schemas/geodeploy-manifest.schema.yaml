@@ -323,8 +323,8 @@ properties:
     additionalProperties: false
     description: |
       Lifecycle hooks for user-contributed services. Does NOT replace install.sh
-      for Geodineum-internal components — those remain driven by components.yaml
-      and the phased installer. Convention: missing section ⇒ no-op.
+      for Geodineum-internal components — those remain driven by the phased
+      installer. Convention: missing section ⇒ no-op.
     properties:
       prerequisites:
         type: object
@@ -454,9 +454,8 @@ properties:
     description: |
       Declares what streams/keys/channels the service reads (`consumes`) and writes
       (`produces`). `onboard-service.sh` reads this and fashions the ACL grants.
-      v1 enforcement: STATIC policy — patterns must fall within the service's own
-      namespace OR be in the ecosystem well-known set. v2 (planned): runtime
-      daemon-mediated negotiation.
+      Enforcement is a static policy: patterns must fall within the service's own
+      namespace OR be in the ecosystem well-known set.
     properties:
       consumes:
         type: object

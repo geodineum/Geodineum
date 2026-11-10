@@ -1,6 +1,6 @@
 # Geodineum CLI Reference
 
-**Version 1.0.0** | Single ecosystem manager for service registration, configuration, and topology.
+**Version 0.2.0** | Single ecosystem manager for service registration, configuration, and topology.
 
 ```
 geodineum <command> [subcommand] [options]
@@ -357,6 +357,61 @@ sudo geodineum install [--profile minimal|standard]
 Delegates to `install.sh` (10-phase installer). Profiles:
 - **minimal** — gNode-Client, gCore, gTemplate
 - **standard** — minimal + gNode daemon, gCube, Geodineum-COMMS, Geodineum-BAK
+
+---
+
+### `wp` — WordPress through wp-cli
+
+```bash
+geodineum wp <site_id> admin list            # administrators
+sudo geodineum wp <site_id> admin reset      # set a new admin password (prints it)
+geodineum wp <site_id> <any wp-cli args>     # full wp-cli passthrough, e.g. plugin list
+```
+
+Run from inside a site's directory, the site id can be left out.
+
+---
+
+### `credential add` — a service's ValKey credential on a worker
+
+```bash
+sudo geodineum credential add --service <id> --auth-file <file> [--group <group>]
+```
+
+Installs the credential that `register --node` printed or wrote on the master.
+
+---
+
+### `schema`, `backup` — maintenance
+
+```bash
+sudo geodineum schema list                   # config schemas the daemon published
+sudo geodineum schema show <extension_id>
+sudo geodineum backup                        # ValKey snapshot (Geodineum-BAK)
+```
+
+---
+
+### `uninstall` — remove the ecosystem
+
+```bash
+sudo geodineum uninstall --dry-run           # preview
+sudo geodineum uninstall --keep-data --keep-users
+```
+
+Delegates to `uninstall.sh`, which deletes by default.
+
+---
+
+## Site IDs
+
+Site IDs are derived from domain names: dots and hyphens become underscores.
+
+| Domain | Site ID |
+|---|---|
+| `example.com` | `example_com` |
+| `staging.example.com` | `staging_example_com` |
+| `my-app.example.org` | `my_app_example_org` |
 
 ---
 

@@ -55,13 +55,9 @@ done
 for f in "$REPO_DIR/install.sh" "$REPO_DIR/uninstall.sh" "$REPO_DIR/scripts/ecosystem-smoke-test.sh"; do
     [[ -f "$f" ]] || die "missing required script: $f"
 done
-# Repos are private pre-launch — a fresh clone needs the deploy key.
-[[ -f /root/.ssh/id_ed25519 || -f "$HOME/.ssh/id_ed25519" || -n "${GEODINEUM_DEPLOY_KEY:-}" ]] \
-    || echo "${YEL}! no obvious deploy key found — install.sh may fail to clone private repos${NC}"
 
 FAILED=0
 mark_fail(){ FAILED=1; no "$1"; [[ "$KEEP_GOING" == "true" ]] || { verdict; exit 1; }; }
-phase_time(){ local s=$1; printf "    (%.0fs)\n" "$(echo "$(date +%s) - $s" | bc 2>/dev/null || echo 0)"; }
 
 install_once(){
     local label="$1" args=(--profile "$PROFILE" --yes)
@@ -82,7 +78,7 @@ smoke(){
 }
 
 uninstall_verify(){
-    local args=(--commit --force --quiet)
+    local args=(--quiet)
     [[ "$KEEP_DATA" == "true" ]] && args+=(--keep-data)
     say "uninstall.sh ${args[*]}"
     ( cd "$REPO_DIR" && ./uninstall.sh "${args[@]}" ) && ok "uninstall returned 0" || mark_fail "uninstall failed"

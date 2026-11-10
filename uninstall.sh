@@ -20,7 +20,7 @@ set -euo pipefail
 # Safety posture:
 # - Commit-by-default : plain `uninstall.sh` actually deletes.
 #     Pass --dry-run to preview without changes.
-#   - Refuses if any geodineum systemd unit is active without --force.
+#   - Stops active geodineum systemd units first.
 #   - Always offers backup-snapshot-first before deleting ValKey data.
 #   - Idempotent: re-running on a partially uninstalled state proceeds cleanly.
 #
@@ -31,15 +31,13 @@ set -euo pipefail
 #   - ABSOLUTE_PATH_FOR_PRIVILEGED_TOOLS: /usr/bin/<tool> for sudo-trusted ops.
 #
 # Usage:
-#   sudo ./uninstall.sh [--dry-run] [--commit] [--force] [--keep-data]
-#                       [--keep-users] [--quiet]
+#   sudo ./uninstall.sh [--dry-run] [--keep-data] [--keep-users] [--quiet]
 #
 # Examples:
-#   sudo ./uninstall.sh                # dry-run preview (default)
-#   sudo ./uninstall.sh --commit       # actually delete (with prompts)
-#   sudo ./uninstall.sh --commit --force --quiet --keep-data
-#                                      # full unattended uninstall, keeping
-#                                      # ValKey data and the geodineum group
+#   sudo ./uninstall.sh --dry-run      # preview
+#   sudo ./uninstall.sh                # delete (with prompts)
+#   sudo ./uninstall.sh --quiet --keep-data
+#                                      # unattended, keeping ValKey data
 # =============================================================================
 
 # =============================================================================
@@ -81,7 +79,6 @@ fi
 # =============================================================================
 
 DRY_RUN="false"       # commit by default; pass --dry-run to preview
-FORCE="false"         # legacy no-op alias kept for backward-compat
 KEEP_DATA="false"     # preserve /var/lib/valkey-gnode
 KEEP_USERS="false"    # preserve geodineum group + service users
 
@@ -135,8 +132,6 @@ Options:
   --keep-data      Preserve /var/lib/valkey-gnode (skip data deletion prompt).
   --keep-users     Preserve geodineum group + service users.
   --quiet          Suppress info/success log lines (errors + warnings still print).
-  --commit         (no-op alias kept for backward-compat — commit is now default)
-  --force          (no-op alias kept for backward-compat — auto-stops active units)
   -h, --help       This message.
 
 Safety:
@@ -146,7 +141,7 @@ Safety:
 
 Exit codes:
   0   success (or dry-run completed cleanly)
-  1   precondition failure (not root, active service without --force, etc.)
+  1   precondition failure (not root, etc.)
   2   user cancelled at confirm prompt
 EOF
 }
@@ -193,8 +188,6 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --dry-run)    DRY_RUN="true"; shift ;;
-            --commit)     DRY_RUN="false"; shift ;;
-            --force)      FORCE="true"; shift ;;
             --keep-data)  KEEP_DATA="true"; shift ;;
             --keep-users) KEEP_USERS="true"; shift ;;
             --quiet)      QUIET="true"; shift ;;
@@ -232,9 +225,7 @@ banner() {
 preflight() {
     log_step "Pre-flight checks"
 
-    # active geodineum units stopped automatically. Pre-fix
-    # required --force to proceed; for ops doing repeated install/
-    # uninstall cycles this added friction without adding safety.
+    # Active geodineum units are stopped automatically.
     local active_units=()
     for unit in "${UNINSTALL_UNITS[@]}"; do
         if /usr/bin/systemctl is-active --quiet "$unit" 2>/dev/null; then

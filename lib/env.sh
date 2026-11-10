@@ -73,25 +73,6 @@ read_yaml_viewkey() {
     fi
 }
 
-# Update environment in YAML config (handles both v1 and v2 formats)
-write_yaml_env() {
-    local config_file="$1"
-    local new_env="$2"
-
-    if [[ "$config_file" == *.yaml ]]; then
-        # v2 format: environment.active
-        if grep -q "^\s*active:" "$config_file" 2>/dev/null; then
-            sed -i "s/^\(\s*active:\s*\).*/\1${new_env}/" "$config_file"
-        fi
-        # v1 format: metadata.environment (also update for backward compat)
-        if grep -q "^\s*environment:" "$config_file" 2>/dev/null; then
-            sed -i "s/^\(\s*environment:\s*\).*/\1${new_env}/" "$config_file"
-        fi
-    elif [[ "$config_file" == *.env ]]; then
-        sed -i "s/^GNODE_ENVIRONMENT=.*/GNODE_ENVIRONMENT=\"${new_env}\"/" "$config_file"
-    fi
-}
-
 # Every file that records a site's environment, one "file<TAB>field" line per recorded value
 # (field: a yq path, or GNODE_ENVIRONMENT for a .env file).
 site_env_targets() {

@@ -76,11 +76,3 @@ entries:
     description: >-
       Ecosystem-wide namespace prefix for infrastructure ValKey keys.
       Distinct from per-site site_id (which uses hash-tag brace-literal).
-
-  - key: CONSTELLATION_VPN_CIDR
-    type: string
-    default: 10.42.0.0/16
-    mutable: false
-    description: >-
-      WireGuard constellation VPN CIDR. Installer reserves addresses from
-      this range during phase_constellation.

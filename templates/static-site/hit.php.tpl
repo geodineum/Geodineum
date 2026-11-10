@@ -7,7 +7,7 @@
  * flag server-side, then records the hit through the GNODE_ANALYTICS_HIT
  * Lua function — one atomic write at the data. No cookies, no persistent
  * identifier: the hash is sha256(ip|ua|Ymd|salt) truncated, so it cannot be
- * correlated across days. Read back with `geodineum visitors {{SITE_ID}}`.
+ * correlated across days. Read back with `geodineum status --visitors {{SITE_ID}}`.
  */
 
 declare(strict_types=1);

@@ -72,9 +72,11 @@ compromised web process.
 
 ## Known limitations
 
-- WordPress sites currently share a single web-user identity, so co-hosted sites
-  can read each other's files. Per-site process-pool isolation is the planned
-  hardening; until then, treat co-hosted sites as a shared trust boundary.
+- A site on the shared web pool shares the web-user identity with every other
+  such site, so co-hosted sites can read each other's files.
+  `sudo geodineum site pool <site_id> apply` moves a site onto its own PHP-FPM
+  pool and Unix user; until then, treat co-hosted sites as a shared trust
+  boundary.
 
 ## Reporting a vulnerability
 

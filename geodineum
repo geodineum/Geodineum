@@ -481,14 +481,6 @@ main() {
             source "${LIB_DIR}/deregister.sh"
             cmd_deregister "$@"
             ;;
-        remove)
-            echo "geodineum remove is gone: use  sudo geodineum deregister <id>" >&2
-            exit 2
-            ;;
-        update-service)
-            echo "geodineum update-service is now  sudo geodineum register <path|id>  (registering again updates it)" >&2
-            exit 2
-            ;;
         constellation)
             source "${LIB_DIR}/common.sh"
             source "${LIB_DIR}/node.sh"
@@ -498,10 +490,6 @@ main() {
             source "${LIB_DIR}/common.sh"
             source "${LIB_DIR}/node.sh"
             cmd_node "$@"
-            ;;
-        provision-service)
-            echo "geodineum provision-service is now  sudo geodineum register <name> --new <type> --env <tier> --node <node>  (or a path to integrate)" >&2
-            exit 2
             ;;
         harden)
             source "${LIB_DIR}/common.sh"
@@ -533,15 +521,6 @@ main() {
                         exit 1
                     fi ;;
             esac
-            ;;
-        info|list|check|visitors)
-            case "$command" in
-                info)     echo "geodineum info is now  sudo geodineum status <id>" >&2 ;;
-                list)     echo "geodineum list is now  sudo geodineum status" >&2 ;;
-                check)    echo "geodineum check is now  geodineum status --config" >&2 ;;
-                visitors) echo "geodineum visitors is now  sudo geodineum status --visitors [<site>]" >&2 ;;
-            esac
-            exit 2
             ;;
         update)
             source "${LIB_DIR}/common.sh"
@@ -591,10 +570,6 @@ USAGE
                 exit 2
             fi
             local _svc_sub="$1"; shift
-            if [[ "$_svc_sub" == "new" ]]; then
-                echo "geodineum service new is now  sudo geodineum register" >&2
-                exit 2
-            fi
             source "${LIB_DIR}/common.sh" 2>/dev/null || true
             source "${LIB_DIR}/manifest-registry.sh" 2>/dev/null || true
             source "${LIB_DIR}/manifest-install.sh" 2>/dev/null || {
@@ -663,8 +638,7 @@ USAGE
             esac
             ;;
         uninstall)
-            # Dispatcher to uninstall.sh.
-            # Defaults to dry-run; --commit required to actually delete.
+            # Dispatcher to uninstall.sh (deletes by default; --dry-run previews).
             if [[ ! -x "${SCRIPT_DIR}/uninstall.sh" ]]; then
                 echo "Error: uninstall.sh not found at ${SCRIPT_DIR}/uninstall.sh" >&2
                 exit 1

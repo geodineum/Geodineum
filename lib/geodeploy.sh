@@ -105,7 +105,7 @@ fi
 _GD_OWNER="${GEODEPLOY_DEPLOY_USER}"
 _GD_GROUP="gnode"
 _GD_SERVICE=""
-_GD_DIRTY="stash"
+_GD_DIRTY="discard"
 _GD_BUILD_TYPE=""
 _GD_BUILD_DIR=""
 _GD_BUILD_CMD=""
@@ -160,8 +160,7 @@ geodeploy_log() {
 # =============================================================================
 # Git network/write operations and builds run AS THE DEPLOY USER, never
 # root. The GitHub deploy key lives in the deploy user's ~/.ssh (set up
-# by install.sh) — root has no access to the private repos (its fetches
-# fail with "Permission denied (publickey)"), and root-run git/cargo
+# by install.sh), and root-run git/cargo
 # also litters .git/ and target/ with root-owned files the deploy user
 # can no longer touch. CWD is preserved by sudo; HOME + PATH are set so
 # ssh finds the deploy key and cargo finds the toolchain.
@@ -210,7 +209,7 @@ print(json.dumps({
     'owner': r.get('owner', '${GEODEPLOY_DEPLOY_USER}'),
     'group': r.get('group', 'gnode'),
     'service': r.get('service', ''),
-    'dirty': dt.get('strategy', 'stash'),
+    'dirty': dt.get('strategy', 'discard'),
     'build_type': b.get('type', ''),
     'build_dir': b.get('working_dir', '.'),
     'build_cmd': b.get('command', ''),
@@ -234,7 +233,7 @@ geodeploy_set_defaults() {
     local comp_type="${1:-php}"  # php | rust-daemon | rust-lib | lua | bash
 
     _GD_OWNER="${GEODEPLOY_DEPLOY_USER}"
-    _GD_DIRTY="stash"
+    _GD_DIRTY="discard"
     _GD_BUILD_TYPE=""
     _GD_BUILD_DIR="."
     _GD_BUILD_CMD=""
@@ -370,17 +369,13 @@ geodeploy_handle_dirty() {
     fi
 
     case "$strategy" in
-        # `discard` is the canonical name; `stash` accepted as a legacy alias
-        # (it has BEHAVED as discard since the gTemplate corruption — the
-        # rename made the manifests truthful, and this arm makes the lib
-        # accept the truthful word; without it, discard fell to *) and the
-        # orchestrator silently stopped deploying any dirty component).
+        # `stash` behaves as discard.
         stash|discard)
             # Deploy targets mirror origin; geodeploy_pull's reset --hard
             # overwrites tracked files regardless. Discard local changes here
             # rather than stashing — stash + stash-pop is what wrote conflict
             # markers into working-tree files when upstream touched the same
-            # lines. (Strategy name kept for geodeploy.yaml compatibility.)
+            # lines.
             #
             # clean MUST exclude untracked RUNTIME dirs: logs/ + .gnode/
             # (daemon state), backups/ (ValKey RDB archive — deleting it
@@ -411,22 +406,6 @@ geodeploy_handle_dirty() {
             return 1
             ;;
     esac
-}
-
-geodeploy_stash_pop() {
-    local name="${1:-unknown}"
-
-    # The deploy flow no longer stashes (it force-syncs to origin via
-    # reset --hard). This now only DROPS legacy geodeploy-auto stashes left
-    # by older versions — popping them onto a reset tree is what produced
-    # conflict markers. Local deploy artifacts are not authored here, so
-    # discarding the stash is safe.
-    local stash_ref
-    while stash_ref=$(geodeploy_as_deploy git stash list 2>/dev/null | grep -m1 "geodeploy-auto-" | cut -d: -f1); do
-        [[ -n "$stash_ref" ]] || break
-        geodeploy_as_deploy git stash drop "$stash_ref" 2>> "$GEODEPLOY_LOG" || break
-        geodeploy_log "${name}: dropped legacy stash ${stash_ref}"
-    done
 }
 
 # =============================================================================
@@ -2101,9 +2080,6 @@ geodeploy_repo() {
     else
         geodeploy_log "${name}: ERROR pull-failed ${local_rev}→${remote_rev}"
     fi
-
-    # Restore stashed changes
-    geodeploy_stash_pop "$name"
 }
 
 # =============================================================================

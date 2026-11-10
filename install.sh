@@ -33,7 +33,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/lib"
 INSTALL_ROOT="${GEODINEUM_ROOT:-/opt/geodineum}"
-COMPONENTS_FILE="${SCRIPT_DIR}/components.yaml"
 GNODE_SCRIPTS=""  # set after gNode is located
 
 # =============================================================================
@@ -103,14 +102,11 @@ WITH_COMMS=true
 COMMS_EXPLICIT=false
 SITE_DOMAIN=""
 SITE_THEME=""
-SITE_THEME_PATH=""
 SITE_ENV=""
 DRY_RUN=false
 SKIP_BUILD=false
 YES_MODE=false
 # Wizard state
-INTENT="deploy"           # always deploy in public installer
-CONSTELLATION="new"       # new | private
 DEPLOY_TIER=""            # web | full | compute | replica (when joining constellation)
 MASTER_IP=""              # constellation master's VPN IP (non-interactive join)
 JOIN_BUNDLE=""            # file written by `geodineum node add` on the master
@@ -121,13 +117,10 @@ CONSTELLATION_REPLICA_PW="" # master's valkey_replica.password, pasted during a 
 CONSTELLATION_NODE_USER=""  # this node's own ValKey ACL user, minted by the master's `expand`
 CONSTELLATION_NODE_PW=""    # its password (empty = fall back to the shared gnode_daemon login)
 GNODE_NODE_ID=""            # this node's unique id / consumer name (default: hostname on a join, "master" otherwise)
-# GitHub auth: SSH (deploy key) or HTTPS (PAT). All repos are currently
-# private — see docs/GITHUB_AUTH.md for setup before running install.sh.
-#
-# Precedence:
-#   GEODINEUM_GIT_PROTOCOL=ssh    → use git@github.com:owner/repo.git
-#   GEODINEUM_GITHUB_TOKEN=<pat>  → use https://x-access-token:<pat>@github.com/...
-#   neither                        → fall back to https://github.com/... (will FAIL on private repos)
+# Clone URLs (docs/GITHUB_AUTH.md):
+#   GEODINEUM_GIT_PROTOCOL=ssh    → git@github.com:owner/repo.git
+#   GEODINEUM_GITHUB_TOKEN=<pat>  → https://x-access-token:<pat>@github.com/...
+#   neither                       → https://github.com/...
 GIT_PROTOCOL="${GEODINEUM_GIT_PROTOCOL:-}"
 GITHUB_TOKEN="${GEODINEUM_GITHUB_TOKEN:-}"
 
@@ -164,9 +157,6 @@ elif [[ -n "$GITHUB_TOKEN" ]]; then
     GITHUB_CLONE_PREFIX="https://x-access-token:${GITHUB_TOKEN}@github.com/"
     GITHUB_CLONE_SUFFIX=".git"
 else
-    # Default to HTTPS unauthenticated. Works for public repos only.
-    # Private-repo installs will fail in Phase 5 with "Repository not found".
-    # See docs/GITHUB_AUTH.md.
     GITHUB_CLONE_PREFIX="https://github.com/"
     GITHUB_CLONE_SUFFIX=".git"
 fi
@@ -186,7 +176,6 @@ HAS_VALKEY=false
 HAS_SYSTEMD=false
 VALKEY_RUNNING=false
 GNODE_INSTALLED=false
-GNODE_RUNNING=false
 CONFIG_EXISTS=false
 
 # =============================================================================
@@ -220,7 +209,6 @@ usage() {
     echo "                          node, or notifications from the constellation master)"
     echo "  --with-comms            Force-include Geodineum-COMMS (non-interactive)"
     echo "  --install-root <path>   Production install location (default: /opt/geodineum)"
-    echo "  --constellation <type>  new or private"
     echo "  --constellation-name <n> Name of a new constellation (default: geodineum; a-z, 0-9, _)"
     echo "  --deploy-tier <tier>    web, full, compute, or replica (join an existing constellation)"
     echo "  --master-ip <ip>        Constellation master's VPN IP (with --deploy-tier; e.g. 10.66.0.1)"
@@ -249,7 +237,7 @@ usage() {
     echo "  sudo $0                                     # Interactive guided setup"
     echo "  sudo $0 --profile standard --yes            # Non-interactive standard"
     echo "  sudo $0 --install-root /srv/geodineum       # Custom install location"
-    echo "  sudo $0 --constellation private --deploy-tier replica  # Join existing"
+    echo "  sudo $0 --deploy-tier replica --master-ip 10.66.0.1  # Join existing"
     echo "  sudo $0 --deploy-tier compute --master-ip 10.66.0.1 --yes  # Non-web worker"
 }
 
@@ -262,12 +250,10 @@ parse_args() {
             --with-comms)   WITH_COMMS=true;  COMMS_EXPLICIT=true; shift ;;
             --site)         SITE_DOMAIN="$2"; shift 2 ;;
             --theme)        SITE_THEME="$2"; shift 2 ;;
-            --theme-path)   SITE_THEME_PATH="$2"; shift 2 ;;
             --env)          SITE_ENV="$2"; shift 2 ;;
             --dry-run)      DRY_RUN=true; shift ;;
             --skip-build)   SKIP_BUILD=true; shift ;;
             --yes|-y)       YES_MODE=true; shift ;;
-            --constellation) CONSTELLATION="$2"; shift 2 ;;
             --constellation-name) GNODE_TOPOLOGY_NAMESPACE="$2"; CONSTELLATION_NAME_SET=true; shift 2 ;;
             --deploy-tier)  DEPLOY_TIER="$2"; shift 2 ;;
             --master-ip)    MASTER_IP="$2"; shift 2 ;;
@@ -427,7 +413,6 @@ get_profile_components() {
 # Requires --master-ip (or VALKEY_HOST) so the node knows the master's VPN IP.
 apply_deploy_tier() {
     [[ -z "$DEPLOY_TIER" ]] && return 0
-    CONSTELLATION="private"
     case "$DEPLOY_TIER" in
         web)
             [[ -z "$PROFILE" ]] && PROFILE="minimal"
@@ -894,34 +879,9 @@ SSHEOF
     fi
 
     # --- Resolve GitHub clone protocol ---
-    #
-    # trust the configured deploy infrastructure. Pre-fix we ran a
-    # `su - $DEPLOY_USER -c "ssh -T git@github-deploy"` test as the
-    # primary auto-detect — but `su -c` strips the deploy user's
-    # interactive env in ways that produce false-negatives even when the
-    # SAME ssh command works fine when run directly by the deploy user
-    # in their normal shell. That false-negative dropped the protocol
-    # to HTTPS, which (since all geodineum/* repos are still private)
-    # then prompted for github.com username + PAT and failed cleanly.
-    #
-    # The decision-X locked workaround was `GEODINEUM_GIT_PROTOCOL=ssh`.
-    # That worked, but now plain `sudo ./install.sh` (no env var)
-    # the documented common path — and the broken test surfaced.
-    #
-    # New logic: if the deploy key exists AND the github-deploy SSH
-    # alias is configured, USE THEM. This block is only reached after
-    # the alias-config block above has run, and that block GUARANTEES
-    # the alias is present when the deploy key is. So in the common
-    # path: deploy key present → SSH via github-deploy.
-    #
-    # Layered fallbacks remain for the edge cases:
-    #   - Operator explicit `GEODINEUM_GIT_PROTOCOL=ssh`  → SSH
-    #   - Operator explicit `GEODINEUM_GIT_PROTOCOL=https` + token → HTTPS+PAT
-    #   - Deploy key present (auto-trust)                → SSH
-    #   - Deploy user's own ~/.ssh works against github  → use that
-    #   - Final fallback                                  → HTTPS (will
-    #                                                       prompt + fail
-    #                                                       on private repos)
+    # Order: GEODINEUM_GIT_PROTOCOL=ssh with the deploy key; https with a
+    # token; the deploy key (its github-deploy alias is configured above);
+    # the deploy user's own SSH key; plain HTTPS.
     log_info "Resolving GitHub clone protocol..."
     if [[ "$GIT_PROTOCOL" == "ssh" ]] && [[ -f "${deploy_key}" ]]; then
         log_success "SSH (GEODINEUM_GIT_PROTOCOL=ssh + deploy key present)"
@@ -949,7 +909,6 @@ SSHEOF
         GITHUB_CLONE_SUFFIX=".git"
     else
         log_warning "No SSH path available — falling back to HTTPS"
-        log_info "All geodineum/* repos are private; HTTPS will prompt for credentials."
         log_info "To use SSH, generate a deploy key (see docs/GITHUB_AUTH.md)."
         log_info "To use a PAT, set GEODINEUM_GITHUB_TOKEN before re-running."
         GITHUB_CLONE_PREFIX="https://github.com/"
@@ -1089,7 +1048,6 @@ phase_detection() {
     fi
 
     if [[ "$HAS_SYSTEMD" == "true" ]] && systemctl is-active --quiet gnode-daemon 2>/dev/null; then
-        GNODE_RUNNING=true
         log_success "gNode daemon running"
     fi
 
@@ -1486,7 +1444,6 @@ phase_selection() {
 
     case "${constellation_choice:-1}" in
         2)
-            CONSTELLATION="private"
             echo ""
             echo -e "  ${BOLD}What role will this node serve?${NC}"
             echo ""
@@ -1559,7 +1516,6 @@ phase_selection() {
             wizard_constellation_join
             ;;
         *)
-            CONSTELLATION="new"
             log_info "Constellation: new (standalone deployment)"
             ask_constellation_name
             ;;
@@ -3382,15 +3338,6 @@ provision_dashboard_acl() {
         return
     fi
 
-    # Migrate legacy credential file locations if present.
-    local legacy_cred_file="${creds_dir}/geodineum-dashboard.txt"
-    if [[ -f "$legacy_cred_file" ]] && [[ ! -f "$cred_file" ]]; then
-        if [[ -d "$dash_dir" ]]; then
-            mv "$legacy_cred_file" "$cred_file"
-            log_detail "Migrated dashboard credential: ${legacy_cred_file} → ${cred_file}"
-        fi
-    fi
-
     # ensure dashboard/ exists. Phase 4 runs before Phase 7's
     # canonical directory creation, so on first install this dir
     # wouldn't exist yet — provision skipped with a "re-run install.sh"
@@ -3553,7 +3500,7 @@ preflight_github_auth() {
     # Failed — give actionable error
     log_error "Cannot reach ${test_repo} via ${GITHUB_CLONE_PREFIX}"
     echo ""
-    echo -e "  ${BOLD}All Geodineum repos are currently private.${NC} You need either:"
+    echo -e "  Check that this host reaches github.com. For private forks, use either:"
     echo ""
     echo -e "    ${BOLD}A) SSH deploy key${NC} (recommended)"
     echo "       1. ssh-keygen -t ed25519 -f ~/.ssh/geodineum_deploy -N ''"
@@ -3580,9 +3527,7 @@ phase_fetch() {
 
     log_step "Phase 5/10: Fetching Components"
 
-    # Preflight: confirm GitHub auth before attempting any clone.
-    # All Geodineum repos are currently private — fail fast with a useful
-    # message rather than 8 cryptic "Repository not found" errors.
+    # Preflight: confirm GitHub access before attempting any clone.
     preflight_github_auth || {
         log_error "GitHub authentication check failed — see docs/GITHUB_AUTH.md"
         exit 1
@@ -5488,7 +5433,7 @@ print_summary() {
     echo "  ${BOLD}Next steps:${NC}"
 
     if needs_daemon "${resolved[@]}"; then
-        if [[ "$GNODE_RUNNING" == "true" ]] || systemctl is-active --quiet gnode-daemon 2>/dev/null; then
+        if systemctl is-active --quiet gnode-daemon 2>/dev/null; then
             echo "    - Daemon is running. Check: sudo systemctl status gnode-daemon"
         else
             echo "    - Start daemon: sudo systemctl start gnode-daemon"
@@ -5776,7 +5721,6 @@ main() {
     # constellations, node id, master address and (if given there) the tier.
     if [[ -n "$JOIN_BUNDLE" ]]; then
         [[ -r "$JOIN_BUNDLE" ]] || { log_error "--join: cannot read ${JOIN_BUNDLE}"; exit 1; }
-        CONSTELLATION="private"
         wizard_apply_constellation_bundle "$JOIN_BUNDLE" || { log_error "--join: could not apply ${JOIN_BUNDLE} (see above)"; exit 1; }
         if [[ -z "$DEPLOY_TIER" ]]; then
             [[ "$YES_MODE" == "true" ]] && { log_error "--join --yes needs a tier: pass --deploy-tier, or --tier to 'geodineum node add'"; exit 1; }
@@ -5980,18 +5924,16 @@ main() {
     trap rollback_on_interrupt INT TERM
 
     # Track component fetches for rollback
-    _original_fetch_component=$(declare -f fetch_component)
+    eval "_fetch_component_orig() $(declare -f fetch_component | tail -n +2)"
     fetch_component() {
         local name="$1"
         local install_dir="${INSTALL_ROOT}/$(get_install_dir "$name")"
         local was_new=false
         [[ ! -d "$install_dir" ]] && was_new=true
 
-        # Call original function (defined above)
-        eval "${_original_fetch_component#*\{}" 2>/dev/null
-        local result=$?
+        local result=0
+        _fetch_component_orig "$@" 2>/dev/null || result=$?
 
-        # Track new clones for rollback
         if [[ "$was_new" == "true" ]] && [[ -d "$install_dir" ]]; then
             INSTALLED_REPOS+=("$install_dir")
         fi

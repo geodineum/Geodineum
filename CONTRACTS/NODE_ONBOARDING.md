@@ -109,7 +109,7 @@ installer's **Join constellation** also takes the bundle's path at its prompt.
 
 ```bash
 # On the NEW NODE
-sudo ./install.sh --constellation private --deploy-tier full \
+sudo ./install.sh --deploy-tier full \
     --master-ip 10.66.0.1 --yes
 ```
 

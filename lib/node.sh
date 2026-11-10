@@ -222,7 +222,7 @@ print(json.loads(d).get("sh", "") if d else "")' 2>/dev/null)"
     echo "    on ${name}:  sudo systemctl disable --now gnode-daemon wg-quick@wg-geodineum"
     echo "    on ${name}:  sudo rm -f /etc/wireguard/wg-geodineum.conf /etc/geodineum/credentials/valkey_node.password /etc/geodineum/credentials/valkey_daemon.password"
     echo "    on ${name}:  sudo geodineum constellation leave-replica    # only if it was a replica"
-    echo "    (or uninstall Geodineum there entirely:  on ${name}:  sudo ./uninstall.sh --commit)"
+    echo "    (or uninstall Geodineum there entirely:  on ${name}:  sudo ./uninstall.sh)"
     local bundle_home
     bundle_home="$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)"
     [[ -f "${bundle_home}/${name}.geodineum-bundle" ]] && rm -f "${bundle_home}/${name}.geodineum-bundle" && echo "  (removed the unused bundle ${bundle_home}/${name}.geodineum-bundle)"

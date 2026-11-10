@@ -50,7 +50,7 @@ BUNDLE (master `node add <name> <ip:port> [--tier t]`; the first one sets up the
   ~/<name>.geodineum-bundle 0600, NEVER printed. SECRET. Fallback if mint fails: shared gnode_daemon login.
   Own-key machine (admin laptop): node add <name> roaming --pubkey <k> → peer only + its WG lines.
 JOIN: wizard "Join constellation" + paste bundle (easiest) OR flag-driven
-  `install.sh --constellation private --deploy-tier <web|full|compute|replica> --master-ip
+  `install.sh --deploy-tier <web|full|compute|replica> --master-ip
   10.66.0.1 --yes` (pre-stage WG conf + valkey_daemon.password). --master-ip (or VALKEY_HOST)
   REQUIRED for non-standalone tiers. bootstrap.env gets VALKEY_HOST=<master>. --branch sets the
   git ref for ALL component repos.

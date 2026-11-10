@@ -102,11 +102,10 @@ steps. Copy `services/hello-world/` and validate it with `geodineum validate`.
 
 ## Limits worth knowing
 
-- **Multi-node replica tier is experimental**: headless and full nodes ship
-  today; a local read/write-split ValKey replica does not. And yes, we are
-  already working on it.
-- **`config.defaults` seeding is deferred**: the orchestrator does not yet
-  NX-seed a manifest's config defaults at install time.
+- **Multi-node replica tier is experimental**: headless and full nodes are
+  supported; a local read/write-split ValKey replica is not.
+- **No `config.defaults` seeding**: the orchestrator does not NX-seed a
+  manifest's config defaults at install time.
 - **Backup is wholesale, not per-service**: the RDB snapshot covers everything;
   per-service `backup.*` entries are introspective hints, not selective backups.
 - **Validated on a fresh Ubuntu 22.04 host**: the full install → uninstall →
@@ -114,10 +113,8 @@ steps. Copy `services/hello-world/` and validate it with `geodineum validate`.
 
 ## Collaborate
 
-Contributions are welcome. Check **[`ROADMAP.md`](ROADMAP.md)** to see what is
-already on our plate and pick up work from there. We do not curate
-`good-first-issue` labels in the age of AI: read the roadmap, pick something
-real, and build it.
+Contributions are welcome. Open an issue describing the problem before the
+pull request.
 
 - Fork, branch, and open a pull request against `main`; we review every PR.
 - Changes to a wire contract can be proposed, but expect intense scrutiny. Any
