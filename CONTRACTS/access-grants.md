@@ -8,6 +8,8 @@ ledger entry before it is an ACL change. Implementation `gNode/scripts/cli/grant
 ```
 request  geodineum grants request <svc> <pattern...> [--reason ...] [--ttl-hours N]
          → {ns}:gnode:grants:requests (idempotent: identical pending request refused)
+         <pattern> is read+write; %R~<pattern> read-only, %W~<pattern> write-only.
+         Nothing else passes: a pattern can never carry another ACL rule.
 notify   one COMMS message to the operator channel (resolve: GEODINEUM_GRANTS_SITE
          → bot's site if configured → geodineum_com), type=alert (NEVER system —
          COMMS drops those), carrying Telegram Approve/Deny buttons via

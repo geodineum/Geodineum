@@ -208,8 +208,11 @@ The credential's disk model follows the type: web types →
 ## 6. Need more access? The grant-request loop
 
 ```bash
-geodineum grants request myservice "{geodine}:receipts:*" --reason "..." [--ttl-hours 72]
+geodineum grants request myservice "%R~{geodine}:receipts:*" --reason "..." [--ttl-hours 72]
 ```
+
+- Ask for what you need: `%R~<pattern>` is granted read-only; a bare
+  `<pattern>` is read and write.
 
 - The request is **data** on `{geodineum}:gnode:grants:requests`; the admin is
   emailed via COMMS with the approve/deny one-liners.
