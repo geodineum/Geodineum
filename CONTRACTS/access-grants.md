@@ -11,7 +11,8 @@ request  geodineum grants request <svc> <pattern...> [--reason ...] [--ttl-hours
          <pattern> is read+write; %R~<pattern> read-only, %W~<pattern> write-only.
          Nothing else passes: a pattern can never carry another ACL rule.
 notify   one COMMS message to the operator channel (resolve: GEODINEUM_GRANTS_SITE
-         → bot's site if configured → geodineum_com), type=alert (NEVER system —
+         → COMMS_INBOUND_SITE, default geodineum, when it has a COMMS config
+         → geodineum_com), type=alert (NEVER system —
          COMMS drops those), carrying Telegram Approve/Deny buttons via
          dispatch.reply_markup
 decide   CLI: grants approve|deny <id>   (master; admin cred)
@@ -36,6 +37,14 @@ timeout  auto-DENY after ttl (default 72 h), notified
 - **`ACL SAVE` after apply.** Without it the grant lives in memory and the
   next ValKey restart silently reverts it (this reverted three services
   once).
+
+## Limit
+
+An approval adds its patterns to `gnode_client_<svc>` directly. A later regrant
+of that service (`onboard-service.sh --regrant`, or `geodineum register <path>`
+after its manifest changed) resets the key patterns to the base and the manifest;
+nothing replays the ledger, so approved grants are gone and must be requested
+again. `grants show <svc>` puts the ledger beside the effective ACL.
 
 ## Keys
 

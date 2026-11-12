@@ -24,7 +24,7 @@ Nothing holds state in-process that another node would need.
 |---|---|---|
 | **Wire protocol & commands** | gNode `COMMAND_SCHEMA.md` — message format, field aliases, all commands, lane semantics | `describe` at runtime |
 | **Integration contract** | gNode `CONTRACT.md` / `CONTRACT.scn.md` — what gNode provides/consumes | `geodineum daemon contract` |
-| **Service registration & ACL** | `CONTRACTS/SERVICE_ONBOARDING.md` (this repo) — `.geodineum/` manifest, `onboard-service.sh`, `--profile`, `--environment` | `geodineum grants show <svc>`; entity in `{<svc>}:gnode:services:entities` |
+| **Service registration & ACL** | `CONTRACTS/SERVICE_ONBOARDING.md` (this repo) — `.geodineum/` manifest with its `gnode:` block, `sudo geodineum register … --env <tier>` | `sudo geodineum grants show <svc>`; `sudo geodineum topology show <svc>` |
 | **Registration intent (derived)** | gNode `daemon/src/registration_intent.rs` — declare once, entity re-derived, 120 s reconcile | `HGETALL {ns}:gnode:registrations` |
 | **Inter-service routing** | gNode `docs/architecture/INTER_SERVICE_ROUTING.md` — `_rt`/`_rr` relay, format translation | send with `_rt`, watch the target stream |
 | **Format system** | gNode `COMMAND_SCHEMA.md` §Format — `register_format`, `detect_format`, `list_formats` | `list_formats` |
@@ -32,7 +32,7 @@ Nothing holds state in-process that another node would need.
 | **Daemon configuration** | gNode `docs/operations/CONFIGURATION.md` | `config_get` |
 | **Per-service config keyspace** | manifest `config:` section (`schemas/geodeploy-manifest.schema.yaml`, this repo); convention default `{site}:<name>:config:*` | read your keys |
 | **Heartbeat / liveness** | `CONTRACTS/heartbeat.md` (this repo) — key form, node segment, writer census | your key appears within 60 s of start |
-| **Deploy** | your `geodeploy.yaml` — triggers, build, dirty-tree; annotated reference: `services/hello-world/` (this repo) | push to main; the orchestrator does the rest |
+| **Deploy** | your `geodeploy.yaml` — triggers, build, dirty-tree; annotated reference: `services/hello-world/` (this repo). The orchestrator pulls a checkout under `/opt/geodineum` that is a core repo or listed in `/opt/geodineum/site-repos.conf`; it never pulls `/var/www` | push to main; pulled within five minutes |
 | **CLI verbs** | manifest `cli:` section — verbs surface in `geodineum --help` | `geodineum --help` |
 | **Native install** | manifest `install:`/`uninstall:`/`health_check` sections | `sudo geodineum service install <repo>/geodeploy.yaml` |
 | **Backup** | manifest `backup:` section — keys, files, schedule; Geodineum-BAK logs these hints, its ValKey snapshot is wholesale (selective backup is not built) | `geodineum status bak` |

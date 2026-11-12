@@ -20,7 +20,8 @@ MANIFEST: .geodineum/gnode_services.yaml  gnode:{constellation,shape,heartbeat,h
 HEALTH := heartbeat {<c>}:gnode:heartbeat:<env>:<component>:<node> SETEX 120 → placement + band;
   >75 s stale = dead = off the ring. SITE health = its HOST DAEMON's heartbeat ⇒ register --on <node>.
 ROUTING := weighted round-robin over a service's ring; capacity_weight 0 = standby (ring empty only).
-PERMISSION := holds/requires labels + TTL deny; undeclared ⇒ refused (fail closed).
+PERMISSION := reach iff t below c (lower layer | same layer ∧ lower fundamentality) or t ∈ peers:c ∧ same env (or t global)
+  ∧ c holds ∀ requires:t ∧ no TTL deny; undeclared ⇒ refused (fail closed). peers is one-directional.
 ```
 
 ## ::ANCHOR (commands — all on the MASTER, sudo; every one verified against its script)
@@ -38,7 +39,7 @@ EXISTING  register  sudo geodineum register <path> --env <e>   (INTEGRATE: scan 
 REPAIR    primitive sudo geodineum topology register service <id> [profile] [--manifest <path>] [--on <node>]  (one entity by hand; never the route)
 NON-GEO   register  sudo geodineum register <path> --probe unit:<u>|tcp:<h>:<p>|http:<url>|pid:<file>|cmd:</abs> --env <e>
                     (INTEGRATE: identity + topology + the probe-gated heartbeat; the probe is the proof)
-CHECK     sudo geodineum topology [all|show <id>|load [id]|verify|stats] · sudo geodineum status [--json] · geodineum status <id> · geodineum status
+CHECK     sudo geodineum topology [all|show <id>|load [id]|verify|stats] · sudo geodineum status [--json] · sudo geodineum status <id>
 DEREG     sudo geodineum deregister <id> [--purge-data] [--keep-acl] [--dry-run]   (THE route: intent, entity+placements in its own
           constellation, keys, identity, then the host ledger newest-first; data only with --purge-data; residue check last)
           sudo geodineum topology deregister <id>         (primitive: the topology entity only)

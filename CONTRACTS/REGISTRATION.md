@@ -36,16 +36,19 @@ Three rules hold for every recipe below.
   process: its health is its **host daemon's** heartbeat, which is why a site is
   registered `--on <node>`.
 - **Permission is labels.** An entity `holds` labels and `requires` labels of
-  its callers. A caller reaches a target when it sits above it, holds what it
-  requires and no deny is active. Anything undeclared is refused.
+  its callers. A caller reaches a target when the target sits below it (or is in
+  the caller's `peers`), both are in the same environment (or the target is
+  `global`), the caller holds what the target requires and no deny is active.
+  Anything undeclared is refused (section 6).
 
 Routing is weighted round-robin over a service's ring; `capacity_weight: 0`
 is a standby that serves only when the ring is empty.
 
 ### The manifest block
 
-The declaration lives in the service's `.geodineum/gnode_services.yaml`. Every
-generator (`register`, `new site`, `register`) writes it.
+The declaration lives in the service's `.geodineum/gnode_services.yaml`.
+`geodineum register` writes it for a NEW service and keeps an existing one on
+INTEGRATE.
 
 ```yaml
 profile: service            # fallback when there is no gnode: block
@@ -56,7 +59,7 @@ gnode:
   heartbeat: myservice      # component name in the heartbeat key
   holds: [internal]
   requires: [internal]
-  peers: []                 # same-layer entities allowed to reach each other
+  peers: []                 # entities this one may reach although they are not below it
   fundamentality: 0.3       # optional; the shape's default applies
   capacity_weight: 1        # 0 = standby
   axes: { protocol: [gnode_stream], service_scope: internal_api, domain: [compute] }
@@ -144,7 +147,7 @@ Check and deregister:
 ```bash
 sudo geodineum topology show example_com     # shape 3.1, placement example_com@<node>
 sudo geodineum status                         # health = the host daemon's heartbeat
-geodineum status example_com
+sudo geodineum status example_com
 
 sudo geodineum deregister example_com                  # topology, intent, keys, identity, and what registering created here
 ```
@@ -191,8 +194,8 @@ daemon measured.
 |---|---|
 | `holds` | labels this entity carries |
 | `requires` | labels a caller must hold to reach it |
-| `peers` | same-layer entities allowed to reach each other |
-| `fundamentality` | position inside its layer; edges point from the less to the more fundamental |
+| `peers` | entities this one may reach although they are not below it (one direction: the caller lists the target) |
+| `fundamentality` | position inside its layer; a caller reaches a target of a lower layer, or of its own layer with a lower value (site 0.7, app 0.5, daemon 0.3 by default) |
 
 A TTL deny blocks one caller from one target without touching the manifest.
 Reach is checked once per relayed command and fails closed. A refusal names its

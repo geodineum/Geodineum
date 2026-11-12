@@ -4,4 +4,6 @@
 
 **Invariants** (each from a live failure): ledger-then-apply (`:grants:ledger` BEFORE SETUSER; already-decided refused → replay-safe, watch reads from 0) · allowlist ×2 (`COMMS_ADMIN_IDS` at receiver AND watch — inbound stream is writable data; `GEODINEUM_GRANT_ADMINS` narrows only; none → refuse) · buttons not capability-URLs (prefetch fires GETs) · `ACL SAVE` post-apply (memory-only grants reverted 3 services once).
 
-**Notify-site resolve** GEODINEUM_GRANTS_SITE → bot's site if config exists → geodineum_com. Impl: gNode/scripts/cli/grants.sh.
+**Notify-site resolve** GEODINEUM_GRANTS_SITE → COMMS_INBOUND_SITE (default geodineum) if its comms config exists → geodineum_com. Impl: gNode/scripts/cli/grants.sh.
+
+**Limit** approve = ACL SETUSER on the service user; a later regrant (resetkeys → base + manifest) drops it, no ledger replay → re-request. `grants show` = ledger ∥ effective ACL.

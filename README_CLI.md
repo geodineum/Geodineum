@@ -60,7 +60,9 @@ It then lists what it lacks and what it will do about each, and after a
 confirmation applies only those parts, through the same rows as NEW. An app's
 heartbeat probes its port unless `--probe` names a URL.
 
-Registering again is the same command: a changed manifest recomposes its grants.
+Registering again is the same command: a changed manifest recomposes its grants
+(grants approved through `geodineum grants` are dropped by that and must be
+requested again). `--owner`, `--mail-domain` and `--form` work with NEW only.
 Everything registration creates on the host is recorded in
 `/etc/geodineum/registrations/<id>.tsv`, which is what `geodineum deregister`
 undoes. A service that runs on another node: `--node <name>` on the master writes
@@ -303,13 +305,30 @@ inspect, or to declare a node that runs no daemon; register services with
 ```bash
 sudo geodineum topology [list|all|show <id>|stats|sites|load [id]|verify]
 sudo geodineum topology register components
-sudo geodineum topology register service <site> [profile] [--env <dtap>]
+sudo geodineum topology register service <site> [profile] [--env <dtap>] [--manifest <path>] [--on <node>]
 sudo geodineum topology register node <id> [--role <word>] [--specialization <word>] [--constellation <c>]
 sudo geodineum topology deregister <id>
 sudo geodineum topology deregister --shape <site|app|daemon|component|node> --confirm
 ```
 
 One recipe per entity type, with checks and refusals: [CONTRACTS/REGISTRATION.md](CONTRACTS/REGISTRATION.md).
+
+---
+
+### `grants` — ask for keys outside your own namespace
+
+```bash
+sudo geodineum grants request <id> '%R~{other}:some:*' --reason "…" [--ttl-hours 72]
+sudo geodineum grants pending
+sudo geodineum grants approve <request_id> [--patterns "…"]     # on the master
+sudo geodineum grants deny <request_id> [--reason "…"]          # on the master
+sudo geodineum grants show <id>                                  # decisions + effective ACL
+```
+
+`%R~<pattern>` is granted read-only, `%W~` write-only, a bare pattern read and
+write. The decision is ledgered before the ACL changes; undecided requests
+auto-deny after the TTL. A later regrant of the service drops approved grants.
+See [CONTRACTS/access-grants.md](CONTRACTS/access-grants.md).
 
 ---
 
