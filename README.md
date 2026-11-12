@@ -79,6 +79,17 @@ standard live in **[`CONTRACTS/`](CONTRACTS/)**; each component repository ships
 its own `CONTRACT.md`. Multi-node deployment is walked through in
 **[`docs/MULTI_NODE_DEPLOYMENT.md`](docs/MULTI_NODE_DEPLOYMENT.md)**.
 
+## Onboard a service
+
+Read **[`CONTRACTS/SERVICE_ONBOARDING.md`](CONTRACTS/SERVICE_ONBOARDING.md)**: one
+document from registration to proof, for a website, an app, a daemon or a service
+composed from ones already registered. Its twin
+**[`SERVICE_ONBOARDING.scn.md`](CONTRACTS/SERVICE_ONBOARDING.scn.md)** carries the
+same rules at a third of the length, for agents. The entry point is
+`sudo geodineum register`; it writes the service's place in the mesh (identity,
+grants, reach) to `.geodineum/gnode_services.yaml`. A component the orchestrator
+deploys also carries a `geodeploy.yaml`.
+
 ## Quick start
 
 Clone to `/opt/geodineum/Geodineum/` and run the installer:
