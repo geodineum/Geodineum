@@ -18,6 +18,10 @@ IDENTITY := gnode_client_<id> · /etc/geodineum/credentials/valkey_client_<id>.p
   g: web→geodineum-web (pool → web_<id>) · app|daemon|scheduled→own · gcore-service|custom→geodineum.
 BASE GRANT := ~{<id>}:* ~<id>:* ~{<c>}:gnode:heartbeat:*:<id>:* %R~{<c>}:gnode:*
   + manifest consumes/produces ⊂ allow-list (manifest-policy.sh); foreign ⇒ ABORT; empty ⇒ REFUSED.
+  shared outside own ns: %R~ {default}:gcore:* gnode:site:* gnode:sites:* gnode:routing:* ·
+  own only gnode:consumer_groups_verified:<id>:* topology:<id>:* template:<id>:* ·
+  REFUSED gnode:* {default}:gnode:* membership:* {testing|staging|acceptance|production}:gnode:*.
+  WP site declares policy_site_consumes/produces (its gCore runtime's reads + own writes).
 COMMANDS := allowlist in onboard-service.sh; NO eval|subscribe|keys|xautoclaim|zrangebyscore.
 THREE LAYERS := disk ∥ ValKey ACL ∥ reach — never conflated.
 REACH(c→t) := both declared ∧ (t below c: lower layer | same layer ∧ lower fundamentality | t ∈ peers:c)

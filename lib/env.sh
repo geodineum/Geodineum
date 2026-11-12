@@ -161,14 +161,14 @@ valkey_site_id() {
     printf '%s' "$1" | tr '.-' '__'
 }
 
-# valkey-cli as the site's client, else as admin; returns 2 when neither credential is readable.
+# valkey-cli as the site's client, else as admin ("-" for admin only); returns 2 when neither credential is readable.
 _valkey_env_cli() {
     local site_id="$1"; shift
     local client_pw="${GEODINEUM_CREDENTIALS_DIR}/valkey_client_${site_id}.password"
     local admin_pw="${GEODINEUM_CREDENTIALS_DIR}/valkey.password"
     local pass
     local user_flag=()
-    if [[ -r "$client_pw" ]]; then
+    if [[ "$site_id" != - && -r "$client_pw" ]]; then
         pass=$(cat "$client_pw"); user_flag=(--user "gnode_client_${site_id}")
     elif [[ -r "$admin_pw" ]]; then
         pass=$(cat "$admin_pw")            # default/admin user, no --user flag
@@ -187,7 +187,8 @@ update_valkey_env() {
     local site_id="$1"
     local new_env="$2"
 
-    _valkey_env_cli "$site_id" HSET "gnode:site:${site_id}:meta" "active_environment" "$new_env" >/dev/null 2>&1
+    # The meta is shared; a site's own grant reads it and cannot write it.
+    _valkey_env_cli - HSET "gnode:site:${site_id}:meta" "active_environment" "$new_env" >/dev/null 2>&1
     _valkey_env_cli "$site_id" DEL \
         "{${site_id}}:config:registration" "{${site_id}}:config:version:registration" >/dev/null 2>&1
 

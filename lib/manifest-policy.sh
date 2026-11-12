@@ -52,19 +52,15 @@ _policy_well_known_prefixes() {
 {${site_id}}:results:
 {${site_id}}:
 {${ecosystem}}:gnode:
-$( [[ "$ecosystem" == "geodineum" ]] && cat <<LEGACY
-{default}:gnode:
+$( [[ "$ecosystem" == "geodineum" ]] && cat <<SHARED
 {default}:gcore:
-{testing}:gnode:
-{staging}:gnode:
-{acceptance}:gnode:
-{production}:gnode:
-gnode:
+gnode:site:
+gnode:sites:
 gnode:routing:
-topology:
-template:
-membership:
-LEGACY
+gnode:consumer_groups_verified:${site_id}:
+topology:${site_id}:
+template:${site_id}:
+SHARED
 )
 error:${site_id}:
 cache:${site_id}:
@@ -78,7 +74,7 @@ EOF
 }
 
 # ---- Grant form ------------------------------------------------------------
-# Only the daemon writes the shared topology: read-only (%R~) except the service's own heartbeat key.
+# Only the daemon and the operator write shared keys: read-only (%R~) except the service's own heartbeat key.
 # Usage: policy_key_grant_form <interpolated-pattern> <site_id> [ecosystem]
 policy_key_grant_form() {
     local p="$1"
@@ -87,7 +83,7 @@ policy_key_grant_form() {
     case "$p" in
         "{${ecosystem}}:gnode:heartbeat:"*":${site_id}:"*|"{geodineum}:gnode:heartbeat:"*":${site_id}:"*)
             printf '~%s' "$p" ;;
-        "{${ecosystem}}:gnode:"*|"{geodineum}:gnode:"*)
+        "{${ecosystem}}:gnode:"*|"{geodineum}:gnode:"*|"{default}:gcore:"*|gnode:site:*|gnode:sites:*|gnode:routing:*)
             printf '%%R~%s' "$p" ;;
         *)
             printf '~%s' "$p" ;;
@@ -136,6 +132,16 @@ policy_read_patterns() {
     yq eval "(${yq_path} // [])[]" "$manifest_path" 2>/dev/null
 }
 
+# ---- What a gCore site declares --------------------------------------------
+# Reads: its own runtime meta, the site list, the shared manager defaults. Writes: its consumer-group check
+# and its legacy error/cache/session keys. One pattern per line, uninterpolated.
+policy_site_consumes() {
+    printf '%s\n' 'gnode:site:{site_id}:meta' 'gnode:sites:registry' '{default}:gcore:*'
+}
+policy_site_produces() {
+    printf '%s\n' 'gnode:consumer_groups_verified:{site_id}:*' 'error:{site_id}:*' 'cache:{site_id}:*' 'session:{site_id}:*'
+}
+
 # ---- Grant composition -----------------------------------------------------
 
 # One ACL key grant per line; any policy violation refuses the whole composition.
@@ -170,10 +176,7 @@ policy_compose_key_grants() {
         out+=("~{${site_id}}:gnode:*")
         out+=("%R~{${ecosystem}}:gnode:*")
         out+=("~{${ecosystem}}:gnode:heartbeat:*:${site_id}:*")
-        if [[ "$ecosystem" == "geodineum" ]]; then
-            out+=("~{default}:gnode:*")
-            out+=("~{default}:gcore:*")
-        fi
+        if [[ "$ecosystem" == "geodineum" ]]; then out+=("%R~{default}:gcore:*"); fi
     fi
 
     if [[ $failed -gt 0 ]]; then

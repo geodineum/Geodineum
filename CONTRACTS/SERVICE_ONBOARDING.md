@@ -38,6 +38,12 @@ the relay checks. A raw writer has none of that and shows up in nobody's audit.
   allowlist in the same script: streams with consumer groups, `FCALL`/`FCALL_RO`,
   basic string/hash/set/list/zset, `SCAN`, `PUBLISH`, `MULTI`/`EXEC`. Not granted,
   among others: `EVAL`, `SUBSCRIBE`, `KEYS`, `XAUTOCLAIM`, `ZRANGEBYSCORE`.
+  Outside its own namespace a manifest may name only shared keys, granted read-only
+  (`{default}:gcore:*`, `gnode:site:*`, `gnode:sites:*`, `gnode:routing:*`) or its own
+  (`gnode:consumer_groups_verified:<id>:*`, `topology:<id>:*`, `template:<id>:*`);
+  `gnode:*`, `{default}:gnode:*`, `membership:*` and the environment buses
+  `{testing|staging|acceptance|production}:gnode:*` are refused. A WordPress site
+  declares what its gCore runtime uses (`policy_site_consumes`/`policy_site_produces`).
 - **Three permission layers**, never conflated:
   1. **Disk**: Unix users and groups (`permission-model.md`).
   2. **ValKey ACL**: which keys this identity may touch (above, and §7).

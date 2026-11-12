@@ -467,9 +467,15 @@ ensure_manifest() {
         log_warning "Manifest already exists — left untouched: ${manifest}"
         return 0
     fi
-    local produces_extra=""
+    local produces_extra="" consumes_list=" []" p
     [[ "$SVC_FORM" == "true" ]] && produces_extra="
   - \"{${SVC_NAME}}:forms:*\"         # submission archive + rate-limit counters"
+    if [[ "$SVC_TYPE" == website-wp ]]; then
+        declare -F policy_site_consumes >/dev/null || source "${GEODINEUM_CLI_ROOT}/lib/manifest-policy.sh"
+        consumes_list=""
+        while IFS= read -r p; do consumes_list+=$'\n'"  - \"${p}\""; done < <(policy_site_consumes)
+        while IFS= read -r p; do produces_extra+=$'\n'"  - \"${p}\""; done < <(policy_site_produces)
+    fi
     ledger_file "$SVC_NAME" config "$manifest"
     cat > "$manifest" << MFEOF
 # Geodineum onboarding manifest — ONE schema (profile + environment +
@@ -489,9 +495,9 @@ services:
       tier: "SERVICE"
       created_by: "geodineum register"
 
-# Own-namespace only (braces literal = hash-tag). Anything foreign is
+# Own namespace, plus the shared keys manifest-policy.sh admits. Anything foreign is
 # refused at onboarding — request cross-service access via the grant loop.
-consumes: []
+consumes:${consumes_list}
 produces:
   - "{${SVC_NAME}}:gnode:comms:*"   # notifications → COMMS dispatch${produces_extra}
 MFEOF
