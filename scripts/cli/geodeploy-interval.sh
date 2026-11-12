@@ -22,6 +22,7 @@ if [[ $# -eq 0 ]]; then
     exit 2
 fi
 
+(( EUID == 0 )) || { echo "run with sudo: the sweep is in root's crontab" >&2; exit 1; }
 schedule="$*"
 
 # Basic 5-field validation

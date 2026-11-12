@@ -2934,34 +2934,35 @@ install_self_to_opt() {
         local origin_url
         origin_url=$(cd "$source" && git remote get-url origin 2>/dev/null || echo "")
         if [[ -n "$origin_url" ]]; then
-            local pull_user="${DEPLOY_USER:-${SUDO_USER:-$(whoami)}}"
+            # Root runs the sweep from this checkout, so root alone owns it and the folder above it.
             mkdir -p "$(dirname "$target")"
-            chown "${pull_user}:geodineum" "$(dirname "$target")" 2>/dev/null || true
+            chown root:geodineum "$(dirname "$target")" 2>/dev/null || true
 
             local branch="${GEODINEUM_BRANCH:-}"
             if [[ -d "${target}/.git" ]]; then
                 log_info "Updating installer at ${target} (branch: ${branch:-<default>})"
+                chown -R root:geodineum "$target" 2>/dev/null || true
                 cd "$target"
-                sudo_as_user "$pull_user" /usr/bin/git fetch origin 2>/dev/null || true
+                /usr/bin/git fetch origin 2>/dev/null || true
                 if [[ -n "$branch" ]]; then
-                    sudo_as_user "$pull_user" /usr/bin/git checkout "$branch" 2>/dev/null || \
-                    sudo_as_user "$pull_user" /usr/bin/git checkout -b "$branch" "origin/${branch}" 2>/dev/null || true
-                    sudo_as_user "$pull_user" /usr/bin/git pull --ff-only origin "$branch" 2>/dev/null || true
+                    /usr/bin/git checkout "$branch" 2>/dev/null || \
+                    /usr/bin/git checkout -b "$branch" "origin/${branch}" 2>/dev/null || true
+                    /usr/bin/git pull --ff-only origin "$branch" 2>/dev/null || true
                 else
-                    sudo_as_user "$pull_user" /usr/bin/git pull --ff-only 2>/dev/null || true
+                    /usr/bin/git pull --ff-only 2>/dev/null || true
                 fi
             else
                 log_info "Cloning installer from ${origin_url} → ${target} (branch: ${branch:-<default>})"
                 local clone_argv=(/usr/bin/git clone)
                 [[ -n "$branch" ]] && clone_argv+=(--branch "$branch")
                 clone_argv+=(-- "$origin_url" "$target")
-                if ! sudo_as_user "$pull_user" -- "${clone_argv[@]}"; then
+                if ! "${clone_argv[@]}"; then
                     log_warning "Installer clone to ${target} failed — falling back to rsync"
                     install_self_via_rsync "$source" "$target"
                     return $?
                 fi
             fi
-            chown -R "${pull_user}:geodineum" "$target" 2>/dev/null || true
+            chown -R root:geodineum "$target" 2>/dev/null || true
             log_success "Installer deployed at ${target}"
             return 0
         fi
@@ -2981,7 +2982,7 @@ install_self_via_rsync() {
     fi
     mkdir -p "$target"
     rsync -a --exclude=".git" --delete "${source}/" "${target}/"
-    chown -R "${DEPLOY_USER:-${SUDO_USER:-root}}:geodineum" "$target" 2>/dev/null || true
+    chown -R root:geodineum "$target" 2>/dev/null || true
     log_success "Installer rsync'd to ${target}"
     return 0
 }
@@ -4028,9 +4029,9 @@ phase_services() {
 
     if [[ -d "${INSTALL_ROOT}/Geodineum" ]]; then
         if type geodeploy_fix_perms &>/dev/null; then
-            geodeploy_fix_perms "${INSTALL_ROOT}/Geodineum" "${DEPLOY_USER}" "geodineum"
+            geodeploy_fix_perms "${INSTALL_ROOT}/Geodineum" root "geodineum"
         else
-            chown -R "${DEPLOY_USER}:geodineum" "${INSTALL_ROOT}/Geodineum"
+            chown -R "root:geodineum" "${INSTALL_ROOT}/Geodineum"
             find "${INSTALL_ROOT}/Geodineum" -type d -exec chmod 2750 {} \;
             __chmod_files_by_kind "${INSTALL_ROOT}/Geodineum"
         fi
@@ -4755,11 +4756,6 @@ main() {
         done
         [[ ${#INSTALLED_SERVICES[@]} -gt 0 ]] && systemctl daemon-reload 2>/dev/null || true
 
-        if crontab -l 2>/dev/null | grep -q "auto-deploy.sh"; then
-            log_info "Removing auto-deploy cron entry"
-            crontab -l 2>/dev/null | grep -v "auto-deploy.sh" | crontab - 2>/dev/null || true
-        fi
-
         for repo_dir in "${INSTALLED_REPOS[@]}"; do
             if [[ -d "$repo_dir" ]]; then
                 log_info "Removing: ${repo_dir}"
@@ -4778,6 +4774,13 @@ main() {
         done
 
         rm -f /usr/local/bin/geodineum /usr/local/bin/gcli 2>/dev/null
+
+        # Only when the checkout it runs is gone: a failed re-install keeps a working sweep.
+        if [[ ! -f "${INSTALL_ROOT}/Geodineum/scripts/geodeploy-orchestrator" ]] \
+                && crontab -l 2>/dev/null | grep -c "geodeploy-orchestrator" >/dev/null; then
+            log_info "Removing the deploy sweep from root's crontab"
+            crontab -l 2>/dev/null | grep -v "geodeploy-orchestrator" | crontab - 2>/dev/null || true
+        fi
 
         echo ""
         log_info "Rollback complete. Re-run: sudo ./install.sh"
@@ -4875,15 +4878,20 @@ main() {
     fi
 
     if [[ "$DRY_RUN" != "true" ]]; then
+        # The sweep runs as root: it pulls and builds root's checkouts itself and the rest as the deploy user.
         local orchestrator="${INSTALL_ROOT}/Geodineum/scripts/geodeploy-orchestrator"
         if [[ -f "$orchestrator" ]]; then
             local cron_line="*/5 * * * * ${orchestrator}"
-            if ! sudo -u "$DEPLOY_USER" crontab -l 2>/dev/null | grep -q "geodeploy-orchestrator"; then
-                local existing
-                existing=$(sudo -u "$DEPLOY_USER" crontab -l 2>/dev/null | grep -v "auto-deploy.sh" || true)
-                echo -e "${existing}\n${cron_line}" | sudo -u "$DEPLOY_USER" crontab - 2>/dev/null && \
-                    log_success "Geodeploy cron installed (every 5 min as ${DEPLOY_USER})" || \
-                    log_warning "Could not install cron — add manually: ${cron_line}"
+            if [[ -n "$DEPLOY_USER" && "$DEPLOY_USER" != root ]] \
+                    && crontab -u "$DEPLOY_USER" -l 2>/dev/null | grep -c "geodeploy-orchestrator\|auto-deploy\.sh" >/dev/null; then
+                crontab -u "$DEPLOY_USER" -l 2>/dev/null | grep -v "geodeploy-orchestrator\|auto-deploy\.sh" \
+                    | crontab -u "$DEPLOY_USER" - 2>/dev/null \
+                    && log_info "Removed the sweep from ${DEPLOY_USER}'s crontab (it runs from root's now)"
+            fi
+            if ! crontab -l 2>/dev/null | grep -c "geodeploy-orchestrator" >/dev/null; then
+                { crontab -l 2>/dev/null || true; echo "$cron_line"; } | crontab - 2>/dev/null && \
+                    log_success "Geodeploy cron installed (every 5 min, root's crontab)" || \
+                    log_warning "Could not install cron — add to root's crontab: ${cron_line}"
             else
                 log_info "Geodeploy cron already installed"
             fi

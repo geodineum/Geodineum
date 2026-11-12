@@ -21,7 +21,8 @@ set -euo pipefail
 DRY_RUN=false
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
 
-DEPLOY_USER="${GEODEPLOY_DEPLOY_USER:-${SUDO_USER:-${USER}}}"
+DEPLOY_USER="${GEODEPLOY_DEPLOY_USER:-$( . /etc/geodineum/deploy.env 2>/dev/null; echo "${DEPLOY_USER:-}")}"
+DEPLOY_USER="${DEPLOY_USER:-${SUDO_USER:-${USER}}}"
 if [[ -z "$DEPLOY_USER" ]] || ! id "$DEPLOY_USER" &>/dev/null; then
     echo "FATAL: deploy user '$DEPLOY_USER' does not exist on this host. Set GEODEPLOY_DEPLOY_USER explicitly." >&2
     exit 1
@@ -341,7 +342,7 @@ for repo in "${web_repos[@]}"; do
 done
 
 # =============================================================================
-# 10. .git dirs in prod repos must be owned by the deploy user (git pull requires write)
+# 10. .git dirs in prod repos belong to the deploy user (git pull requires write); root's checkouts stay root's
 # =============================================================================
 
 log_step "10. .git directory ownership"
@@ -350,7 +351,7 @@ for gitdir in ${GEODINEUM_ROOT}/*/.git; do
     [[ -d "$gitdir" ]] || continue
     repo=$(basename "$(dirname "$gitdir")")
     current_owner=$(stat -c '%U' "$gitdir" 2>/dev/null)
-    if [[ "$current_owner" != "$DEPLOY_USER" ]]; then
+    if [[ "$current_owner" != "$DEPLOY_USER" && "$current_owner" != root ]]; then
         fix "${repo}/.git: ${current_owner} → ${DEPLOY_USER}" \
             chown -R "$DEPLOY_USER" "$gitdir"
     fi

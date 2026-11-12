@@ -22,11 +22,13 @@ cli:
       handler: scripts/cli/geodeploy-toggle.sh
       args: --enable
       description: Enable auto-deploy cron
+      requires_sudo: true
       category: Deploy
     - name: geodeploy off
       handler: scripts/cli/geodeploy-toggle.sh
       args: --disable
       description: Disable auto-deploy cron
+      requires_sudo: true
       category: Deploy
     - name: geodeploy logs
       handler: scripts/cli/geodeploy-logs.sh
@@ -35,6 +37,7 @@ cli:
     - name: geodeploy interval
       handler: scripts/cli/geodeploy-interval.sh
       description: Change auto-deploy cron schedule
+      requires_sudo: true
       category: Deploy
     - name: mail records
       handler: scripts/cli/mail-records.sh

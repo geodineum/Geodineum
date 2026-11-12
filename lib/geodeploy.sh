@@ -29,7 +29,7 @@ fi
 # =============================================================================
 GEODINEUM_ROOT="${GEODINEUM_ROOT:-/opt/geodineum}"
 GEODINEUM_LOG_ROOT="${GEODINEUM_LOG_ROOT:-/var/log/geodineum}"
-# Must be writable by the deploy user: git commands run as that user append here too.
+# Root's: the sweep opens it; commands run as a checkout's owner only inherit the open file.
 GEODEPLOY_LOG="${GEODEPLOY_LOG:-${GEODINEUM_LOG_ROOT}/deploy/auto-deploy.log}"
 GEODEPLOY_LOG_MAX="${GEODEPLOY_LOG_MAX:-2000}"
 # Deploy user from the environment, else /etc/geodineum/deploy.env (the only source under cron).
@@ -105,19 +105,33 @@ geodeploy_log() {
 }
 
 # =============================================================================
-# Deploy-user execution
+# Checkout owners
 # =============================================================================
-# Every git call runs as the deploy user: root git in its repos fails dubious-ownership and returns empty revs.
-geodeploy_as_deploy() {
-    if [[ "$(/usr/bin/id -un)" == "$GEODEPLOY_DEPLOY_USER" ]]; then
+# A checkout whose .git root owns is root's: root pulls and builds it, nobody else writes it.
+# Every other checkout belongs to the deploy user. Only root can make a checkout root's.
+_gd_owner_of() { /usr/bin/stat -c %U "$1" 2>/dev/null; }
+
+geodeploy_checkout_owner() {
+    if [[ "$(_gd_owner_of "${1%/}/.git")" == root ]]; then echo root; else echo "$GEODEPLOY_DEPLOY_USER"; fi
+}
+
+# Run as <user> with that user's HOME and toolchain; never run git as root in a checkout another account owns.
+geodeploy_run_as() {
+    local user="$1"; shift
+    if [[ "$(/usr/bin/id -un)" == "$user" ]]; then
         "$@"
     else
         local _home
-        _home=$(/usr/bin/getent passwd "$GEODEPLOY_DEPLOY_USER" | /usr/bin/cut -d: -f6)
-        /usr/bin/sudo -u "$GEODEPLOY_DEPLOY_USER" \
+        _home=$(/usr/bin/getent passwd "$user" | /usr/bin/cut -d: -f6)
+        /usr/bin/sudo -u "$user" \
             env HOME="$_home" PATH="${_home}/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
             "$@"
     fi
+}
+
+# As the owner of the checkout being deployed (_GD_RUN_AS, set per checkout).
+geodeploy_as_owner() {
+    geodeploy_run_as "${_GD_RUN_AS:-$GEODEPLOY_DEPLOY_USER}" "$@"
 }
 
 # =============================================================================
@@ -140,7 +154,6 @@ b = d.get('build', {})
 dt = d.get('dirty-tree', {})
 triggers = d.get('triggers', [])
 print(json.dumps({
-    'owner': r.get('owner', '${GEODEPLOY_DEPLOY_USER}'),
     'group': r.get('group', 'gnode'),
     'service': r.get('service', ''),
     'dirty': dt.get('strategy', 'discard'),
@@ -151,7 +164,6 @@ print(json.dumps({
 }))
 " "$descriptor" 2>/dev/null) || return 1
 
-    _GD_OWNER=$(echo "$parsed" | python3 -c "import sys,json; print(json.load(sys.stdin)['owner'])")
     _GD_GROUP=$(echo "$parsed" | python3 -c "import sys,json; print(json.load(sys.stdin)['group'])")
     _GD_SERVICE=$(echo "$parsed" | python3 -c "import sys,json; print(json.load(sys.stdin)['service'])")
     _GD_DIRTY=$(echo "$parsed" | python3 -c "import sys,json; print(json.load(sys.stdin)['dirty'])")
@@ -197,8 +209,8 @@ geodeploy_fetch() {
     local remote="${2:-origin}"
 
     # The permission sweeps own file modes; git tracking them would show a dirty tree.
-    geodeploy_as_deploy git config core.fileMode false 2>> "$GEODEPLOY_LOG"
-    geodeploy_as_deploy git fetch "$remote" "$branch" 2>> "$GEODEPLOY_LOG"
+    geodeploy_as_owner git config core.fileMode false 2>> "$GEODEPLOY_LOG"
+    geodeploy_as_owner git fetch "$remote" "$branch" 2>> "$GEODEPLOY_LOG"
 }
 
 # Every checkout under GEODINEUM_ROOT: never pushes, never tracks modes. Runs as the checkout's owner.
@@ -207,7 +219,7 @@ geodeploy_assert_git_guards() {
     for dir in "${GEODINEUM_ROOT}"/*/; do
         [[ -d "${dir}.git" ]] || continue
         name="$(basename "$dir")"
-        owner="$(/usr/bin/stat -c %U "$dir")"
+        owner="$(_gd_owner_of "${dir}.git")"
         changed=""
         for kv in "remote.origin.pushurl=READ_ONLY_DEPLOY_NO_PUSH" "core.fileMode=false"; do
             now="$(_geodeploy_git_as "$owner" -C "$dir" config --get "${kv%%=*}" 2>/dev/null)" || now=""
@@ -242,33 +254,31 @@ geodeploy_report_unmanaged_behind() {
 
 _geodeploy_git_as() {
     local owner="$1"; shift
-    if [[ "$(/usr/bin/id -un)" == "$owner" ]]; then git "$@"
-    elif [[ "$owner" == "$GEODEPLOY_DEPLOY_USER" ]]; then geodeploy_as_deploy git "$@"
-    else /usr/bin/sudo -u "$owner" git "$@"; fi
+    geodeploy_run_as "$owner" git "$@"
 }
 
 geodeploy_has_changes() {
     local branch="$1"
     local local_rev remote_rev
 
-    local_rev=$(geodeploy_as_deploy git rev-parse HEAD 2>/dev/null)
-    remote_rev=$(geodeploy_as_deploy git rev-parse "origin/${branch}" 2>/dev/null)
+    local_rev=$(geodeploy_as_owner git rev-parse HEAD 2>/dev/null)
+    remote_rev=$(geodeploy_as_owner git rev-parse "origin/${branch}" 2>/dev/null)
 
     [[ "$local_rev" != "$remote_rev" ]]
 }
 
 geodeploy_get_changed() {
     local branch="$1"
-    geodeploy_as_deploy git diff --name-only HEAD "origin/${branch}" 2>/dev/null
+    geodeploy_as_owner git diff --name-only HEAD "origin/${branch}" 2>/dev/null
 }
 
 geodeploy_get_revs() {
     local branch="$1"
     local local_rev remote_rev count
 
-    local_rev=$(geodeploy_as_deploy git rev-parse --short HEAD 2>/dev/null)
-    remote_rev=$(geodeploy_as_deploy git rev-parse --short "origin/${branch}" 2>/dev/null)
-    count=$(geodeploy_as_deploy git rev-list --count HEAD.."origin/${branch}" 2>/dev/null || echo 0)
+    local_rev=$(geodeploy_as_owner git rev-parse --short HEAD 2>/dev/null)
+    remote_rev=$(geodeploy_as_owner git rev-parse --short "origin/${branch}" 2>/dev/null)
+    count=$(geodeploy_as_owner git rev-list --count HEAD.."origin/${branch}" 2>/dev/null || echo 0)
 
     echo "${local_rev}|${remote_rev}|${count}"
 }
@@ -276,9 +286,9 @@ geodeploy_get_revs() {
 geodeploy_pull() {
     local branch="$1"
     # Deploy targets mirror origin: reset, never merge; checkout -B re-attaches a detached HEAD.
-    geodeploy_as_deploy git reset --hard "origin/${branch}" 2>> "$GEODEPLOY_LOG" || return 1
-    geodeploy_as_deploy git symbolic-ref -q HEAD >/dev/null 2>&1 \
-        || geodeploy_as_deploy git checkout -B "$branch" "origin/${branch}" 2>> "$GEODEPLOY_LOG"
+    geodeploy_as_owner git reset --hard "origin/${branch}" 2>> "$GEODEPLOY_LOG" || return 1
+    geodeploy_as_owner git symbolic-ref -q HEAD >/dev/null 2>&1 \
+        || geodeploy_as_owner git checkout -B "$branch" "origin/${branch}" 2>> "$GEODEPLOY_LOG"
 }
 
 # =============================================================================
@@ -288,7 +298,7 @@ geodeploy_handle_dirty() {
     local strategy="${1:-stash}"
     local name="${2:-unknown}"
 
-    if geodeploy_as_deploy git diff --quiet HEAD 2>/dev/null && [ -z "$(geodeploy_as_deploy git ls-files --others --exclude-standard 2>/dev/null)" ]; then
+    if geodeploy_as_owner git diff --quiet HEAD 2>/dev/null && [ -z "$(geodeploy_as_owner git ls-files --others --exclude-standard 2>/dev/null)" ]; then
         return 0  # Clean
     fi
 
@@ -296,8 +306,8 @@ geodeploy_handle_dirty() {
         stash|discard)
             # clean must keep untracked runtime dirs: daemon state, ValKey backups, caches, cargo target/.
             geodeploy_log "${name}: DISCARD dirty tree (force-sync to origin)"
-            geodeploy_as_deploy git checkout -- . 2>> "$GEODEPLOY_LOG"
-            geodeploy_as_deploy git clean -fd \
+            geodeploy_as_owner git checkout -- . 2>> "$GEODEPLOY_LOG"
+            geodeploy_as_owner git clean -fd \
                 -e logs -e .gnode -e backups -e cache -e target \
                 2>> "$GEODEPLOY_LOG"
             return 0
@@ -308,8 +318,8 @@ geodeploy_handle_dirty() {
             ;;
         force)
             geodeploy_log "${name}: FORCE checkout (discarding local changes)"
-            geodeploy_as_deploy git checkout -- . 2>> "$GEODEPLOY_LOG"
-            geodeploy_as_deploy git clean -fd \
+            geodeploy_as_owner git checkout -- . 2>> "$GEODEPLOY_LOG"
+            geodeploy_as_owner git clean -fd \
                 -e logs -e .gnode -e backups -e cache -e target \
                 2>> "$GEODEPLOY_LOG"
             return 0
@@ -342,7 +352,7 @@ geodeploy_action_build() {
         local -a build_argv
         # shellcheck disable=SC2206  # intentional word-splitting
         build_argv=( $build_cmd )
-        if geodeploy_as_deploy "${build_argv[@]}" 2>> "$GEODEPLOY_LOG"; then
+        if geodeploy_as_owner "${build_argv[@]}" 2>> "$GEODEPLOY_LOG"; then
             geodeploy_log "${name}: BUILD success"
             return 0
         else
@@ -350,7 +360,7 @@ geodeploy_action_build() {
             return 1
         fi
     elif [[ "$_GD_BUILD_TYPE" == "cargo" ]]; then
-        if geodeploy_as_deploy cargo build --release 2>> "$GEODEPLOY_LOG"; then
+        if geodeploy_as_owner cargo build --release 2>> "$GEODEPLOY_LOG"; then
             geodeploy_log "${name}: BUILD cargo success"
             return 0
         else
@@ -371,7 +381,7 @@ geodeploy_action_restart() {
     fi
 
     if systemctl is-active --quiet "$service" 2>/dev/null; then
-        if /usr/bin/sudo /usr/bin/systemctl restart "$service" 2>> "$GEODEPLOY_LOG"; then
+        if _gd_priv /usr/bin/systemctl restart "$service" 2>> "$GEODEPLOY_LOG"; then
             geodeploy_log "${name}: RESTART ${service} success"
             return 0
         else
@@ -424,7 +434,7 @@ geodeploy_action_opcache_clear() {
     local name="$1"
     local unit n=0
     for unit in $(geodeploy_fpm_units); do
-        if /usr/bin/sudo /usr/bin/systemctl reload "$unit" 2>/dev/null; then
+        if _gd_priv /usr/bin/systemctl reload "$unit" 2>/dev/null; then
             geodeploy_log "${name}: opcache-cleared (${unit} reloaded)"
         else
             geodeploy_log "${name}: WARN opcache-clear failed (${unit} reload denied)"
@@ -443,7 +453,7 @@ geodeploy_action_php_fpm_restart() {
     local name="$1"
     local unit n=0
     for unit in $(geodeploy_fpm_units); do
-        if /usr/bin/sudo /usr/bin/systemctl restart "$unit" 2>/dev/null; then
+        if _gd_priv /usr/bin/systemctl restart "$unit" 2>/dev/null; then
             geodeploy_log "${name}: php-fpm-restarted (${unit})"
         else
             geodeploy_log "${name}: WARN php-fpm-restart failed (${unit})"
@@ -474,23 +484,29 @@ geodeploy_action_service_install() {
     local name="$2"
     local changed="$3"
 
-    local service_files
+    local service_files svc src installed=0
     service_files=$(echo "$changed" | grep '\.service$' || true)
 
+    # A unit file is code root runs: only a checkout root owns may install one.
     for svc in $service_files; do
-        local src="${repo_dir}/${svc}"
-        if [[ -f "$src" ]]; then
-            if /usr/bin/sudo -n /usr/bin/cp "$src" /etc/systemd/system/ 2>> "$GEODEPLOY_LOG"; then
-                geodeploy_log "${name}: SERVICE installed $(basename "$svc")"
-            else
-                geodeploy_log "${name}: ERROR SERVICE install refused for $(basename "$svc") — no sudoers cp rule for ${src%/*}/*.service (templates/sudoers-geodeploy.tpl); the installed unit is unchanged"
-            fi
+        src="${repo_dir}/${svc}"
+        [[ -f "$src" && ! -L "$src" ]] || continue
+        if [[ "$(geodeploy_checkout_owner "$repo_dir")" != root ]]; then
+            geodeploy_log "${name}: SERVICE $(basename "$svc") changed in a checkout root does not own; install it by hand: sudo install -m 0644 ${src} /etc/systemd/system/ && sudo systemctl daemon-reload"
+            continue
+        fi
+        if _gd_priv /usr/bin/install -m 0644 -o root -g root "$src" /etc/systemd/system/ 2>> "$GEODEPLOY_LOG"; then
+            geodeploy_log "${name}: SERVICE installed $(basename "$svc")"
+            installed=1
+        else
+            geodeploy_log "${name}: ERROR SERVICE install failed for $(basename "$svc"); the installed unit is unchanged"
         fi
     done
 
-    if [[ -n "$service_files" ]]; then
-        /usr/bin/sudo /usr/bin/systemctl daemon-reload 2>> "$GEODEPLOY_LOG"
+    if (( installed )); then
+        _gd_priv /usr/bin/systemctl daemon-reload 2>> "$GEODEPLOY_LOG"
     fi
+    return 0
 }
 
 # =============================================================================
@@ -560,11 +576,11 @@ for action in sorted(matched_actions):
                 geodeploy_action_service_install "$repo_dir" "$name" "$changed"
                 ;;
             chmod-scripts)
-                find "$repo_dir" -name "*.sh" -exec chmod 750 {} \; 2>/dev/null
+                find "$repo_dir" -type f -name "*.sh" -exec chmod 750 {} + 2>/dev/null
                 geodeploy_log "${name}: chmod-scripts"
                 ;;
             custom)
-                # Never run shell strings from a repo: the deploy user holds sudo rules.
+                # Never run shell strings from a repo: the sweep runs as root.
                 geodeploy_log "${name}: WARN 'custom' action is no longer supported. Add a named geodeploy_action_* dispatch instead."
                 ;;
             *)
@@ -670,11 +686,10 @@ geodeploy_fix_perms() {
     local group="${3:-${_GD_GROUP}}"
 
     # A missing group makes the chown below silently no-op.
-    getent group "$group" >/dev/null 2>&1 || /usr/bin/sudo /usr/bin/groupadd --system "$group" 2>/dev/null || true
+    getent group "$group" >/dev/null 2>&1 || _gd_priv /usr/bin/groupadd --system "$group" 2>/dev/null || true
 
-    # A refusal means the sudoers template lacks this owner:group+path; say so loudly.
-    if ! /usr/bin/sudo /usr/bin/chown -R "${owner}:${group}" "$repo_dir" 2>/dev/null; then
-        geodeploy_log "PERMS WARNING: chown -R ${owner}:${group} ${repo_dir} refused — sudoers rule missing for this owner:group+path (templates/sudoers-geodeploy.tpl vs the repo's geodeploy.yaml). Tree group NOT converged."
+    if ! _gd_priv /usr/bin/chown -R "${owner}:${group}" "$repo_dir" 2>/dev/null; then
+        geodeploy_log "PERMS WARNING: chown -R ${owner}:${group} ${repo_dir} failed. Tree NOT converged."
     fi
 
     # setgid so files git creates inherit the repo group; cargo's target/ manages its own modes.
@@ -698,14 +713,14 @@ geodeploy_fix_perms() {
     done
 
     if [[ -d "${repo_dir}/.git" ]]; then
-        /usr/bin/sudo /usr/bin/chown -R "${owner}:${group}" "${repo_dir}/.git" 2>/dev/null
+        _gd_priv /usr/bin/chown -R "${owner}:${group}" "${repo_dir}/.git" 2>/dev/null
     fi
 
     # Apache (www-data) must read these or it fails closed with 403.
     for deny_file in "${repo_dir}/.htaccess" "${repo_dir}/nginx-deny.conf"; do
-        if [[ -f "$deny_file" ]]; then
-            /usr/bin/sudo /usr/bin/chown root:www-data "$deny_file" 2>/dev/null
-            chmod 640 "$deny_file" 2>/dev/null
+        if [[ -f "$deny_file" && ! -L "$deny_file" ]]; then
+            _gd_own "$deny_file" root www-data
+            _gd_mode "$deny_file" 640
         fi
     done
 
@@ -714,7 +729,7 @@ geodeploy_fix_perms() {
     repo_name=$(basename "$repo_dir")
     case "$repo_name" in
         gNode|gNode-Client)
-            /usr/bin/sudo /usr/bin/chmod 751 "$repo_dir" 2>/dev/null
+            _gd_priv /usr/bin/chmod 751 "$repo_dir" 2>/dev/null
             ;;
     esac
 }
@@ -739,8 +754,8 @@ geodeploy_fix_bak_dirs() {
     local repo_dir="$1"
 
     for writable_dir in "${repo_dir}/backups" "${repo_dir}/logs"; do
-        if [[ -d "$writable_dir" ]]; then
-            /usr/bin/sudo /usr/bin/chown -R gnode:gnode "$writable_dir" 2>/dev/null
+        if [[ -d "$writable_dir" && ! -L "$writable_dir" ]]; then
+            _gd_priv /usr/bin/chown -R gnode:gnode "$writable_dir" 2>/dev/null
             chmod 750 "$writable_dir" 2>/dev/null
         fi
     done
@@ -751,9 +766,10 @@ geodeploy_fix_comms_dirs() {
     local repo_dir="$1"
 
     for writable_dir in "${repo_dir}/.gnode" "${repo_dir}/logs"; do
-        /usr/bin/sudo /usr/bin/mkdir -p "$writable_dir" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chown -R geodineum-comms:geodineum-comms "$writable_dir" 2>/dev/null
-        /usr/bin/sudo /usr/bin/chmod 2750 "$writable_dir" 2>/dev/null
+        [[ -L "$writable_dir" ]] && continue
+        _gd_priv /usr/bin/mkdir -p "$writable_dir" 2>/dev/null
+        _gd_priv /usr/bin/chown -R geodineum-comms:geodineum-comms "$writable_dir" 2>/dev/null
+        _gd_priv /usr/bin/chmod 2750 "$writable_dir" 2>/dev/null
     done
 }
 
@@ -761,12 +777,14 @@ geodeploy_fix_comms_dirs() {
 geodeploy_fix_gnode_dirs() {
     local repo_dir="$1"
 
-    /usr/bin/sudo /usr/bin/mkdir -p "${repo_dir}/logs" 2>/dev/null
-    /usr/bin/sudo /usr/bin/chown -R gnode:gnode "${repo_dir}/logs" 2>/dev/null
-    /usr/bin/sudo /usr/bin/chmod 2750 "${repo_dir}/logs" 2>/dev/null
+    if [[ ! -L "${repo_dir}/logs" ]]; then
+        _gd_priv /usr/bin/mkdir -p "${repo_dir}/logs" 2>/dev/null
+        _gd_priv /usr/bin/chown -R gnode:gnode "${repo_dir}/logs" 2>/dev/null
+        _gd_priv /usr/bin/chmod 2750 "${repo_dir}/logs" 2>/dev/null
+    fi
 
     if [[ ! -e "${repo_dir}/.gnode" ]]; then
-        /usr/bin/sudo /usr/bin/ln -s /etc/geodineum/credentials "${repo_dir}/.gnode" 2>/dev/null
+        _gd_priv /usr/bin/ln -s /etc/geodineum/credentials "${repo_dir}/.gnode" 2>/dev/null
     fi
 }
 
@@ -774,17 +792,17 @@ geodeploy_fix_gnode_dirs() {
 geodeploy_ensure_code_members() {
     local changed=0 u fpm
     getent group geodineum-code >/dev/null 2>&1 \
-        || { /usr/bin/sudo /usr/bin/groupadd --system geodineum-code 2>/dev/null && changed=1; }
+        || { _gd_priv /usr/bin/groupadd --system geodineum-code 2>/dev/null && changed=1; }
     for u in www-data geodine; do
         id "$u" >/dev/null 2>&1 || continue
         id -nG "$u" 2>/dev/null | tr ' ' '\n' | grep -cx geodineum-code >/dev/null && continue
-        /usr/bin/sudo /usr/bin/usermod -aG geodineum-code "$u" 2>/dev/null && changed=1
+        _gd_priv /usr/bin/usermod -aG geodineum-code "$u" 2>/dev/null && changed=1
     done
     [[ $changed -eq 0 ]] && return 0
-    for fpm in $(geodeploy_fpm_units); do /usr/bin/sudo /usr/bin/systemctl reload "$fpm" 2>/dev/null || true; done
-    /usr/bin/sudo /usr/bin/systemctl restart apache2 2>/dev/null || true
+    for fpm in $(geodeploy_fpm_units); do _gd_priv /usr/bin/systemctl reload "$fpm" 2>/dev/null || true; done
+    _gd_priv /usr/bin/systemctl restart apache2 2>/dev/null || true
     if id geodine >/dev/null 2>&1 && systemctl list-unit-files geodine.service >/dev/null 2>&1; then
-        /usr/bin/sudo /usr/bin/systemctl restart geodine.service 2>/dev/null || true
+        _gd_priv /usr/bin/systemctl restart geodine.service 2>/dev/null || true
     fi
 }
 
@@ -792,17 +810,17 @@ geodeploy_ensure_code_members() {
 geodeploy_ensure_dash_members() {
     local changed=0 u fpm
     getent group geodineum-dash >/dev/null 2>&1 \
-        || { /usr/bin/sudo /usr/bin/groupadd --system geodineum-dash 2>/dev/null && changed=1; }
+        || { _gd_priv /usr/bin/groupadd --system geodineum-dash 2>/dev/null && changed=1; }
     # A site's pool user joins only when its record says DASH="1".
     for u in gnode "${GEODEPLOY_DEPLOY_USER:-}" $(declare -F site_pool_flag_users >/dev/null && site_pool_flag_users DASH); do
         [[ -n "$u" ]] || continue
         id "$u" >/dev/null 2>&1 || continue
         id -nG "$u" 2>/dev/null | tr ' ' '\n' | grep -cx geodineum-dash >/dev/null && continue
-        /usr/bin/sudo /usr/bin/usermod -aG geodineum-dash "$u" 2>/dev/null && changed=1
+        _gd_priv /usr/bin/usermod -aG geodineum-dash "$u" 2>/dev/null && changed=1
     done
     [[ $changed -eq 0 ]] && return 0
     geodeploy_log "ensure_dash_members: geodineum-dash membership changed → reloading PHP-FPM"
-    for fpm in $(geodeploy_fpm_units); do /usr/bin/sudo /usr/bin/systemctl reload "$fpm" 2>/dev/null || true; done
+    for fpm in $(geodeploy_fpm_units); do _gd_priv /usr/bin/systemctl reload "$fpm" 2>/dev/null || true; done
 }
 
 # Keep the helper list in lockstep with install.sh ensure_bootstrap_loader_installed.
@@ -813,11 +831,11 @@ geodeploy_ensure_helper_libs() {
         geodeploy_log "ensure_helper_libs: source bootstrap-loader.sh missing at ${src} (skipped)"
         return 0
     fi
-    /usr/bin/sudo /usr/bin/install -d -m 0755 -o root -g root "$dst" 2>/dev/null
+    _gd_priv /usr/bin/install -d -m 0755 -o root -g root "$dst" 2>/dev/null
     local _helper
     for _helper in bootstrap-loader.sh common.sh cli-helpers.sh manifest-registry.sh manifest-policy.sh manifest-install.sh assert-env-readable.sh; do
         [[ -f "${src}/${_helper}" ]] || continue
-        /usr/bin/sudo /usr/bin/install -m 0755 -o root -g root "${src}/${_helper}" "${dst}/${_helper}" 2>/dev/null
+        _gd_priv /usr/bin/install -m 0755 -o root -g root "${src}/${_helper}" "${dst}/${_helper}" 2>/dev/null
     done
 }
 
@@ -999,14 +1017,14 @@ geodeploy_fix_config_perms() {
             _port="${_port:-47445}"
             _creds="${_creds:-/etc/geodineum/credentials}"
             _ts=$(date +%Y%m%d-%H%M%S)
-            /usr/bin/sudo /usr/bin/cp "${config_root}/bootstrap.env" "${config_root}/bootstrap.env.archived-${_ts}" 2>/dev/null
-            /usr/bin/sudo /usr/bin/bash -c "cat > ${config_root}/bootstrap.env <<EOF
+            _gd_priv /usr/bin/cp "${config_root}/bootstrap.env" "${config_root}/bootstrap.env.archived-${_ts}" 2>/dev/null
+            _gd_priv /usr/bin/bash -c "cat > ${config_root}/bootstrap.env <<EOF
 VALKEY_HOST=${_host}
 VALKEY_PORT=${_port}
 VALKEY_CREDS_PATH=${_creds}
 EOF"
-            /usr/bin/sudo /usr/bin/chown root:geodineum-bootstrap "${config_root}/bootstrap.env" 2>/dev/null
-            /usr/bin/sudo /usr/bin/chmod 0640 "${config_root}/bootstrap.env" 2>/dev/null
+            _gd_priv /usr/bin/chown root:geodineum-bootstrap "${config_root}/bootstrap.env" 2>/dev/null
+            _gd_priv /usr/bin/chmod 0640 "${config_root}/bootstrap.env" 2>/dev/null
         fi
     fi
 
@@ -1061,7 +1079,7 @@ EOF"
     # ── dashboard/: the read-only dashboard token; install.sh provisions its content ──
     if getent group geodineum-dash >/dev/null 2>&1; then
         [[ -d "${config_root}/dashboard" ]] \
-            || /usr/bin/sudo /usr/bin/install -d -m 0750 -o root -g geodineum-dash "${config_root}/dashboard" 2>/dev/null
+            || _gd_priv /usr/bin/install -d -m 0750 -o root -g geodineum-dash "${config_root}/dashboard" 2>/dev/null
     fi
     if [[ -d "${config_root}/dashboard" ]]; then
         _gd_own "${config_root}/dashboard" root geodineum-dash
@@ -1103,20 +1121,20 @@ geodeploy_fix_comms_signing_key() {
     return 0
 }
 
-# Geodineum-BAK is outside the repo sweep; the backup timer runs its scripts as gnode.
+# Geodineum-BAK: root owns it, the backup timer runs its scripts as gnode; directories keep setgid as fix_perms sets it.
 geodeploy_fix_bak_perms() {
     local bak="${1:-${GEODINEUM_ROOT}/Geodineum-BAK}"
     [[ -d "$bak" ]] || return 0
     _gd_own "$bak" root gnode
-    _gd_mode "$bak" 0750
+    _gd_mode "$bak" 2750
     if [[ -d "$bak/scripts" ]]; then
         _gd_own_tree "$bak/scripts" root gnode
-        _gd_mode_tree "$bak/scripts" 0750 -type d -not -path '*/.git/*'
+        _gd_mode_tree "$bak/scripts" 2750 -type d -not -path '*/.git/*'
         _gd_mode_tree "$bak/scripts" 0750 -type f -name '*.sh' -not -path '*/.git/*'
     fi
     if [[ -d "$bak/backups" ]]; then
         _gd_own_tree "$bak/backups" gnode gnode
-        _gd_mode "$bak/backups" 0750
+        _gd_mode "$bak/backups" 2750
     fi
 }
 
@@ -1139,8 +1157,8 @@ geodeploy_fix_log_perms() {
         _gd_own_tree "${log_root}/${dir}" www-data geodineum
     done
 
-    # Git runs as the deploy user and appends to this log.
-    _gd_own_tree "${log_root}/deploy" "${GEODEPLOY_DEPLOY_USER}" geodineum
+    # Only root writes the deploy log: a folder another account owns lets it point root's writes elsewhere.
+    _gd_own_tree "${log_root}/deploy" root geodineum
 
     if declare -F geodeploy_fix_log_extras >/dev/null; then
         geodeploy_fix_log_extras "$log_root"
@@ -1254,7 +1272,8 @@ for e in d.get('pro', []):
                 pro_dir="${pro_root}/${comp_type}/${name}"
                 label="pro/${comp_type}/${name}"
                 if [[ -e "$pro_dir" ]] || _gd_pro_unmanaged "$label"; then continue; fi
-                if geodeploy_as_deploy git clone --branch "$branch" "$remote" "$pro_dir" 2>> "$GEODEPLOY_LOG"; then
+                _GD_RUN_AS="$GEODEPLOY_DEPLOY_USER"
+                if geodeploy_as_owner git clone --branch "$branch" "$remote" "$pro_dir" 2>> "$GEODEPLOY_LOG"; then
                     geodeploy_log "${label}: CLONE success"
                     if [[ "$comp_type" == "gNode" ]]; then
                         chgrp -R gnode "$pro_dir"; : > "$pending"
@@ -1284,8 +1303,9 @@ for e in d.get('pro', []):
         label="pro/${comp_type}/$(basename "$pro_dir")"
         if _gd_pro_unmanaged "$label"; then continue; fi
         cd "$pro_dir" || { failed=1; continue; }
+        _GD_RUN_AS="$(geodeploy_checkout_owner "$pro_dir")"
 
-        branch=$(geodeploy_as_deploy git rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=""
+        branch=$(geodeploy_as_owner git rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=""
         [[ -n "$branch" && "$branch" != "HEAD" ]] || branch="main"
 
         if ! geodeploy_fetch "$branch"; then
@@ -1337,8 +1357,9 @@ geodeploy_pro_rebuild_daemon() {
     local inputs ext bad=""
 
     inputs=$(for ext in "$gnode_dir" "${GEODINEUM_ROOT}"/pro/gNode/*/; do
-        geodeploy_as_deploy git -C "$ext" rev-parse HEAD 2>/dev/null || true
+        _geodeploy_git_as "$(geodeploy_checkout_owner "$ext")" -C "$ext" rev-parse HEAD 2>/dev/null || true
     done | sha256sum | cut -c1-16)
+    _GD_RUN_AS="$(geodeploy_checkout_owner "$gnode_dir")"
     if [[ "$(cat "$pending" 2>/dev/null)" == "$inputs" ]]; then return 1; fi
 
     if [[ ! -x "$bin" ]]; then
@@ -1348,7 +1369,7 @@ geodeploy_pro_rebuild_daemon() {
     fi
     for ext in "${GEODINEUM_ROOT}"/pro/gNode/*/; do
         [[ -f "${ext}extension.yaml" ]] || continue
-        geodeploy_as_deploy "$bin" verify-extension "${ext%/}" >/dev/null 2>&1 || bad+=" $(basename "$ext")"
+        geodeploy_as_owner "$bin" verify-extension "${ext%/}" >/dev/null 2>&1 || bad+=" $(basename "$ext")"
     done
     if [[ -n "$bad" ]]; then
         geodeploy_log "pro/gNode: ERROR rebuild held (signature verification failed:${bad}; a rebuild would drop them)"
@@ -1380,6 +1401,8 @@ geodeploy_ensure_links() {
     local repo_dir="$1"
     local name="$2"
     local descriptor="${repo_dir}/geodeploy.yaml"
+    local owner
+    owner="$(geodeploy_checkout_owner "$repo_dir")"
 
     [[ ! -f "$descriptor" ]] && return 0
 
@@ -1398,6 +1421,12 @@ for link in d.get('links', []):
         link=$(echo "$entry" | python3 -c "import json,sys;print(json.load(sys.stdin)['link'])")
         link_path="${repo_dir}/${link}"
 
+        # The link stays inside the checkout and is made by its owner, never by root.
+        if [[ "$link" == /* || "/${link}/" == */../* ]]; then
+            geodeploy_log "${name}: WARN link ${link} leaves the checkout, skipping"
+            continue
+        fi
+
         if [[ ! -e "$target" ]]; then
             geodeploy_log "${name}: WARN link target missing: ${target}"
             continue
@@ -1409,12 +1438,11 @@ for link in d.get('links', []):
             local expected_target
             expected_target=$(readlink -f "$target" 2>/dev/null)
             if [[ "$current_target" != "$expected_target" ]]; then
-                rm -f "$link_path"
-                ln -sf "$target" "$link_path"
+                geodeploy_run_as "$owner" ln -sfn "$target" "$link_path"
                 geodeploy_log "${name}: LINK updated ${link} → ${target}"
             fi
         elif [[ ! -e "$link_path" ]]; then
-            ln -sf "$target" "$link_path"
+            geodeploy_run_as "$owner" ln -sfn "$target" "$link_path"
             geodeploy_log "${name}: LINK created ${link} → ${target}"
         else
             geodeploy_log "${name}: WARN ${link} exists and is not a symlink, skipping"
@@ -1433,12 +1461,14 @@ geodeploy_repo() {
     [[ ! -d "${repo_dir}/.git" ]] && return 0
 
     cd "$repo_dir" || return 1
+    _GD_RUN_AS="$(geodeploy_checkout_owner "$repo_dir")"
+    _GD_OWNER="$_GD_RUN_AS"
 
-    geodeploy_as_deploy git config core.fileMode false 2>/dev/null || true
+    geodeploy_as_owner git config core.fileMode false 2>/dev/null || true
 
     # Follow the checked-out branch; the configured one applies only to a detached HEAD.
     local current_branch
-    current_branch=$(geodeploy_as_deploy git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    current_branch=$(geodeploy_as_owner git rev-parse --abbrev-ref HEAD 2>/dev/null)
     if [[ -n "$current_branch" && "$current_branch" != "HEAD" ]]; then
         branch="$current_branch"
     fi
@@ -1473,7 +1503,7 @@ geodeploy_repo() {
     fi
 
     local pre_deploy_rev
-    pre_deploy_rev=$(geodeploy_as_deploy git rev-parse HEAD 2>/dev/null)
+    pre_deploy_rev=$(geodeploy_as_owner git rev-parse HEAD 2>/dev/null)
     IFS='|' read -r local_rev remote_rev count <<< "$(geodeploy_get_revs "$branch")"
 
     geodeploy_handle_dirty "$_GD_DIRTY" "$name" || return 0

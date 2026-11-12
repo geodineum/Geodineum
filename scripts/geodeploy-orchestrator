@@ -5,13 +5,15 @@
 # Cron script that pulls all ecosystem repos and runs the per-repo deploy
 # hooks defined in their geodeploy.yaml descriptors (logic in lib/geodeploy.sh).
 #
-# Crontab:
+# Root's crontab:
 #   */5 * * * * /opt/geodineum/Geodineum/scripts/geodeploy-orchestrator
+# Root pulls and builds the checkouts root owns; every other checkout is pulled and built as the deploy user.
 #
-# Log: /var/log/geodineum/deploy/auto-deploy.log (deploy_user:geodineum, capped at 2000 lines)
+# Log: /var/log/geodineum/deploy/auto-deploy.log (root:geodineum, capped at 2000 lines)
 # =============================================================================
 
 set -uo pipefail
+[[ $EUID -eq 0 ]] || { echo "geodeploy-orchestrator runs from root's crontab" >&2; exit 1; }
 
 # The deploy log and run artifacts must not be world-readable.
 umask 027
@@ -30,11 +32,8 @@ if ! source "${GEODINEUM_REPO}/lib/geodeploy.sh"; then
     exit 1
 fi
 
-# Deploy-user-owned: git runs as the deploy user and appends to the log.
 GEODEPLOY_LOG_DIR="$(dirname "$GEODEPLOY_LOG")"
-sudo mkdir -p "$GEODEPLOY_LOG_DIR" 2>/dev/null || true
-sudo chown "${GEODEPLOY_DEPLOY_USER}:geodineum" "$GEODEPLOY_LOG_DIR" 2>/dev/null || true
-sudo chmod 2750 "$GEODEPLOY_LOG_DIR" 2>/dev/null || true
+install -d -m 2750 -o root -g geodineum "$GEODEPLOY_LOG_DIR" 2>/dev/null || true
 
 # Single instance: a slow cycle (cargo build) must not overlap the next cron run.
 exec 9>"${GEODEPLOY_LOG_DIR}/.orchestrator.lock"
@@ -93,7 +92,7 @@ geodeploy_deploy_pro || { _GD_FAILED_REPOS+=("pro"); geodeploy_log "pro: deploy 
 # "name|branch" per line; an entry deploys only if already cloned under GEODINEUM_ROOT.
 SITE_REPOS_FILE="${GEODINEUM_ROOT}/site-repos.conf"
 if [[ -f "$SITE_REPOS_FILE" && ! -r "$SITE_REPOS_FILE" ]]; then
-    geodeploy_log "ERROR: ${SITE_REPOS_FILE} exists but is NOT readable by the deploy user — site repos are NOT deploying (fix: chown root:geodineum + chmod 640)"
+    geodeploy_log "ERROR: ${SITE_REPOS_FILE} exists but is NOT readable — site repos are NOT deploying (fix: chown root:geodineum + chmod 640)"
 fi
 if [[ -r "$SITE_REPOS_FILE" ]]; then
     while IFS='|' read -r _sr_name _sr_branch || [[ -n "$_sr_name" ]]; do
@@ -121,15 +120,10 @@ geodeploy_fix_bak_perms "${GEODINEUM_ROOT}/Geodineum-BAK" || geodeploy_log "fix_
 # The COMMS signing key lives in /var/lib, outside the /etc/geodineum sweep.
 geodeploy_fix_comms_signing_key || geodeploy_log "fix_comms_signing_key: FAILED (continuing)"
 
-# A perm fixup refused by sudoers logs a warning and never aborts the cycle.
-sudo chown root:geodineum "${GEODINEUM_ROOT}" 2>/dev/null \
-    || geodeploy_log "WARNING: chown root:geodineum ${GEODINEUM_ROOT} refused (sudoers) — continuing"
-sudo chmod 751 "${GEODINEUM_ROOT}" 2>/dev/null \
-    || geodeploy_log "WARNING: chmod 751 ${GEODINEUM_ROOT} refused (sudoers rule still 750?) — continuing"  # 751: www-data needs o+x traverse to reach theme symlinks
-
-# www-data traverses gNode to reach credentials via the .gnode symlink.
-sudo chmod 751 "${GEODINEUM_ROOT}/gNode" 2>/dev/null \
-    || geodeploy_log "WARNING: chmod 751 ${GEODINEUM_ROOT}/gNode refused (sudoers rule still 750?) — continuing"
+# 751: www-data traverses to theme symlinks, and through gNode to credentials via the .gnode symlink.
+_gd_own "${GEODINEUM_ROOT}" root geodineum
+_gd_mode "${GEODINEUM_ROOT}" 751
+[[ -d "${GEODINEUM_ROOT}/gNode" && ! -L "${GEODINEUM_ROOT}/gNode" ]] && chmod 751 "${GEODINEUM_ROOT}/gNode" 2>/dev/null || true
 
 geodeploy_fix_log_perms "/var/log/geodineum" || geodeploy_log "fix_log_perms: FAILED (continuing)"
 
@@ -181,7 +175,7 @@ if [[ "$(cat "$_gd_cov_stamp" 2>/dev/null)" != "$_gd_today" ]]; then
                 "${_gd_repo_dir}geodeploy.yaml" 2>/dev/null; then
             geodeploy_report_unmanaged_behind "$_gd_repo_dir"; continue
         fi
-        _gd_cov_head=$(geodeploy_as_deploy git -C "$_gd_repo_dir" log -1 --format='%h %cr' 2>/dev/null) || _gd_cov_head=""
+        _gd_cov_head=$(_geodeploy_git_as "$(geodeploy_checkout_owner "$_gd_repo_dir")" -C "$_gd_repo_dir" log -1 --format='%h %cr' 2>/dev/null) || _gd_cov_head=""
         geodeploy_log "COVERAGE WARNING: ${_gd_repo} is in neither CORE_REPOS nor site-repos.conf and is not declared unmanaged — nothing pulls it and nothing fixes its binaries (HEAD ${_gd_cov_head:-unreadable}). Add it to ${SITE_REPOS_FILE} to deploy it, or add its name to ${_GD_UNMANAGED_FILE} (or 'unmanaged: true' in ${_gd_repo}/geodeploy.yaml) to declare it deliberate."
     done
 fi
@@ -197,8 +191,4 @@ else
     date '+%Y-%m-%d %H:%M:%S' > "${GEODEPLOY_LOG_DIR}/.last-success" 2>/dev/null || true
 fi
 
-# Not root-owned: git commands run as the deploy user append to the log.
-sudo chown "${GEODEPLOY_DEPLOY_USER}:geodineum" \
-                     "$GEODEPLOY_LOG" \
-                     "${GEODEPLOY_LOG_DIR}/.last-success" \
-                     "${GEODEPLOY_LOG_DIR}/.orchestrator.lock" 2>/dev/null || true
+chown root:geodineum "$GEODEPLOY_LOG" "${GEODEPLOY_LOG_DIR}/.last-success" "${GEODEPLOY_LOG_DIR}/.orchestrator.lock" 2>/dev/null || true

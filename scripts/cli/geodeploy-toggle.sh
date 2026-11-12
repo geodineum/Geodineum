@@ -9,6 +9,8 @@ GEODINEUM_REPO="$(dirname "$(dirname "$(cd "$(dirname "${BASH_SOURCE[0]}")" && p
 
 ORCHESTRATOR_PATH="${GEODINEUM_ROOT:-/opt/geodineum}/Geodineum/scripts/geodeploy-orchestrator"
 CRON_PATTERN="geodeploy-orchestrator"
+# The sweep lives in root's crontab.
+need_root() { (( EUID == 0 )) || { echo "run with sudo: the sweep is in root's crontab" >&2; exit 1; }; }
 
 action="${1:-}"
 # on/off is the usage form; the CLI dispatcher may pass enable/disable or --enable/--disable.
@@ -16,10 +18,11 @@ case "$action" in
     -h|--help)
         echo "Usage: geodineum geodeploy <on|off>"
         echo ""
-        echo "Enable or disable the auto-deploy cron (geodeploy-orchestrator)."
+        echo "Enable or disable the auto-deploy cron (geodeploy-orchestrator, root's crontab)."
         exit 0
         ;;
     on|enable|--enable)
+        need_root
         if crontab -l 2>/dev/null | grep -c "$CRON_PATTERN" >/dev/null; then
             log_info "Auto-deploy cron already enabled"
             exit 0
@@ -28,6 +31,7 @@ case "$action" in
         log_success "Auto-deploy cron enabled (*/5 * * * *)"
         ;;
     off|disable|--disable)
+        need_root
         if ! crontab -l 2>/dev/null | grep -c "$CRON_PATTERN" >/dev/null; then
             log_info "Auto-deploy cron already disabled"
             exit 0

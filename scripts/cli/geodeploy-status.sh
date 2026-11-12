@@ -16,8 +16,9 @@ fi
 LOG_FILE="${GEODEPLOY_LOG:-${GEODINEUM_LOG_ROOT:-/var/log/geodineum}/deploy/auto-deploy.log}"
 STAMP="$(dirname "$LOG_FILE")/.last-success"
 
-# The sweep's own stamp is the evidence; the cron line may sit in root's crontab or the deploy user's.
-cron_line="$( { crontab -l 2>/dev/null; sudo -n crontab -l 2>/dev/null; } | grep 'geodeploy-orchestrator' | grep -v '^#' | head -1 || true)"
+# The sweep's own stamp is the evidence; root's crontab (readable under sudo) adds the schedule.
+cron_line=""
+(( EUID == 0 )) && cron_line="$(crontab -l 2>/dev/null | grep 'geodeploy-orchestrator' | grep -v '^#' | head -1 || true)"
 last=""; [[ -r "$STAMP" ]] && last="$(<"$STAMP")"
 age=-1; [[ -n "$last" ]] && age=$(( $(date +%s) - $(date -d "$last" +%s 2>/dev/null || echo 0) ))
 if (( age >= 0 && age <= 900 )); then
