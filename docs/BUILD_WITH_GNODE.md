@@ -69,7 +69,7 @@ last three and nobody noticed — that is why this list exists.
 [ ] CONTRACT.md + CONTRACT.scn.md    — your own integration contract, both files
 [ ] config: section                  — your config keyspace declared
 [ ] cli: section                     — your verbs in geodineum --help
-[ ] backup: section                  — what Geodineum-BAK preserves for you
+[ ] backup: section                  — the keys and files to restore (logged; the snapshot is wholesale)
 ```
 
 ## For an LLM picking this up
