@@ -109,9 +109,10 @@ produces:                         # a manifest that declares nothing is refused
   `sudo geodineum register <path>` (it sees the changed manifest and regrants);
   labels and axes re-register with
   `sudo geodineum topology register service <id> --manifest <file> --env <env> [--on <node>]`.
-- **A regrant drops approved grants.** It resets the identity's key patterns and
-  re-adds only the base and the manifest; grants approved through §7 were added to
-  the same user and nothing replays them. Request them again after a regrant.
+- **A regrant keeps approved grants.** It resets the identity's key patterns to the
+  base and the manifest, then replays every approval the grant ledger holds in force
+  (§7); `grants revoke <request_id>` takes one out at the next regrant. A regrant that
+  cannot read the ledger refuses rather than drop them.
 - The daemon reads no discovery manifest: the service's `.geodineum/` is found by
   the CLI, and the declaration reaches the topology through registration only.
 
@@ -235,7 +236,7 @@ sudo geodineum grants show <id>        # decisions for <id> + its effective ACL
   COMMS with Approve/Deny buttons; undecided requests auto-deny after the TTL.
 - Ledger first: the decision lands on `{geodineum}:gnode:grants:ledger` before any
   `ACL SETUSER`. Details: `access-grants.md`.
-- A regrant (§2) drops approved grants; request them again.
+- An approval stays through regrants until `grants revoke` (§2).
 
 ## 8. Prove it worked
 
@@ -318,7 +319,6 @@ first, then a residue check. `gNode/scripts/deregister-service.sh` is the ValKey
 ## 13. Not built yet
 
 - A CLI verb that shows labels or reach: use the raw calls in Case 1, step 3.
-- Keeping approved grants through a regrant: they are dropped (§2).
 - Deploying a `/var/www` site with a push: the orchestrator does not pull websites.
 - Issuing a credential for another node without the operator: today it is
   `register --node` + `credential add`.

@@ -322,12 +322,14 @@ sudo geodineum grants request <id> '%R~{other}:some:*' --reason "…" [--ttl-hou
 sudo geodineum grants pending
 sudo geodineum grants approve <request_id> [--patterns "…"]     # on the master
 sudo geodineum grants deny <request_id> [--reason "…"]          # on the master
+sudo geodineum grants revoke <request_id> [--reason "…"]        # on the master; out at the next regrant
 sudo geodineum grants show <id>                                  # decisions + effective ACL
 ```
 
 `%R~<pattern>` is granted read-only, `%W~` write-only, a bare pattern read and
 write. The decision is ledgered before the ACL changes; undecided requests
-auto-deny after the TTL. A later regrant of the service drops approved grants.
+auto-deny after the TTL. A regrant replays the approvals in force; a revoke takes
+effect at the service's next regrant.
 See [CONTRACTS/access-grants.md](CONTRACTS/access-grants.md).
 
 ---

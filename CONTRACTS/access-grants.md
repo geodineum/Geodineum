@@ -38,13 +38,16 @@ timeout  auto-DENY after ttl (default 72 h), notified
   next ValKey restart silently reverts it (this reverted three services
   once).
 
-## Limit
+## The ledger is what a service holds
 
-An approval adds its patterns to `gnode_client_<svc>` directly. A later regrant
-of that service (`onboard-service.sh --regrant`, or `geodineum register <path>`
-after its manifest changed) resets the key patterns to the base and the manifest;
-nothing replays the ledger, so approved grants are gone and must be requested
-again. `grants show <svc>` puts the ledger beside the effective ACL.
+An approval adds its patterns to `gnode_client_<svc>` directly. A regrant of that
+service (`onboard-service.sh --regrant`, or `geodineum register <path>` after its
+manifest changed) resets the key patterns to the base and the manifest, then replays
+every approval in force: per request the newest ledger action decides, and only
+`approve` keeps its patterns (`gNode/scripts/cli/grants-ledger.sh`). A regrant that
+cannot read the ledger refuses. `grants revoke <request_id>` ledgers a revoke; the
+patterns leave the ACL at the service's next regrant. `grants show <svc>` puts the
+ledger beside the effective ACL.
 
 ## Keys
 

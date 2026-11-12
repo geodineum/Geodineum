@@ -36,7 +36,7 @@ NEVER raw-XADD unregistered. NEVER self-declare a foreign key: relay (_rt) or gr
 NEW writes it; INTEGRATE writes one only if absent.
 CHANGE consumes/produces → `sudo geodineum register <path>` (manifest drift ⇒ regrant).
 CHANGE labels/axes → `sudo geodineum topology register service <id> --manifest <f> --env <e> [--on <node>]`.
-TRAP regrant resets key patterns to base + manifest ⇒ APPROVED GRANTS DROPPED (no replay); re-request.
+REGRANT := base + manifest + ledger approvals in force; `grants revoke <rid>` ⇒ out at next regrant; ledger unreadable ⇒ REFUSE.
 The daemon reads no discovery manifest; the CLI finds .geodineum/.
 ```
 
@@ -89,7 +89,7 @@ XADD {<id>}:gnode:unified:<env> * id <u> t c c <cmd> ss <id> sn <node> ts <unix>
 ```
 request → {geodineum}:gnode:grants:requests → COMMS alert + buttons → approve|deny (master, admin)
 → LEDGER {geodineum}:gnode:grants:ledger BEFORE SETUSER → TTL auto-deny (72h). %R~ read · %W~ write · bare rw.
-`sudo geodineum grants show <id>` = ledger + effective ACL. Regrant drops approvals.
+`sudo geodineum grants show <id>` = ledger + effective ACL. Approvals survive regrants until revoked.
 ```
 
 ## ::PROVE
@@ -113,7 +113,7 @@ accepted ≠ delivered: {<id>}:gnode:comms:status:<stream_id>.
 
 ```
 RAW-XADD · FOREIGN-PATTERN in manifest (abort) · EMPTY MANIFEST (refused) · INTEGRATE + --owner/--mail-domain (exit 2)
-· REGRANT drops approvals · PUSH ≠ DEPLOY for /var/www · status <id> needs sudo.
+· PUSH ≠ DEPLOY for /var/www · status <id> needs sudo.
 TENANT: --owner (NEW only) → gnode:tenant:<o>:sites; GNODE_TENANT_LIST_SITES; GNODE_TOPO_QUERY is not tenant-filtered.
 CREATES: ACL user · cred+.owner · streams ×DTAP · gnode:sites:registry · entity+labels · intent · .geodineum/ · ledger
   /etc/geodineum/registrations/<id>.tsv.  DECOMMISSION: sudo geodineum deregister <id> [--dry-run|--purge-data].

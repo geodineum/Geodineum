@@ -6,4 +6,4 @@
 
 **Notify-site resolve** GEODINEUM_GRANTS_SITE → COMMS_INBOUND_SITE (default geodineum) if its comms config exists → geodineum_com. Impl: gNode/scripts/cli/grants.sh.
 
-**Limit** approve = ACL SETUSER on the service user; a later regrant (resetkeys → base + manifest) drops it, no ledger replay → re-request. `grants show` = ledger ∥ effective ACL.
+**Ledger = holdings** approve = ACL SETUSER now; regrant = resetkeys → base + manifest + approvals in force (newest action per request; grants-ledger.sh); ledger unreadable → REFUSE; `revoke <rid>` → out at next regrant. `grants show` = ledger ∥ effective ACL.
