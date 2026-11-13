@@ -811,8 +811,10 @@ geodeploy_ensure_dash_members() {
     local changed=0 u fpm
     getent group geodineum-dash >/dev/null 2>&1 \
         || { _gd_priv /usr/bin/groupadd --system geodineum-dash 2>/dev/null && changed=1; }
-    # A site's pool user joins only when its record says DASH="1".
-    for u in gnode "${GEODEPLOY_DEPLOY_USER:-}" $(declare -F site_pool_flag_users >/dev/null && site_pool_flag_users DASH); do
+    # A site's pool user joins only when its record says DASH="1"; the deploy user only when it is a login (an operator).
+    local du="${GEODEPLOY_DEPLOY_USER:-}"
+    case "$(getent passwd "$du" 2>/dev/null | cut -d: -f7)" in */nologin|*/false) du="" ;; esac
+    for u in gnode "$du" $(declare -F site_pool_flag_users >/dev/null && site_pool_flag_users DASH); do
         [[ -n "$u" ]] || continue
         id "$u" >/dev/null 2>&1 || continue
         id -nG "$u" 2>/dev/null | tr ' ' '\n' | grep -cx geodineum-dash >/dev/null && continue
