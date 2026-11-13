@@ -3584,7 +3584,7 @@ phase_config() {
     log_detail "  geodineum-bootstrap: gnode (reads bootstrap.env at daemon start)"
 
     track_path_if_new /etc/geodineum/credentials
-    install -d -m 0750 -o root -g geodineum-creds /etc/geodineum/credentials
+    install -d -m 0751 -o root -g geodineum-creds /etc/geodineum/credentials
 
     # Master ValKey credentials pasted during a join install; on a worker nothing else writes them.
     if [[ -n "${CONSTELLATION_DAEMON_PW:-}" ]]; then

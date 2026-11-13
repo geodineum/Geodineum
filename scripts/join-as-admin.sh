@@ -227,7 +227,7 @@ hr; echo "on the laptop: 6. the credential — copied by you, never minted here"
 if [[ "$DRY" == "true" ]]; then
     say "[dry] would create $CRED_DIR mode 0750, group $CRED_GROUP"
 else
-    install -d -m 0750 "$CRED_DIR" 2>/dev/null
+    [[ -d "$CRED_DIR" ]] || install -d -m 0751 "$CRED_DIR" 2>/dev/null
     getent group "$CRED_GROUP" >/dev/null 2>&1 && chgrp "$CRED_GROUP" "$CRED_DIR" 2>/dev/null
     say "directory $CRED_DIR ($(stat -c '%a %U:%G' "$CRED_DIR" 2>/dev/null))"
 fi

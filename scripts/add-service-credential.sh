@@ -66,7 +66,7 @@ OWNER="root"
 id gnode >/dev/null 2>&1 && OWNER="gnode"
 getent group "$GROUP" >/dev/null 2>&1 || { echo "[!] group '${GROUP}' absent — using root"; GROUP="root"; }
 
-install -d -m 0750 "$CREDS_DIR" 2>/dev/null || true
+[[ -d "$CREDS_DIR" ]] || install -d -m 0751 "$CREDS_DIR"
 CRED_FILE="${CREDS_DIR}/valkey_client_${SERVICE}.password"
 
 umask 077
