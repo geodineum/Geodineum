@@ -59,16 +59,6 @@ DRY_RUN="false"       # commit by default; pass --dry-run to preview
 KEEP_DATA="false"     # preserve /var/lib/valkey-gnode
 KEEP_USERS="false"    # preserve geodineum group + service users
 
-INSTALLER_PATHS=(
-    "/usr/local/bin/geodineum"
-    "/usr/local/bin/gcli"
-    "/usr/local/lib/geodineum"
-    "/etc/geodineum"
-    "/var/log/geodineum"
-)
-
-MANIFEST_PATH="/etc/geodineum/installed.manifest"
-
 # Timers before the services they trigger.
 UNINSTALL_UNITS=(
     "valkey-backup.timer"
@@ -642,8 +632,7 @@ print_summary() {
         echo -e "${GREEN}╚═══════════════════════════════════════════════════╝${NC}"
         echo ""
         echo "  Geodineum has been removed from this system."
-        echo "  Pre-existing co-located files NOT in the install manifest"
-        echo "  have been preserved."
+        echo "  Files the installer did not create have been left in place."
     fi
     echo ""
 }
