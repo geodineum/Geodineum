@@ -44,6 +44,7 @@ CHANGE consumes/produces → `sudo geodineum register <path>` (manifest drift �
 CHANGE labels/axes → `sudo geodineum topology register service <id> --manifest <f> --env <e> [--on <node>]`.
 REGRANT := base + manifest + ledger approvals in force; `grants revoke <rid>` ⇒ out at next regrant; ledger unreadable ⇒ REFUSE.
 The daemon reads no discovery manifest; the CLI finds .geodineum/.
+Registration announces site_registered on {c}:gnode:broadcast:global → daemon + COMMS re-discover at once; their 60 s poll catches a lost one.
 ```
 
 ## ::REGISTER

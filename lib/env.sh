@@ -245,7 +245,7 @@ i=json.load(sys.stdin); i["environment"]=os.environ["NEW_ENV"]; print(json.dumps
     if [[ -r "$dcred" ]]; then
         local ts; ts=$(date +%s)
         REDISCLI_AUTH="$(cat "$dcred")" valkey-cli -p "$port" --user gnode_daemon \
-            XADD "{${site_id}}:gnode:broadcast:global" '*' \
+            XADD "{${GNODE_TOPOLOGY_NAMESPACE:-geodineum}}:gnode:broadcast:global" MAXLEN '~' 1000 '*' \
             type environment_changed \
             data "{\"type\":\"environment_changed\",\"site_id\":\"${site_id}\",\"new_environment\":\"${new_env}\",\"timestamp\":${ts}}" \
             >/dev/null 2>&1 || true

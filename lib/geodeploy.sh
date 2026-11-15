@@ -405,6 +405,32 @@ geodeploy_action_restart() {
     fi
 }
 
+# A value from this node's daemon.env, unquoted; empty when absent or unreadable.
+_gd_daemon_env() {
+    local f="${GNODE_DAEMON_ENV:-/etc/geodineum/components/gnode-daemon/daemon.env}" v=""
+    [[ -r "$f" ]] && v="$(sed -n "s/^${1}=//p" "$f" 2>/dev/null | head -n 1)"
+    v="${v//\"/}"; v="${v//\'/}"; echo "${v// /}"
+}
+
+# Best effort: the daemon and COMMS re-read their site discovery now. Never fails the sweep.
+geodeploy_announce_deployed() {
+    local name="$1" rev="$2"
+    local vcli="${GEODINEUM_ROOT}/gNode/scripts/valkey-cli-secure.sh"
+    [[ -x "$vcli" ]] || { geodeploy_log "${name}: WARN component_deployed not announced (valkey-cli-secure.sh not found)"; return 0; }
+    local ns node data id
+    ns="$(_gd_daemon_env GNODE_TOPOLOGY_NAMESPACE)"; ns="${ns:-geodineum}"
+    node="$(_gd_daemon_env GNODE_NODE_ID)"; node="${node:-$(hostname -s)}"
+    data=$(printf '{"component":"%s","rev":"%s","node":"%s","ts":%s}' "$name" "${rev:0:12}" "$node" "$(date +%s)")
+    id=$(VALKEY_USER=gnode_daemon timeout 5 "$vcli" XADD "{${ns}}:gnode:broadcast:global" MAXLEN '~' 1000 '*' \
+        type component_deployed data "$data" 2>&1) || true
+    if [[ "$id" =~ ^[0-9]+-[0-9]+$ ]]; then
+        geodeploy_log "${name}: announced component_deployed"
+    else
+        geodeploy_log "${name}: WARN component_deployed not announced (${id:-no reply}); consumers catch up at their next poll"
+    fi
+    return 0
+}
+
 # APCu survives an FPM reload; the config loaders compare this generation on every hit.
 geodeploy_action_generation_bump() {
     local name="$1"
@@ -529,6 +555,7 @@ geodeploy_match_and_run() {
     local name="$2"
     local changed="$3"
     local descriptor="${repo_dir}/geodeploy.yaml"
+    _GD_BUILT=0; _GD_BUILD_FAILED=0
 
     if [[ ! -f "$descriptor" ]]; then
         return 0
@@ -570,7 +597,7 @@ for action in sorted(matched_actions):
     for action in "${_actions[@]}"; do
         case "$action" in
             build)
-                geodeploy_action_build "$repo_dir" "$name"
+                if geodeploy_action_build "$repo_dir" "$name"; then _GD_BUILT=1; else _GD_BUILD_FAILED=1; fi
                 ;;
             restart)
                 _GD_RESTART_QUEUED="$name"
@@ -1405,6 +1432,7 @@ geodeploy_pro_rebuild_daemon() {
     geodeploy_fix_gnode_dirs "$gnode_dir"
     geodeploy_action_restart "gNode" || return 1
     rm -f "$pending"
+    geodeploy_announce_deployed "pro/gNode" "$inputs"
 }
 
 # =============================================================================
@@ -1557,9 +1585,13 @@ geodeploy_repo() {
         fi
 
         # The queued restart runs only once ownership, modes and runtime dirs are settled.
+        local _restarted=0 _restart_failed=0
         if [[ -n "${_GD_RESTART_QUEUED:-}" ]]; then
-            geodeploy_action_restart "$_GD_RESTART_QUEUED"
+            if geodeploy_action_restart "$_GD_RESTART_QUEUED"; then _restarted=1; else _restart_failed=1; fi
             _GD_RESTART_QUEUED=""
+        fi
+        if (( (${_GD_BUILT:-0} || _restarted) && !${_GD_BUILD_FAILED:-0} && !_restart_failed )); then
+            geodeploy_announce_deployed "$name" "$remote_rev"
         fi
 
         # Best-effort: publish the manifest to ValKey for `geodineum describe` and `geodineum logs`.

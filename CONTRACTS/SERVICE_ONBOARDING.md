@@ -125,6 +125,9 @@ produces:                         # a manifest that declares nothing is refused
   cannot read the ledger refuses rather than drop them.
 - The daemon reads no discovery manifest: the service's `.geodineum/` is found by
   the CLI, and the declaration reaches the topology through registration only.
+- Registration announces the service (`site_registered` on `{<c>}:gnode:broadcast:global`),
+  so the daemon and COMMS take up its streams within seconds; a lost announcement is
+  caught by their one-minute discovery poll.
 
 ## 3. Register — the one entry
 

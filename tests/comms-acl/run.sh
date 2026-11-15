@@ -39,6 +39,10 @@ T yes SET 'example_com:gnode:schema:geodineum_comms:outbound_alert' x
 T yes SET '{example_com}:gnode:schema:_index' x
 T yes GET '{example_com}:gnode:schema:gnode_daemon:x'
 T no SET '{example_com}:gnode:schema:gnode_daemon:x' x
+T yes XREAD COUNT 100 STREAMS '{geodineum}:gnode:broadcast:global' 0-0
+T yes XREVRANGE '{geodineum}:gnode:broadcast:global' + - COUNT 1
+T no XADD '{geodineum}:gnode:broadcast:global' '*' type site_registered
+T no XTRIM '{geodineum}:gnode:broadcast:global' MAXLEN 0
 T yes GET 'gnode:site:x:meta'
 T yes HGETALL 'gnode:site:x:meta'
 T no GET "$S:inference:metrics:p"

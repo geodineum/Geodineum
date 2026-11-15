@@ -2612,6 +2612,8 @@ provision_comms_acl() {
         # Read, never write: discovery.
         "%R~gnode:site:*" "%R~gnode:sites:*" "%R~gnode:routing:*" "%R~topology:*"
         "%R~*:gnode:schema:*"
+        # Registration and deploy events, so a new site is consumed at once.
+        "%R~*:gnode:broadcast:global"
         # ...except the schema it publishes itself at start.
         "~*:gnode:schema:geodineum_comms:*" "~*:gnode:schema:_index"
         # Receipts: the pubkey registry and the receipt streams; both are needed to sign.
