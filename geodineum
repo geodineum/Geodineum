@@ -1587,6 +1587,9 @@ cmd_wp() {
         exit 1
     fi
 
+    local domain
+    domain="$(basename "$wp_root" | sed 's/_/./g')"
+
     if ! command -v wp &>/dev/null; then
         log_error "wp-cli not found"
         exit 1
