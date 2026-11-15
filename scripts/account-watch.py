@@ -2,8 +2,10 @@
 """Account watch: who can log in, who can become root, what runs as root, who did log in and use sudo.
 
 Nightly as root. The first run records a baseline; afterwards a change is flagged until `--accept` records it.
-Every run also writes a digest of the last day's logins and sudo use to <state>/digest.json, sent with
-the findings (and on its own with --digest-always). Findings go through COMMS like the estate watch. Reads only.
+Every run also writes a digest of the last day's logins and sudo use to <state>/digest.json. With --daily send the
+digest goes with the findings (and on its own with --digest-always); with --daily report a daily report reads it and
+the alerts carry the findings alone. auto: report once daily-report.status is in the status directory.
+Findings go through COMMS like the estate watch. Reads only.
   python3 -I account-watch.py [--accept] [--no-alert] [--root /]   (--root and the --cmd-* options exist for the tests)
 """
 import argparse, glob, hashlib, json, os, re, socket, subprocess, sys, time
@@ -21,7 +23,8 @@ def args_():
     a.add_argument("--alert-site", default=os.environ.get("ACCOUNT_WATCH_ALERT_SITE", ""))
     a.add_argument("--env", default="production")
     a.add_argument("--no-alert", action="store_true")
-    a.add_argument("--digest-always", action="store_true", help="send the digest even when nothing is flagged")
+    a.add_argument("--digest-always", action="store_true", help="send the digest even when nothing is flagged (--daily send)")
+    a.add_argument("--daily", choices=["auto", "report", "send"], default=os.environ.get("ACCOUNT_WATCH_DAILY") or "auto")
     a.add_argument("--hours", type=int, default=26, help="how far back the digest of logins and sudo looks")
     a.add_argument("--cmd-last", default="last -w -i --time-format iso")
     a.add_argument("--cmd-auth", default="journalctl -q --no-pager -o short-iso _COMM=sudo _COMM=sshd --since -{hours}h")
@@ -174,7 +177,13 @@ def digest(a, known_ips):
             k = " ".join(c.split()[:2])
             top[k] = top.get(k, 0) + 1
         lines.append(f"sudo {u}: {len(cmds)}: " + ", ".join(f"{k} x{n}" for k, n in sorted(top.items(), key=lambda x: -x[1])[:6]))
-    return flags, lines, logins
+    return flags, lines, logins, {u: len(c) for u, c in sudo.items()}
+
+
+def daily_mode(a):
+    if a.daily != "auto":
+        return a.daily
+    return "report" if os.path.exists(os.path.join(os.path.dirname(a.status), "daily-report.status")) else "send"
 
 
 def alert(a, host, findings, lines, state_dir):
@@ -184,7 +193,8 @@ def alert(a, host, findings, lines, state_dir):
     at = int((read(atf) or "0").strip() or 0)
     open(fpf, "w").write(fp)
     send = bool(findings) and (fp != prev or time.time() - at > 21600)
-    if a.no_alert or not a.alert_site or not (send or a.digest_always):
+    report = daily_mode(a) == "report"
+    if a.no_alert or not a.alert_site or not (send or (a.digest_always and not report)):
         return
     env = {}
     try:
@@ -192,7 +202,8 @@ def alert(a, host, findings, lines, state_dir):
     except OSError:
         pass
     subject = f"[account watch] {len([f for f in findings if not f.startswith('    ')])} finding(s) on {host}" if findings else f"[account watch] {host}: nothing new"
-    body = "\n".join(findings + ([""] if findings else []) + ["Last day:"] + (lines or ["no logins, no sudo"]))
+    tail = ["The day's logins and sudo use are in the daily report."] if report else ["Last day:"] + (lines or ["no logins, no sudo"])
+    body = "\n".join(findings + ([""] if findings else []) + tail)
     r = subprocess.run(["valkey-cli", "-e", "--no-auth-warning", "-h", env.get("VALKEY_HOST", "127.0.0.1"), "-p", env.get("VALKEY_PORT", "47445"),
                         "--user", "gnode_daemon", "XADD", f"{{{a.alert_site}}}:gnode:comms:{a.env}", "*",
                         "site_id", a.alert_site, "environment", a.env, "type", "alert", "priority", "2" if findings else "4",
@@ -232,7 +243,7 @@ def main():
                 if now.get(k) is not None:
                     findings += diff(state.get(k), now[k], label)
         known = state.get("login_ips", {})
-        lflags, lines, logins = digest(a, known)
+        lflags, lines, logins, sudo = digest(a, known)
         if not first:
             findings += lflags
         for u, ips in logins.items():
@@ -241,6 +252,7 @@ def main():
         now["login_ips"] = known
     except Exception as e:
         findings, lines, now, error = [f"the watch itself failed: {e}"], [], None, str(e)
+        logins, sudo = {}, {}
     print(f"== on {host}: {len([f for f in findings if not f.startswith('    ')])} finding(s){' (first run: baseline recorded)' if first else ''}")
     for f in findings:
         print(f"  FLAG {f}" if not f.startswith("    ") else f"       {f.strip()}")
@@ -266,7 +278,8 @@ def main():
     try:
         # the digest stays on the node, sent or not
         with open(os.path.join(a.state, "digest.json.tmp"), "w") as o:
-            json.dump({"host": host, "at": int(time.time()), "findings": findings, "lines": lines}, o, indent=1)
+            json.dump({"host": host, "at": int(time.time()), "hours": a.hours, "findings": findings, "lines": lines,
+                       "logins": logins, "sudo": sudo}, o, indent=1)
         os.chmod(os.path.join(a.state, "digest.json.tmp"), 0o600)
         os.replace(os.path.join(a.state, "digest.json.tmp"), os.path.join(a.state, "digest.json"))
     except OSError as e:

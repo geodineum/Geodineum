@@ -96,4 +96,5 @@ chmod 0644 "$D/acl"; o=$(go); has "a world-readable ACL file" "is readable by ev
 echo "<?php \$wp_version = '9.8';" > "$SITE/wp-includes/version.php"; rm -f "$D/st/state.json"
 o=$(go); has "old WordPress is flagged on the first run: a compromise cannot become the baseline" "WordPress 9.8, current 9.9" "$o"
 secret=$(grep -c "'p'" <<<"$o" || true); [[ "$secret" == 0 ]] && { pass=$((pass+1)); echo "  ok   no database password in the output"; } || { fail=$((fail+1)); echo "  FAIL password printed"; }
+has "the run's findings are kept for a daily report" "WordPress 9.8, current 9.9" "$(cat "$D/st/findings.json")"
 echo "== $pass ok, $fail failed"; exit $(( fail > 0 ))

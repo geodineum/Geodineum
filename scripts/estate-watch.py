@@ -9,7 +9,8 @@ version left behind. Flags a served page whose title changed or reads as a defac
 The first run on a node records what it finds and still reports anything wrong in itself (an unregistered
 vhost, a modified core, an old version), so an existing compromise cannot become the baseline quietly.
 A change stays flagged until --accept records it as the new state, naming what was accepted.
-Reads only; writes its own state, one status file and, when something is wrong, one alert."""
+Reads only; writes its own state, the run's findings (findings.json, for a daily report), one status file and,
+when something is wrong, one alert."""
 import argparse
 import glob
 import hashlib
@@ -334,6 +335,14 @@ def main():
         print("  ..   state kept until --accept: what is flagged stays flagged")
     if a.accept:
         findings = []
+    if seen is not None or error:
+        try:
+            with open(os.path.join(a.state, "findings.json.tmp"), "w") as o:
+                json.dump({"host": host, "at": int(time.time()), "findings": findings}, o, indent=1)
+            os.chmod(os.path.join(a.state, "findings.json.tmp"), 0o640)
+            os.replace(os.path.join(a.state, "findings.json.tmp"), os.path.join(a.state, "findings.json"))
+        except OSError as e:
+            print(f"  ..   findings not kept: {e}")
     try:
         alert(a, host, findings, a.state)
     except Exception as e:

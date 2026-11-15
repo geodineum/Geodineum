@@ -82,4 +82,13 @@ old_baseline "udp 0.0.0.0:41000"; o=$(go); none "a baseline from before the Wire
 o=$(go); none "and stays quiet after that" "$o"
 old_baseline "tcp 0.0.0.0:9999"; o=$(go); has "the migration still flags a TCP listener that went away" "listening port: 1 removed" "$o"; go --accept >/dev/null
 has "the digest is kept on the node" '"lines"' "$(cat "$D/st/digest.json")"
+j() { python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2], {"d": d}))' "$D/st/digest.json" "$1"; }
+has "the digest counts logins per account and address" "203.0.113.7=1" "$(j '",".join(f"{ip}={n}" for ip, n in d["logins"]["op"].items())')"
+has "and sudo per account" "1" "$(j 'd["sudo"]["op"]')"
+mode() { python3 -I -B -c 'import importlib.util,sys,types
+s=importlib.util.spec_from_file_location("w", sys.argv[1]); w=importlib.util.module_from_spec(s); s.loader.exec_module(w)
+print(w.daily_mode(types.SimpleNamespace(daily=sys.argv[2], status=sys.argv[3])))' "$W" "$1" "$D/jobs/account-watch.status"; }
+mkdir -p "$D/jobs"; has "auto: the digest goes with alerts while no daily report runs" "send" "$(mode auto)"
+touch "$D/jobs/daily-report.status"; has "auto: the daily report carries it once its status file is there" "report" "$(mode auto)"
+has "an explicit setting wins" "send" "$(mode send)"
 echo "== $pass ok, $fail failed"; exit $(( fail > 0 ))

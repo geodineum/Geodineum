@@ -3,23 +3,25 @@
 # node time. It reports through COMMS as the site named by --alert-site.
 # The first run records the baseline; after that every change to accounts, privileged groups, sudoers, ssh keys,
 # crontabs, units, docker images and listeners is flagged. A quiet night sends nothing: the digest of logins and sudo
-# use is kept on the node (--digest-always sends it every day as well).
-#   sudo bash scripts/install-account-watch.sh --alert-site <site with COMMS recipients> [--digest-always] [--apply]
+# use is kept on the node. --daily auto (default) leaves it to a daily report once one runs here, else alerts carry it;
+# report or send fixes the choice (--digest-always sends it every day while it is send).
+#   sudo bash scripts/install-account-watch.sh --alert-site <site with COMMS recipients> [--daily auto|report|send] [--digest-always] [--apply]
 set -euo pipefail
-APPLY=0; ALERT_SITE=""; ARGS=""
+APPLY=0; ALERT_SITE=""; ARGS=""; DAILY=auto
 while [[ $# -gt 0 ]]; do case "$1" in
-    --apply) APPLY=1; shift ;; --alert-site) ALERT_SITE="${2:-}"; shift 2 ;; --digest-always) ARGS="--digest-always"; shift ;;
+    --apply) APPLY=1; shift ;; --alert-site) ALERT_SITE="${2:-}"; shift 2 ;; --digest-always) ARGS="--digest-always"; shift ;; --daily) DAILY="${2:-}"; shift 2 ;;
     *) echo "unknown option $1" >&2; exit 2 ;; esac; done
 [[ $EUID -eq 0 ]] || { echo "on $(hostname -s): needs root: sudo bash $0 $*" >&2; exit 1; }
 [[ "$ALERT_SITE" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || { echo "--alert-site <site_id> is required" >&2; exit 2; }
+[[ "$DAILY" =~ ^(auto|report|send)$ ]] || { echo "--daily takes auto, report or send" >&2; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"; LIB=/usr/local/lib/geodineum; ENVF=/etc/geodineum/account-watch.env
 python3 -I -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$HERE/account-watch.py"
-echo "== on $(hostname -s): [account-watch] alert site $ALERT_SITE, digest $([[ -n "$ARGS" ]] && echo "sent daily" || echo "kept on the node, sent with findings")"
+echo "== on $(hostname -s): [account-watch] alert site $ALERT_SITE, digest: $DAILY$([[ -n "$ARGS" ]] && echo ", sent daily while send")"
 if (( ! APPLY )); then echo "   would install $LIB/account-watch.py, $ENVF, the unit and the 07:40 timer, then run it once (baseline). Add --apply."; exit 0; fi
 install -d -m 0755 "$LIB"
 install -m 0750 -o root -g root "$HERE/account-watch.py" "$LIB/account-watch.py"
 install -d -m 0700 -o root -g root /var/lib/geodineum/account-watch
-printf 'ACCOUNT_WATCH_ALERT_SITE=%s\nACCOUNT_WATCH_ARGS=%s\n' "$ALERT_SITE" "$ARGS" > "$ENVF"; chmod 0640 "$ENVF"
+printf 'ACCOUNT_WATCH_ALERT_SITE=%s\nACCOUNT_WATCH_ARGS=%s\nACCOUNT_WATCH_DAILY=%s\n' "$ALERT_SITE" "$ARGS" "$DAILY" > "$ENVF"; chmod 0640 "$ENVF"
 cat > /etc/systemd/system/geodineum-account-watch.service <<UNIT
 [Unit]
 Description=Geodineum: who can log in, who can become root, who did

@@ -1,6 +1,7 @@
 #!/bin/bash
 # on every node, as root: install the nightly estate watch (scripts/estate-watch.py) as a root-owned copy,
 # with its timer (03:20 UTC). The first run records the baseline and reports what is already wrong.
+# A reinstall keeps the alert site it was given before.
 #   sudo bash scripts/install-estate-watch.sh --alert-site <site with COMMS recipients> [--allow "<host> <host>"] [--apply]
 set -euo pipefail
 APPLY=0; ALERT_SITE=""; ALLOW=""
@@ -8,8 +9,9 @@ while [[ $# -gt 0 ]]; do case "$1" in
     --apply) APPLY=1; shift ;; --alert-site) ALERT_SITE="$2"; shift 2 ;; --allow) ALLOW="$2"; shift 2 ;;
     *) echo "unknown option $1" >&2; exit 2 ;; esac; done
 [[ $EUID -eq 0 ]] || { echo "on $(hostname -s): needs root: sudo bash $0 $*" >&2; exit 1; }
-[[ "$ALERT_SITE" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || { echo "--alert-site <site_id> is required" >&2; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"; LIB=/usr/local/lib/geodineum; ENVF=/etc/geodineum/estate-watch.env; ALLOWF=/etc/geodineum/estate-watch.allow
+[[ -n "$ALERT_SITE" ]] || ALERT_SITE="$(sed -n 's/^ESTATE_WATCH_ALERT_SITE=//p' "$ENVF" 2>/dev/null | head -1 || true)"
+[[ "$ALERT_SITE" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || { echo "--alert-site <site_id> is required" >&2; exit 2; }
 run() { if (( APPLY )); then "$@"; else echo "   WOULD: $*"; fi; }
 echo "== on $(hostname -s): [estate-watch] $( ((APPLY)) && echo APPLY || echo 'PLAN, add --apply')"
 python3 -I -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$HERE/estate-watch.py"
