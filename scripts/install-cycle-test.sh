@@ -26,7 +26,11 @@
 set -uo pipefail
 
 PROFILE="standard"; TEST_SITE=""; KEEP_DATA="false"; DESTROY="false"; KEEP_GOING="false"
-DENY_HOSTS=("aesir-solutions")   # protected production hosts — never wipe these
+PROTECTED_MARKER="/etc/geodineum/protected-host"   # created on every host this test must never wipe
+protected_host() {
+    local marker="${1:-$PROTECTED_MARKER}" host="${2:-$(hostname 2>/dev/null || echo unknown)}"
+    [[ -e "$marker" || "$host" == "aesir-solutions" ]]
+}
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 RED=$'\e[31m'; GRN=$'\e[32m'; YEL=$'\e[33m'; BLU=$'\e[34m'; BLD=$'\e[1m'; NC=$'\e[0m'
@@ -48,9 +52,7 @@ esac; done
 # ---- safety guards -------------------------------------------------------
 [[ $EUID -eq 0 ]] || die "must run as root"
 HOST="$(hostname 2>/dev/null || echo unknown)"
-for h in "${DENY_HOSTS[@]}"; do
-    [[ "$HOST" == "$h" ]] && die "REFUSING on '$HOST' — a protected production host. This test wipes Geodineum entirely."
-done
+protected_host && die "REFUSING on '$HOST': a protected production host ($PROTECTED_MARKER, or its old name). This test wipes Geodineum entirely."
 [[ "$DESTROY" == "true" ]] || die "this ERASES all Geodineum state. Re-run with --destroy on a THROWAWAY box only."
 for f in "$REPO_DIR/install.sh" "$REPO_DIR/uninstall.sh" "$REPO_DIR/scripts/ecosystem-smoke-test.sh"; do
     [[ -f "$f" ]] || die "missing required script: $f"
