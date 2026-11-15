@@ -33,7 +33,7 @@ out=$(probe 2>&1) && rc=0 || rc=$?
 check "the probe passes" "$rc" 0
 check "every check is a pass" "$(grep -c '  FAIL' <<<"$out" || true)" 0
 check "both controls read their own tag" "$(grep -c 'reads its own tag (control)' <<<"$out" || true)" 2
-check "2 ordered pairs x 6 refusals" "$(grep -c -E '^  ok   [ab]_nl -> ' <<<"$out" || true)" 12
+check "2 ordered pairs x 9 refusals" "$(grep -c -E '^  ok   [ab]_nl -> ' <<<"$out" || true)" 18
 check "a JSON record was written" "$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["failed"]==[] and r["checks"]>0 and r["sites"]==["a_nl","b_nl"])' "$W/state/last.json")" True
 
 echo "red: a_nl's user is widened onto {b_nl}:*"
@@ -41,7 +41,7 @@ vk ACL SETUSER gnode_client_a_nl '~{b_nl}:*' >/dev/null
 out=$(probe 2>&1) && rc=0 || rc=$?
 check "the probe fails" "$rc" 1
 check "it names the pair and the layer" "$(grep -c -E 'FAIL a_nl -> \{b_nl\}: EXISTS answered' <<<"$out" || true)" 1
-check "the write checks went red too" "$(grep -c -E 'FAIL a_nl (may (write|XADD)|wrote \{b_nl\} through a function)' <<<"$out" || true)" 3
+check "the write checks went red too" "$(grep -c -E 'FAIL a_nl (may (write|XADD)|wrote \{b_nl\} through a function)' <<<"$out" || true)" 4
 check "b_nl -> a_nl is still refused (the breach is one-way)" "$(grep -c -E 'FAIL b_nl -> ' <<<"$out" || true)" 0
 check "the record carries the failures" "$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["failed"]) > 0)' "$W/state/last.json")" True
 
