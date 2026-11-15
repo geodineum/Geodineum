@@ -1588,7 +1588,8 @@ cmd_wp() {
     fi
 
     local domain
-    domain="$(basename "$wp_root" | sed 's/_/./g')"
+    domain="$wp_root"; [[ "$(basename "$domain")" == public_html ]] && domain="$(dirname "$domain")"
+    domain="$(basename "$domain" | sed 's/_/./g')"
 
     if ! command -v wp &>/dev/null; then
         log_error "wp-cli not found"
