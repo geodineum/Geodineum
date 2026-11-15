@@ -75,4 +75,13 @@ if (( EUID != 0 )); then
     is "the orchestrator refuses to run as anyone but root" "$rc:$out" "1:geodeploy-orchestrator runs from root's crontab"
 fi
 
+( cd "$GEODINEUM_ROOT/Mine" && git remote add origin "http://user:s3cr3t@127.0.0.1:9/x.git" 2>/dev/null )
+: > "$GEODEPLOY_LOG"
+( cd "$GEODINEUM_ROOT/Mine" && geodeploy_fetch main ); rc=$?
+is "a failed fetch returns non-zero" "$((rc > 0))" 1
+is "its error reaches the deploy log" "$(grep -c 'fatal' "$GEODEPLOY_LOG")" 1
+is "a URL credential never does" "$(grep -c 's3cr3t' "$GEODEPLOY_LOG")" 0
+
+is "the redactor strips a URL credential" "$(_geodeploy_redact <<< "fatal: unable to access 'https://u:tok@h.example/r.git/'")" "fatal: unable to access 'https://h.example/r.git/'"
+
 echo "== $pass ok, $fail failed"; exit $(( fail > 0 ))

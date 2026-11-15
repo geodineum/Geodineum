@@ -210,7 +210,15 @@ geodeploy_fetch() {
 
     # The permission sweeps own file modes; git tracking them would show a dirty tree.
     geodeploy_as_owner git config core.fileMode false 2>> "$GEODEPLOY_LOG"
-    geodeploy_as_owner git fetch "$remote" "$branch" 2>> "$GEODEPLOY_LOG"
+    local err rc=0
+    err="$(geodeploy_as_owner git fetch "$remote" "$branch" 2>&1 >/dev/null)" || rc=$?
+    [[ -n "$err" ]] && _geodeploy_redact <<< "$err" >> "$GEODEPLOY_LOG"
+    return "$rc"
+}
+
+# Credentials in a URL (scheme://user:secret@host) never reach the log.
+_geodeploy_redact() {
+    /usr/bin/sed -E 's#(://)[^/@[:space:]]+@#\1#g'
 }
 
 # Every checkout under GEODINEUM_ROOT: never pushes, never tracks modes. Runs as the checkout's owner.
@@ -240,8 +248,12 @@ geodeploy_report_unmanaged_behind() {
     local dir="${1%/}" name owner branch behind
     name="$(basename "$dir")"
     owner="$(/usr/bin/stat -c %U "${dir}/.git" 2>/dev/null)" || return 0
-    _geodeploy_git_as "$owner" -c core.sshCommand="ssh -o BatchMode=yes -o ConnectTimeout=15" \
-        -C "$dir" fetch -q origin 2>/dev/null || { geodeploy_log "COVERAGE: ${name} (unmanaged) could not be fetched"; return 0; }
+    local err
+    err="$(_geodeploy_git_as "$owner" -c core.sshCommand="ssh -o BatchMode=yes -o ConnectTimeout=15" \
+        -C "$dir" fetch -q origin 2>&1 >/dev/null)" || {
+        geodeploy_log "COVERAGE: ${name} (unmanaged) could not be fetched: $(_geodeploy_redact <<< "$err" | tr '\n' ' ')"
+        return 0
+    }
     branch="$(_geodeploy_git_as "$owner" -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null)" || return 0
     behind="$(_geodeploy_git_as "$owner" -C "$dir" rev-list --count "HEAD..origin/${branch}" 2>/dev/null)" || return 0
     if [[ "${behind:-0}" -gt 0 ]]; then
