@@ -58,9 +58,10 @@ echo "== the grant on ValKey, as onboard-service.sh applies it"
 loaded=0; for f in "$FUNCS"/*.lua; do A -x FUNCTION LOAD REPLACE < "$f" >/dev/null 2>&1 && loaded=$((loaded+1)); done
 A FUNCTION LIST LIBRARYNAME gnode_gcore_config | grep -q gnode_gcore_config && ok "$loaded function libraries loaded (gnode_gcore_config among them)" \
     || { bad "gnode_gcore_config did not load"; }
-cmds_src="$(awk '/ACL SETUSER "\$ACL_USER" nocommands/{f=1} f{print; if ($0 !~ /\\$/) exit}' "$ONBOARD" | sed 's/.*nocommands//; s/\\$//; s/>\/dev\/null//')"
-eval "cmds=($cmds_src)"
-(( ${#cmds[@]} > 20 )) && ok "command allowlist read from onboard-service.sh (${#cmds[@]} rules)" || bad "command allowlist not found in $ONBOARD"
+# shellcheck source=/opt/geodineum/gNode/scripts/acl-tiers.sh
+source "$GNODE/scripts/acl-tiers.sh" 2>/dev/null
+cmds=(${ACL_CLIENT_COMMANDS[@]+"${ACL_CLIENT_COMMANDS[@]}"} "$(acl_client_scan "" site 2>/dev/null)")
+(( ${#cmds[@]} > 20 )) && ok "command allowlist read from acl-tiers.sh (${#cmds[@]} rules, a site: ${cmds[-1]})" || bad "command allowlist not found in $GNODE/scripts/acl-tiers.sh"
 r=$(A ACL SETUSER gnode_client_site_a on '>site-a-pw' clearselectors resetkeys \
       '~site_a:*' '~{site_a}:*' '~{geodineum}:gnode:heartbeat:*:site_a:*' '%R~{geodineum}:gnode:*' "${declared[@]}" \
       resetchannels '&*' nocommands "${cmds[@]}")

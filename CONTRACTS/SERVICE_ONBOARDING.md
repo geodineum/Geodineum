@@ -35,9 +35,12 @@ the relay checks. A raw writer has none of that and shows up in nobody's audit.
   topology is written by the daemon tier only). On top of that, the manifest's
   `consumes`/`produces`, each checked against the allow-list in
   `lib/manifest-policy.sh`; a pattern outside it aborts onboarding. Commands are an
-  allowlist in the same script: streams with consumer groups, `FCALL`/`FCALL_RO`,
-  basic string/hash/set/list/zset, `SCAN`, `PUBLISH`, `MULTI`/`EXEC`. Not granted,
-  among others: `EVAL`, `SUBSCRIBE`, `KEYS`, `XAUTOCLAIM`, `ZRANGEBYSCORE`.
+  allowlist (`gNode/scripts/acl-tiers.sh`): streams with consumer groups,
+  `FCALL`/`FCALL_RO`, basic string/hash/set/list/zset, `PUBLISH`, `MULTI`/`EXEC`.
+  Not granted, among others: `SCAN`, `EVAL`, `SUBSCRIBE`, `KEYS`, `XAUTOCLAIM`,
+  `ZRANGEBYSCORE`. `SCAN` is refused because key patterns do not hide key names: it
+  lists every tenant's keys. A manifest that needs it declares `keyspace_scan: true`
+  (applied at onboarding and at every regrant).
   Outside its own namespace a manifest may name only shared keys, granted read-only
   (`{default}:gcore:*`, `gnode:site:*`, `gnode:sites:*`, `gnode:routing:*`) or its own
   (`gnode:consumer_groups_verified:<id>:*`, `topology:<id>:*`, `template:<id>:*`);
@@ -104,6 +107,7 @@ services:
       type: "daemon"
       tier: "SERVICE"
 
+keyspace_scan: false              # true grants SCAN: it lists every tenant's key names
 consumes: []                      # at least one of consumes/produces is REQUIRED:
 produces:                         # a manifest that declares nothing is refused
   - "{myservice}:gnode:comms:*"   # {site_id} {service} {ecosystem} interpolate

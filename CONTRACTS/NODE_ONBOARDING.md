@@ -71,8 +71,11 @@ localhost (one ValKey restart, after a confirmation), and fail2ban. Then it:
 - mints the node's WireGuard keypair and registers the peer at the lowest free VPN
   address;
 - mints a **per-node ValKey identity**, user `gnode_node_<name>` with its own
-  password, from the daemon-tier ACL rule (one definition of the grant). If the
-  master cannot mint one, the node falls back to the shared `gnode_daemon` login;
+  password, from the daemon-tier ACL rule (one definition of the grant) minus
+  `FUNCTION LOAD`, `DELETE`, `FLUSH` and `RESTORE` (`gNode/scripts/acl-tiers.sh`):
+  the Lua libraries are shared by every constellation on the ValKey, so only the
+  master writes them. If the master cannot mint one, the node falls back to the
+  shared `gnode_daemon` login;
 - writes a **bundle file** (`~/<name>.geodineum-bundle`, `0600`, never printed).
   It holds the WireGuard config, the credentials, the master's VPN address,
   **the constellations the master serves** (so the node serves the same ones) and
@@ -238,6 +241,7 @@ it on the **master** without disturbing the live peer:
 # On the MASTER — credential half only; touches no WireGuard/peer state
 sudo /opt/geodineum/gNode/scripts/mint-node-identity.sh mynode           # idempotent
 sudo /opt/geodineum/gNode/scripts/mint-node-identity.sh mynode --rotate  # only if truly lost
+sudo /opt/geodineum/gNode/scripts/mint-node-identity.sh mynode --regrant # re-apply the node tier, password kept
 ```
 
 (Never re-run `node add` against a working member just to reissue a credential:
@@ -266,7 +270,9 @@ It refuses while the node's daemon heartbeat is fresh.
   generated locally and never leaves it; only public keys are shared.
 - The authority to **write function libraries.** The master owns the Lua
   function libraries; a worker's daemon only *verifies* them (read-only
-  `FUNCTION LIST`) and reports any gaps. Expected, correct worker output states
+  `FUNCTION LIST`) and reports any gaps. The node's own login is refused every
+  library write; at start the daemon logs one line saying so and names any
+  extension library missing from ValKey. Expected, correct worker output states
   that libraries and the admin credential stay on the master.
 - **Service ACL identities.** Minting a *service's* ValKey auth is master-only.
   The paved road for a worker-resident service: on the master,

@@ -45,7 +45,7 @@ EXPOSURE: GNODE_NODE_TYPE in daemon.env = comma set; daemon processes an entry i
 BUNDLE (master `node add <name> <ip:port> [--tier t]`; the first one sets up the mesh): mints
   worker WG keypair + registers peer (LOWEST FREE VPN IP, appends [Peer], hot-reload) + reads valkey_daemon.password +
   valkey_replica.password + mints per-node identity gnode_node_<name> (random 32-char pw,
-  grants from acl-daemon-tier.rule — ONE definition, identity-only not scope) → base64
+  grants from acl-daemon-tier.rule — ONE definition — minus function|load|delete|flush|restore, acl-tiers.sh) → base64
   BUNDLE-V2 + master_ip, constellations (= master's GNODE_CONSTELLATIONS), tier; written to
   ~/<name>.geodineum-bundle 0600, NEVER printed. SECRET. Fallback if mint fails: shared gnode_daemon login.
   Own-key machine (admin laptop): node add <name> roaming --pubkey <k> → peer only + its WG lines.
@@ -65,8 +65,9 @@ RECEIPT SIGNER (daemon 1st start, receipt.rs load_or_generate_signer): writes
   private key never leaves node), publishes PUBLIC key HSET {geodineum}:gnode:receipt_pubkeys
   signer_id→<alg>:<pubkey_hex>. Non-fatal if unavailable. Override GNODE_RECEIPT_KEY_FILE.
 FUNCTIONS: master WRITES Lua libraries; worker verify_functions() = READ-ONLY (FUNCTION LIST),
-  reports gaps only. Worker install correctly states "libraries + admin cred stay on master".
-RE-MINT (already-joined node lost its cred): master mint-node-identity.sh <name> [--rotate];
+  reports gaps only. gnode_node_* is REFUSED every library write (ACL, not only code); extension load at
+  start stops at the first NOPERM, logs one line, warns only for a missing library. Worker install correctly states "libraries + admin cred stay on master".
+RE-MINT (already-joined node lost its cred): master mint-node-identity.sh <name> [--rotate | --regrant (tier only, pw kept)];
   idempotent, touches NO WireGuard/peer state. NEVER re-run `expand` on a live member (add-peer
   not idempotent: second [Peer], fresh IP, strands old peer).
 ```

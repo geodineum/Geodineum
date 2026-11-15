@@ -22,7 +22,9 @@ BASE GRANT := ~{<id>}:* ~<id>:* ~{<c>}:gnode:heartbeat:*:<id>:* %R~{<c>}:gnode:*
   own only gnode:consumer_groups_verified:<id>:* topology:<id>:* template:<id>:* ·
   REFUSED gnode:* {default}:gnode:* membership:* {testing|staging|acceptance|production}:gnode:*.
   WP site declares policy_site_consumes/produces (its gCore runtime's reads + own writes).
-COMMANDS := allowlist in onboard-service.sh; NO eval|subscribe|keys|xautoclaim|zrangebyscore.
+COMMANDS := allowlist gNode/scripts/acl-tiers.sh; NO scan|eval|subscribe|keys|xautoclaim|zrangebyscore.
+  SCAN lists EVERY tenant's key names (patterns hide values, not names) → opt-in only: manifest `keyspace_scan: true`
+  (onboarding + every regrant; absent/unreadable → -scan).
 THREE LAYERS := disk ∥ ValKey ACL ∥ reach — never conflated.
 REACH(c→t) := both declared ∧ (t below c: lower layer | same layer ∧ lower fundamentality | t ∈ peers:c)
   ∧ env equal (or t global) ∧ c holds ∀ requires:t ∧ no deny. Verdicts undeclared|layer|env|label:<l>|deny.
