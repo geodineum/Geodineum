@@ -716,6 +716,21 @@ _gd_mode_tree() {
     return 0
 }
 
+# Only the owner may write build output and git metadata: every site pool is in the group, runs these binaries and
+# deploys from these objects.
+_gd_strip_group_write() {
+    local root="$1"
+    [[ -d "$root" && ! -L "$root" ]] || return 0
+    local -a w=()
+    local _p
+    while IFS= read -r -d '' _p; do w+=("$_p"); done \
+        < <(find "$root" ! -type l \( -perm -g+w -o -perm -o+w \) -print0 2>/dev/null)
+    (( ${#w[@]} )) || return 0
+    printf '%s\0' "${w[@]}" | xargs -0r "${_GD_PRIV_ARGV[@]}" /usr/bin/chmod g-w,o-w 2>/dev/null || true
+    _gd_note_fix "${root}(group write removed from ${#w[@]})"
+    return 0
+}
+
 # =============================================================================
 # Permissions
 # =============================================================================
@@ -754,6 +769,7 @@ geodeploy_fix_perms() {
     if [[ -d "${repo_dir}/.git" ]]; then
         _gd_priv /usr/bin/chown -R "${owner}:${group}" "${repo_dir}/.git" 2>/dev/null
     fi
+    _gd_strip_group_write "${repo_dir}/.git"
 
     # Apache (www-data) must read these or it fails closed with 403.
     for deny_file in "${repo_dir}/.htaccess" "${repo_dir}/nginx-deny.conf"; do
@@ -777,6 +793,9 @@ geodeploy_fix_perms() {
 geodeploy_fix_binaries() {
     local repo_dir="$1"
     local name="$2"
+    local _t
+    while IFS= read -r -d '' _t; do _gd_strip_group_write "$_t"; done \
+        < <(find "$repo_dir" -maxdepth 3 -type d -name target -not -path '*/.git/*' -print0 2>/dev/null)
 
     while IFS= read -r -d '' bin_path; do
         if [[ "$(head -c 4 "$bin_path" 2>/dev/null)" == $'\x7fELF' ]]; then
