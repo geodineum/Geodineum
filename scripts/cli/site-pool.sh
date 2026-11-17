@@ -310,11 +310,13 @@ do_verify() {
         [[ "$SP_BASEDIR" != 1 ]] || { grep -qF "$SITE_POOL_CREDS/portal-$ID" "$POOL" && ok "the pool's open_basedir includes $SITE_POOL_CREDS/portal-$ID" || bad "the pool's open_basedir leaves out $SITE_POOL_CREDS/portal-$ID (re-run apply)"; }
         runuser -u www-data -- test -r "$pc" && bad "www-data reads $pc" || ok "www-data cannot read the portal's client credentials"
     fi
-    local spub=/etc/geodineum/store-seal.pub sbin=/opt/geodineum/Geodineum-STORE/target/release/geodineum-seal
+    local spub=/etc/geodineum/store-seal.pub sbin=/usr/local/lib/geodineum/geodineum-seal
     if [[ -f "$spub" ]]; then
         runuser -u "$U" -- test -r "$spub" && ok "$U reads STORE's sealing key" || bad "$U cannot read $spub"
-        runuser -u "$U" -- test -x "$sbin" && ok "$U runs geodineum-seal" || bad "$U cannot run $sbin (build Geodineum-STORE here: personal data writes are refused)"
-        [[ "$SP_BASEDIR" != 1 ]] || { grep -qF "$sbin" "$POOL" && ok "the pool's open_basedir includes geodineum-seal" || bad "the pool's open_basedir leaves out $sbin (re-run apply)"; }
+        runuser -u "$U" -- test -x "$sbin" && ok "$U runs geodineum-seal" || bad "$U cannot run $sbin (install it: Geodineum-pro scripts/install-seal-binary.sh; personal data writes are refused)"
+        local m; m=$(stat -c '%u %a' "$sbin" "$(dirname "$sbin")" 2>/dev/null | tr '\n' ' ')
+        [[ $m =~ ^0\ [0-7]*[0145][0145]\ 0\ [0-7]*[0145][0145]\ $ ]] && ok "geodineum-seal and its folder are root's, written by no one else" || bad "geodineum-seal or its folder is not root's alone ($m): the site refuses to run it"
+        [[ "$SP_BASEDIR" != 1 ]] || { grep -qF "${sbin%/*}/" "$POOL" && ok "the pool's open_basedir includes ${sbin%/*}/" || bad "the pool's open_basedir leaves out ${sbin%/*}/ (re-run apply)"; }
     fi
     local log="$SITE_POOL_LOGS/$ID/php-error.log"
     if [[ -f "$log" ]]; then
