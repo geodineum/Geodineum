@@ -8,6 +8,8 @@ D="$(mktemp -d)"; trap 'rm -rf "${D:?}"' EXIT
 pass=0; fail=0
 has()  { grep -F "$2" <<<"$3" >/dev/null && { pass=$((pass+1)); echo "  ok   $1"; } || { fail=$((fail+1)); echo "  FAIL $1 (no '$2')"; sed 's/^/       /' <<<"$3"; }; }
 none() { grep -F "FLAG" <<<"$2" >/dev/null && { fail=$((fail+1)); echo "  FAIL $1"; sed 's/^/       /' <<<"$2"; } || { pass=$((pass+1)); echo "  ok   $1"; }; }
+lacks() { grep -F -- "$2" <<<"$3" >/dev/null && { fail=$((fail+1)); echo "  FAIL $1 (found '$2')"; } || { pass=$((pass+1)); echo "  ok   $1"; }; }
+eq()   { [[ "$2" == "$3" ]] && { pass=$((pass+1)); echo "  ok   $1"; } || { fail=$((fail+1)); echo "  FAIL $1 (want '$2', got '$3')"; }; }
 
 mkdir -p "$D/vh" "$D/rec" "$D/www/site/wp-includes" "$D/www/site/wp-content/uploads" "$D/www/site/wp-admin" "$D/bin" "$D/db"
 SITE="$D/www/site"
@@ -51,8 +53,8 @@ o=$(go); none "first run on a clean site: baseline, no flags" "$o"; has "first r
 o=$(go); none "second run on the same site: quiet" "$o"
 
 echo 'wp2_a8cba6d178d2' >> "$D/db/admins"
-o=$(go); has "07-21: a new administrator" "1 new administrator(s): wp2_a8cba6d178d2" "$o"
-o=$(go); has "stays flagged until accepted" "1 new administrator(s)" "$o"
+o=$(go); has "07-21: a new administrator" "site.test: new administrator wp2_a8cba6d178d2" "$o"
+o=$(go); has "stays flagged until accepted" "new administrator wp2_a8cba6d178d2" "$o"
 o=$(go --accept); has "--accept records it" "accepted" "$o"
 o=$(go); none "accepted: quiet" "$o"
 
@@ -97,4 +99,35 @@ echo "<?php \$wp_version = '9.8';" > "$SITE/wp-includes/version.php"; rm -f "$D/
 o=$(go); has "old WordPress is flagged on the first run: a compromise cannot become the baseline" "WordPress 9.8, current 9.9" "$o"
 secret=$(grep -c "'p'" <<<"$o" || true); [[ "$secret" == 0 ]] && { pass=$((pass+1)); echo "  ok   no database password in the output"; } || { fail=$((fail+1)); echo "  FAIL password printed"; }
 has "the run's findings are kept for a daily report" "WordPress 9.8, current 9.9" "$(cat "$D/st/findings.json")"
+
+echo "-- one finding at a time"
+S2=(--state "$D/st2"); echo "<?php \$wp_version = '9.9';" > "$SITE/wp-includes/version.php"
+rec() { python3 -I -c 'import json,sys; s=json.load(open(sys.argv[1])); r=[dict(v,id=k) for k,v in s.get("findings",{}).items() if sys.argv[2] in v["text"]]; print(r[0].get(sys.argv[3]) if r else "none")' "$D/st2/state.json" "$1" "$2"; }
+o=$(go "${S2[@]}"); none "a fresh baseline" "$o"
+printf 'eve\nmallory\n' >> "$D/db/admins"; o=$(go "${S2[@]}")
+has "two new administrators, two findings" "new administrator eve" "$o"; has "the second" "new administrator mallory" "$o"
+IE=$(rec "administrator eve" id)
+o=$(go "${S2[@]}" --accept "$IE"); has "--accept <id> takes one" "accepted $IE: administrator eve on site.test" "$o"
+eq "and only that one" "accepted new" "$(rec "administrator eve" status) $(rec "administrator mallory" status)"
+o=$(go "${S2[@]}"); lacks "the accepted administrator is quiet" "eve" "$o"; has "the other is still found" "new administrator mallory" "$o"
+eq "the baseline holds the accepted one, not the waiting one" "['eve', 'owner', 'wp2_a8cba6d178d2']" "$(python3 -I -c 'import json,sys; print(sorted(list(json.load(open(sys.argv[1]))["wp"].values())[0]["admins"]))' "$D/st2/state.json")"
+cp "$D/bin/mysql" "$D/mysql.ok"; printf '#!/bin/bash\nexit 1\n' > "$D/bin/mysql"
+o=$(go "${S2[@]}"); has "a database that cannot be read is a finding" "WordPress not readable" "$o"
+eq "the waiting administrator is not taken as gone" new "$(rec "administrator mallory" status)"
+cp "$D/mysql.ok" "$D/bin/mysql"; o=$(go "${S2[@]}")
+eq "readable again: the same finding, not a new one" 1 "$(grep -c 'new administrator mallory' <<<"$o")"
+eq "and the failed read did not become the baseline" "['eve', 'owner', 'wp2_a8cba6d178d2']" "$(python3 -I -c 'import json,sys; print(sorted(list(json.load(open(sys.argv[1]))["wp"].values())[0]["admins"]))' "$D/st2/state.json")"
+printf 'home\thttps://site.test\nsiteurl\thttps://site.test\nblogname\tHACKED BY X\n' > "$D/db/options"; o=$(go "${S2[@]}")
+o=$(go "${S2[@]}" --accept "$(rec "reads as a defacement" id)"); rc=$?
+eq "a defacement cannot be accepted by its id either" 3 "$rc"; has "and it says so" "cannot be accepted" "$o"
+printf 'home\thttps://site.test\nsiteurl\thttps://site.test\nblogname\tA Site\n' > "$D/db/options"
+printf '<VirtualHost *:443>\n  ServerName staging.site.test\n  DocumentRoot %s\n</VirtualHost>\n' "$SITE" > "$D/vh/staging.conf"
+o=$(go "${S2[@]}"); has "a registered vhost that is new" "staging.site.test: a vhost that was not here last run" "$o"; go "${S2[@]}" --accept >/dev/null
+echo 'Another Title' > "$D/db/title"; o=$(go "${S2[@]}")
+has "a production page title change is a finding" "FLAG site.test: page title changed" "$o"
+has "on a staging host it is information" "INFO staging.site.test: page title changed" "$o"
+lacks "not a finding" "FLAG staging.site.test" "$o"
+has "kept for the daily report's mail" "staging.site.test: page title changed" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["info"])' "$D/st2/findings.json")"
+o=$(go "${S2[@]}"); lacks "and not again the next night" "staging.site.test" "$o"
+lacks "the findings file carries no nonce" "nonce" "$(cat "$D/st2/findings.json")"
 echo "== $pass ok, $fail failed"; exit $(( fail > 0 ))

