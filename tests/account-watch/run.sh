@@ -78,6 +78,11 @@ o=$(go); eq "the address is remembered after one night: no second finding for it
 go --accept >/dev/null; o=$(go); none "answered: the node is quiet again" "$o"
 printf 'exit 1\n' > "$D/bin/docker"; o=$(go); none "docker not answering is not 'every image removed'" "$o"
 sed -i 's/53601/53136/' "$D/ports.out" "$D/wg.out"; o=$(go); none "WireGuard's port changing at a reboot is not a new listener" "$o"
+mkdir -p "$R/proc/4242" "$R/proc/4243"; printf 'Name:\tclaude\nUid:\t1000\t1000\t1000\t1000\n' > "$R/proc/4242/status"; printf 'Name:\tsvc\nUid:\t0\t0\t0\t0\n' > "$R/proc/4243/status"
+printf 'tcp LISTEN 0 512 127.0.0.1:36445 0.0.0.0:* users:(("claude",pid=4242,fd=26))\n' >> "$D/ports.out"; o=$(go); none "a local port a person's own program opened is not a question" "$o"
+printf 'tcp LISTEN 0 512 127.0.0.1:36446 0.0.0.0:* users:(("svc",pid=4243,fd=3))\n' >> "$D/ports.out"; o=$(go); has "a local port a root program opened still is" "listening port: added tcp 127.0.0.1:36446" "$o"
+printf 'tcp LISTEN 0 512 0.0.0.0:36447 0.0.0.0:* users:(("claude",pid=4242,fd=27))\n' >> "$D/ports.out"; o=$(go); has "and so is a person's port open to the network" "listening port: added tcp 0.0.0.0:36447" "$o"
+go --accept >/dev/null; sed -i '/3644[67]/d' "$D/ports.out"; go --accept >/dev/null
 old_baseline() { python3 -I -c 'import json,sys; f=sys.argv[1]; s=json.load(open(f)); s.pop("wg_excluded",None); s["ports"]=sorted(s["ports"]+sys.argv[2:]); json.dump(s,open(f,"w"))' "$D/st/state.json" "$@"; }
 old_baseline "udp 0.0.0.0:41000"; o=$(go); none "a baseline from before the WireGuard rule: its gone UDP port is not 'removed'" "$o"
 o=$(go); none "and stays quiet after that" "$o"

@@ -50,7 +50,7 @@ def args_():
     a.add_argument("--cmd-last", default="last -w -i --time-format iso")
     a.add_argument("--cmd-auth", default="journalctl -q --no-pager -o short-iso _COMM=sudo _COMM=sshd --since -{hours}h")
     a.add_argument("--cmd-docker", default="docker image ls --digests --format {{.Repository}}:{{.Tag}}@{{.Digest}}")
-    a.add_argument("--cmd-ports", default="ss -H -ltnu")
+    a.add_argument("--cmd-ports", default="ss -H -ltnup")
     a.add_argument("--cmd-wg", default="wg show all listen-port")
     return a.parse_args()
 
@@ -128,8 +128,20 @@ def collect(a):
         # WireGuard without a ListenPort takes a new random UDP port at every boot: its own ports are not listeners to watch
         wg = {l.split()[-1] for l in lines_of(sh(a.cmd_wg, a) or "") if l.split()[-1].isdigit()}
         s["ports"] = sorted({f"{p[0]} {p[4]}" for p in (l.split() for l in ports.splitlines())
-                             if len(p) >= 5 and not (p[0] == "udp" and p[4].rsplit(":", 1)[-1] in wg)})
+                             if len(p) >= 5 and not (p[0] == "udp" and p[4].rsplit(":", 1)[-1] in wg) and not user_loopback(a, p)})
     return s
+
+
+def user_loopback(a, p):
+    """A port only this node reaches, opened by a person's own program (an editor, a Claude session): a new one each run."""
+    if not (p[4].startswith("127.") or p[4].startswith("[::1]:")):
+        return False
+    m = re.search(r"pid=(\d+)", " ".join(p[5:]))
+    try:
+        uid = next(int(l.split()[1]) for l in open(P(a, f"/proc/{m.group(1)}/status")) if l.startswith("Uid:")) if m else -1
+    except (OSError, StopIteration, ValueError):
+        return False
+    return uid >= 1000 and uid != 65534
 
 
 def what(k, key, item):
