@@ -71,7 +71,9 @@ o=$(go); has "home URL moved to an ad network" "home URL changed" "$o"; go --acc
 
 printf 'home\thttps://ads.example/x\nsiteurl\thttps://ads.example/x\nblogname\tHACKED BY TEMPIX\n' > "$D/db/options"; echo 'HACKED BY TEMPIX' > "$D/db/title"
 o=$(go); has "08-29: site name" "site name reads as a defacement" "$o"; has "08-29: the page itself" "the page reads as a defacement" "$o"; go --accept >/dev/null
-o=$(go); has "a defacement cannot be accepted away" "site name reads as a defacement" "$o"
+o=$(go); lacks "an accepted defacement is not asked again" "site name reads as a defacement" "$o"
+printf 'home\thttps://ads.example/x\nsiteurl\thttps://ads.example/x\nblogname\tHACKED BY OTHERS\n' > "$D/db/options"
+o=$(go); has "a different defacement still asks" "HACKED BY OTHERS" "$o"; go --accept >/dev/null
 
 printf 'home\thttps://site.test\nsiteurl\thttps://site.test\nblogname\tA Site\n' > "$D/db/options"; echo 'A Site' > "$D/db/title"; go --accept >/dev/null
 echo "<?php \$wp_version = '9.9'; eval(\$_POST['x']);" > "$SITE/wp-includes/version.php"
@@ -119,7 +121,7 @@ eq "readable again: the same finding, not a new one" 1 "$(grep -c 'new administr
 eq "and the failed read did not become the baseline" "['eve', 'owner', 'wp2_a8cba6d178d2']" "$(python3 -I -c 'import json,sys; print(sorted(list(json.load(open(sys.argv[1]))["wp"].values())[0]["admins"]))' "$D/st2/state.json")"
 printf 'home\thttps://site.test\nsiteurl\thttps://site.test\nblogname\tHACKED BY X\n' > "$D/db/options"; o=$(go "${S2[@]}")
 o=$(go "${S2[@]}" --accept "$(rec "reads as a defacement" id)"); rc=$?
-eq "a defacement cannot be accepted by its id either" 3 "$rc"; has "and it says so" "cannot be accepted" "$o"
+eq "a defacement can be accepted by its id" 0 "$rc"; has "and it says so" "accepted" "$o"
 printf 'home\thttps://site.test\nsiteurl\thttps://site.test\nblogname\tA Site\n' > "$D/db/options"
 printf '<VirtualHost *:443>\n  ServerName staging.site.test\n  DocumentRoot %s\n</VirtualHost>\n' "$SITE" > "$D/vh/staging.conf"
 o=$(go "${S2[@]}"); has "a registered vhost that is new" "staging.site.test: a vhost that was not here last run" "$o"; go "${S2[@]}" --accept >/dev/null

@@ -24,9 +24,9 @@ def fid(kind, subject):
     return hashlib.sha256(f"{kind}\n{subject}".encode()).hexdigest()[:10]
 
 
-def F(kind, subject, name, text, guess, patch=(), undo=(), info=False, acceptable=True, event=False, scope="", look=(), remove=()):
+def F(kind, subject, name, text, guess, patch=(), undo=(), info=False, event=False, scope="", look=(), remove=()):
     return {"id": fid(kind, subject), "kind": kind, "name": name, "text": text, "guess": guess, "info": info,
-            "patch": [list(p) for p in patch], "undo": [list(u) for u in undo], "acceptable": acceptable, "event": event,
+            "patch": [list(p) for p in patch], "undo": [list(u) for u in undo], "event": event,
             "scope": scope, "look": list(look), "remove": list(remove)}
 
 
@@ -93,7 +93,7 @@ def settle(state, found, now, migrate=False, unchecked=()):
             continue
         here.add(f["id"])
         r = recs.get(f["id"])
-        if r and r["status"] == "accepted" and f["acceptable"]:
+        if r and r["status"] == "accepted":
             continue
         keep = {k: v for k, v in f.items() if k not in ("id", "info")}
         if r and r["status"] in LIVE:
@@ -116,7 +116,7 @@ def settle(state, found, now, migrate=False, unchecked=()):
 
 def accept_all(state, now, by):
     for r in state.get("findings", {}).values():
-        if r["status"] in LIVE and r.get("acceptable", True):
+        if r["status"] in LIVE:
             r.update(status="accepted", decided=now, by=by, nonce=None)
 
 
@@ -213,8 +213,8 @@ def keyboard(rows):
         if r["status"] not in ("new", "alerted") or not r.get("nonce"):
             continue
         tag = f" ({n})" if many else ""
-        row = [{"text": "✓ Expected" + tag, "callback_data": f"wd:a:{r['nonce']}"}] if r.get("acceptable", True) else []
-        kb.append(row + [{"text": "✗ Not mine" + tag, "callback_data": f"wd:r:{r['nonce']}"}])
+        kb.append([{"text": "✓ Expected" + tag, "callback_data": f"wd:a:{r['nonce']}"},
+                   {"text": "✗ Not mine" + tag, "callback_data": f"wd:r:{r['nonce']}"}])
     return {"inline_keyboard": kb}
 
 
@@ -253,9 +253,6 @@ def decide(a, host, label, source, script, sf, mode, publish):
         return 3
     now = int(time.time())
     if a.accept:
-        if not r.get("acceptable", True):
-            print(f"  ..   {i}: {r['name']} cannot be accepted; it goes when it is gone from {host}")
-            return 3
         apply(state, r.get("patch", []))
         r.update(status="accepted", decided=now, by=a.by or "root", nonce=None)
         save(sf, state, mode)

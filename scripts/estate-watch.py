@@ -284,7 +284,7 @@ def run(a, state):
                                          look=[f"{wpc} post list --post_status=publish --posts_per_page=20 --fields=ID,post_date,post_title"]))
                 if DEFACED.search(w["blogname"]):
                     found.append(W.F("defaced-name", f"{doc}|{w['blogname']}", f"{primary} site name", f"{primary}: site name reads as a defacement: {w['blogname']!r}",
-                                     "a takeover", acceptable=False, scope=doc, look=[f"{wpc} option get blogname", f"{wpc} user list --role=administrator"]))
+                                     "a takeover", scope=doc, look=[f"{wpc} option get blogname", f"{wpc} user list --role=administrator"]))
                 if len(w["admins"]) > 5:
                     found.append(W.F("wp-admins-many", f"{doc}|{len(w['admins'])}", f"{primary} administrators", f"{primary}: {len(w['admins'])} administrators",
                                      "accounts nobody removed", scope=doc, look=[f"{wpc} user list --role=administrator"]))
@@ -329,7 +329,7 @@ def run(a, state):
             plook = [f"curl -sk --resolve {primary}:443:127.0.0.1 https://{primary}/ | head -40"]
             if bad or DEFACED.search(title):
                 found.append(W.F("defaced-page", f"{primary}|{title}", f"{primary} page", f"{primary}: the page reads as a defacement: title {title!r}",
-                                 "a takeover", acceptable=False, scope="page:" + primary, look=plook))
+                                 "a takeover", scope="page:" + primary, look=plook))
             old_t = (state.get("titles") or {}).get(primary)
             if old_t is not None and title and title != old_t:
                 found.append(W.F("title", f"{primary}|{title}", f"{primary} page title", f"{primary}: page title changed: {old_t!r} -> {title!r}",
@@ -406,7 +406,7 @@ def main():
         for t in info:
             print(f"  INFO {t}")
         if a.accept == "all":
-            print(f"  ..   accepted every open finding that can be accepted")
+            print(f"  ..   accepted every open finding")
         try:
             entry = W.announce(W.connect(a.bootstrap, a.valkey_cred), a, "Estate watch", "estate-watch", host, script, new, now) \
                 if not a.no_alert and a.alert_site and any(r["status"] == "new" for r in open_) else None
