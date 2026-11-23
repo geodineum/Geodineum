@@ -59,6 +59,6 @@ cli:
       category: Sites
     - name: site user
       handler: scripts/cli/site-user.sh
-      description: "The user a site's PHP runs as (its pool user, else www-data), for scripts: sudo -u \"$(geodineum site user <id>)\""
+      description: "The user a site's PHP runs as (its pool user, else www-data), for scripts: sudo -u \"$(sudo geodineum site user <id>)\" (it reads root-only pool records)"
       requires_sudo: true
       category: Sites

@@ -1,6 +1,6 @@
 #!/bin/bash
 # geodineum site user <site_id> | --root <docroot> — the Unix user a site's PHP runs as: its pool
-# user, else www-data. Scripts that run a site's PHP or WP-CLI: sudo -u "$(geodineum site user <id>)"
+# user, else www-data. Scripts that run a site's PHP or WP-CLI: sudo -u "$(sudo geodineum site user <id>)"
 set -euo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=../../lib/site-pool.sh
