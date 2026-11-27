@@ -45,7 +45,7 @@ is "the seal folder is 0700" "$(for_path "chmod 0700 $ST/seal\$" "$ST/seal")" 1
 is "the mail backup login is STORE's alone" "$(for_path "chown -h geodineum_store:geodineum_store $ST/mailbak/id_ed25519\$" "$ST/mailbak/id_ed25519")" 1
 is "the mail backup login is 0600" "$(for_path "chmod 0600 $ST/mailbak/id_ed25519\$" "$ST/mailbak/id_ed25519")" 1
 is "the mail backup settings are root:geodineum_store" "$(for_path 'chown -h root:geodineum_store' "$ST/mailbak/mailbak.env")" 1
-is "STORE joins geodineum-bootstrap" "$(grep -c 'usermod -aG geodineum-bootstrap geodineum_store' "$PRIV")" 1
+is "STORE joins geodineum-bootstrap, with usermod where it is (/usr/sbin)" "$(grep -c '^/usr/sbin/usermod -aG geodineum-bootstrap geodineum_store' "$PRIV")" 1
 is "and is restarted once to take it" "$(grep -c 'systemctl try-restart geodineum-store.service' "$PRIV")" 1
 is "other components keep the default owner" "$(for_path 'chown -h gnode:geodineum' "$ETC/components/gnode-daemon/daemon.env")" 1
 

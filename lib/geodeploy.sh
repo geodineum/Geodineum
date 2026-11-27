@@ -1056,7 +1056,7 @@ geodeploy_fix_store_config() {
     getent passwd "$svc" >/dev/null 2>&1 || return 0
     # STORE traverses components/ as a geodineum-bootstrap member, as COMMS does.
     if ! id -nG "$svc" 2>/dev/null | tr ' ' '\n' | grep -cx geodineum-bootstrap >/dev/null; then
-        _gd_priv /usr/bin/usermod -aG geodineum-bootstrap "$svc" 2>/dev/null \
+        _gd_priv /usr/sbin/usermod -aG geodineum-bootstrap "$svc" 2>/dev/null \
             && _gd_priv /usr/bin/systemctl try-restart geodineum-store.service 2>/dev/null
         _gd_note_fix "${svc}(group geodineum-bootstrap)"
     fi
