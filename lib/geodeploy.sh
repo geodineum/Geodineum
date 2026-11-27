@@ -1048,6 +1048,45 @@ geodeploy_harden_all_wp() {
 # /etc/geodineum permissions
 # =============================================================================
 # www-data reads only through single-purpose groups, never the broad geodineum ones.
+# STORE runs outside the geodineum group and keeps its own keys (seal, mail backup login) here:
+# the layout its installers make (Geodineum-STORE install-service.sh, seal-key.sh, mail-node/squad.sh).
+geodeploy_fix_store_config() {
+    local dir="$1" svc=geodineum_store f
+    [[ -d "$dir" ]] || return 0
+    getent passwd "$svc" >/dev/null 2>&1 || return 0
+    # STORE traverses components/ as a geodineum-bootstrap member, as COMMS does.
+    if ! id -nG "$svc" 2>/dev/null | tr ' ' '\n' | grep -cx geodineum-bootstrap >/dev/null; then
+        _gd_priv /usr/bin/usermod -aG geodineum-bootstrap "$svc" 2>/dev/null \
+            && _gd_priv /usr/bin/systemctl try-restart geodineum-store.service 2>/dev/null
+        _gd_note_fix "${svc}(group geodineum-bootstrap)"
+    fi
+    _gd_own "$dir" root "$svc"; _gd_mode "$dir" 0750
+    _gd_own_tree "$dir" root "$svc" -mindepth 1 -maxdepth 1 -type f
+    _gd_mode_tree "$dir" 0640 -mindepth 1 -maxdepth 1 -type f
+    if [[ -d "$dir/detectors.d" ]]; then
+        _gd_own_tree "$dir/detectors.d" root "$svc"
+        _gd_mode "$dir/detectors.d" 0750
+        _gd_mode_tree "$dir/detectors.d" 0640 -type f
+    fi
+    if [[ -d "$dir/seal" ]]; then
+        _gd_own_tree "$dir/seal" "$svc" "$svc"
+        _gd_mode "$dir/seal" 0700
+        _gd_mode_tree "$dir/seal" 0600 -type f -name '*.key'
+        _gd_mode_tree "$dir/seal" 0640 -type f -not -name '*.key'
+    fi
+    if [[ -d "$dir/mailbak" ]]; then
+        _gd_own "$dir/mailbak" "$svc" "$svc"; _gd_mode "$dir/mailbak" 0700
+        for f in "$dir/mailbak"/*; do
+            [[ -f "$f" ]] || continue
+            case "${f##*/}" in
+                id_ed25519) _gd_own "$f" "$svc" "$svc"; _gd_mode "$f" 0600 ;;
+                id_ed25519.pub) _gd_own "$f" "$svc" "$svc"; _gd_mode "$f" 0640 ;;
+                *) _gd_own "$f" root "$svc"; _gd_mode "$f" 0640 ;;
+            esac
+        done
+    fi
+}
+
 geodeploy_fix_config_perms() {
     local config_root="${1:-/etc/geodineum}"
 
@@ -1092,17 +1131,22 @@ EOF"
     if [[ -d "${config_root}/components" ]]; then
         _gd_own "${config_root}/components" gnode geodineum-bootstrap
         _gd_mode "${config_root}/components" 0750
-        _gd_own_tree "${config_root}/components" gnode geodineum-bootstrap -mindepth 1 -type d
-        _gd_mode_tree "${config_root}/components" 0750 -mindepth 1 -type d
+        # STORE's folder is set by geodeploy_fix_store_config; the default passes leave it out.
+        local _store="${config_root}/components/geodineum-store"
+        _gd_own_tree "${config_root}/components" gnode geodineum-bootstrap -mindepth 1 -type d \
+            -not -path "$_store" -not -path "$_store/*"
+        _gd_mode_tree "${config_root}/components" 0750 -mindepth 1 -type d \
+            -not -path "$_store" -not -path "$_store/*"
 
         # Default gnode:geodineum 0640; the exceptions set below are excluded so the two never fight.
         _gd_own_tree "${config_root}/components" gnode geodineum -type f \
             -not -name 'receipt_signing.key' \
             -not -path "${config_root}/components/gCore/gcore.env" \
             -not -path "${config_root}/components/gTemplate/gtemplate.env" \
-            -not -path "${config_root}/components/geodineum-comms/geodineum-comms.env"
+            -not -path "${config_root}/components/geodineum-comms/geodineum-comms.env" \
+            -not -path "$_store/*"
         _gd_mode_tree "${config_root}/components" 0640 -type f \
-            -not -name 'receipt_signing.key'
+            -not -name 'receipt_signing.key' -not -path "$_store/*"
 
         local _receipt_key="${config_root}/components/gnode-daemon/receipt_signing.key"
         if [[ -f "$_receipt_key" ]]; then
@@ -1128,6 +1172,7 @@ EOF"
             _gd_own "$_comms_env" root geodineum-comms
             _gd_mode "$_comms_env" 0640
         fi
+        geodeploy_fix_store_config "$_store"
     fi
 
     # ── credentials/: o+x lets service users reach their own file; listing needs the group ──
